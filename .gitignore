@@ -1,0 +1,185 @@
+# ==========================================================
+# trading-robot-lab .gitignore
+# Purpose: protect secrets, live trading configs, binaries,
+# logs, private data and local development artifacts.
+# ==========================================================
+
+# ----------------------------------------------------------
+# Secrets and local environment files
+# ----------------------------------------------------------
+.env
+.env.*
+!.env.example
+secrets/
+private/
+credentials/
+
+*.key
+*.pem
+*.pfx
+*.p12
+*.crt
+*.cer
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.ppk
+
+# ----------------------------------------------------------
+# Tokens / session / auth artifacts
+# ----------------------------------------------------------
+*.token
+*.session
+*.cookies
+cookies.txt
+session.json
+sessions/
+
+# ----------------------------------------------------------
+# Logs and runtime output
+# ----------------------------------------------------------
+*.log
+logs/
+runtime/
+output/
+tmp/
+temp/
+
+# ----------------------------------------------------------
+# Trading data and private market data
+# ----------------------------------------------------------
+data/raw/
+data/private/
+data/live/
+data/broker/
+data/reports/
+data/ticks/
+data/orderbook/
+
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.parquet
+*.feather
+*.h5
+*.hdf5
+
+# CSV files are ignored by default because they may contain
+# real trades, broker reports, account identifiers or large datasets.
+*.csv
+
+# Allow safe documentation placeholders and sample data only.
+!data/README.md
+!data/sample/
+!data/sample/**
+!*.sample.csv
+
+# ----------------------------------------------------------
+# Archives and compressed files
+# ----------------------------------------------------------
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+
+# ----------------------------------------------------------
+# Executables and binary artifacts
+# ----------------------------------------------------------
+*.exe
+*.dll
+*.msi
+*.bat
+*.cmd
+*.ps1
+*.so
+*.dylib
+*.jar
+*.bin
+*.dat
+
+# ----------------------------------------------------------
+# Python
+# ----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# ----------------------------------------------------------
+# Node / frontend tooling, if used later
+# ----------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.next/
+dist/
+
+# ----------------------------------------------------------
+# C# / Visual Studio / .NET, for old robot analysis if needed
+# ----------------------------------------------------------
+.vs/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+TestResults/
+packages/
+
+# ----------------------------------------------------------
+# C/C++ / low latency experiments, if used later
+# ----------------------------------------------------------
+*.o
+*.obj
+*.a
+*.lib
+*.out
+*.app
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# ----------------------------------------------------------
+# IDE and editor files
+# ----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# ----------------------------------------------------------
+# OS files
+# ----------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+desktop.ini
+
+# ----------------------------------------------------------
+# Keep folder placeholders when needed
+# ----------------------------------------------------------
+!.gitkeep
+!README.md
