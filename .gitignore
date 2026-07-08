@@ -183,3 +183,6 @@ desktop.ini
 # ----------------------------------------------------------
 !.gitkeep
 !README.md
+
+# MiMo local files
+.mimocode/
