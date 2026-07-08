@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "trading-robot-lab://schemas/market_event/v1",
+  "title": "MarketEvent",
+  "description": "Single market data event from exchange or replay stream. Represents a tick, trade, quote, or order book update.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "event_id",
+    "timestamp_ns",
+    "instrument_id",
+    "event_type"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique event identifier."
+    },
+    "timestamp_ns": {
+      "type": "integer",
+      "description": "Exchange timestamp in nanoseconds since Unix epoch."
+    },
+    "receive_timestamp_ns": {
+      "type": "integer",
+      "description": "Local receive timestamp in nanoseconds since Unix epoch."
+    },
+    "instrument_id": {
+      "type": "string",
+      "description": "Instrument identifier (e.g. RIU5, SBER)."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["tick", "trade", "quote", "orderbook_update", "session_event"],
+      "description": "Type of market event."
+    },
+    "last_price": {
+      "type": ["number", "null"],
+      "description": "Last trade price. Null if not a trade event."
+    },
+    "last_volume": {
+      "type": ["integer", "null"],
+      "description": "Last trade volume (number of contracts/lots). Null if not a trade event."
+    },
+    "bid_price": {
+      "type": ["number", "null"],
+      "description": "Best bid price. Null if not available."
+    },
+    "bid_volume": {
+      "type": ["integer", "null"],
+      "description": "Best bid volume. Null if not available."
+    },
+    "ask_price": {
+      "type": ["number", "null"],
+      "description": "Best ask price. Null if not available."
+    },
+    "ask_volume": {
+      "type": ["integer", "null"],
+      "description": "Best ask volume. Null if not available."
+    },
+    "spread": {
+      "type": ["number", "null"],
+      "description": "Bid-ask spread. Null if bid or ask not available."
+    },
+    "mid_price": {
+      "type": ["number", "null"],
+      "description": "Mid price = (bid + ask) / 2. Null if bid or ask not available."
+    },
+    "order_book_depth": {
+      "type": ["integer", "null"],
+      "description": "Number of price levels in order book snapshot. Null if not an orderbook_update."
+    },
+    "session_phase": {
+      "type": ["string", "null"],
+      "enum": ["pre_open", "opening", "main", "closing", "post_close", "clearing", null],
+      "description": "Current trading session phase."
+    },
+    "trading_halted": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if trading is halted on this instrument."
+    },
+    "source": {
+      "type": "string",
+      "description": "Data source identifier (e.g. moex_ct, replay, paper)."
+    },
+    "sequence_number": {
+      "type": ["integer", "null"],
+      "description": "Monotonic sequence number for ordering. Null if not available."
+    }
+  },
+  "additionalProperties": false
+}

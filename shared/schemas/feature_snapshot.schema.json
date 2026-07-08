@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "trading-robot-lab://schemas/feature_snapshot/v1",
+  "title": "FeatureSnapshot",
+  "description": "Computed feature values at a point in time. Produced by FeatureCalculator from one or more MarketEvents.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "snapshot_id",
+    "timestamp_ns",
+    "instrument_id",
+    "strategy_id",
+    "features"
+  ],
+  "properties": {
+    "snapshot_id": {
+      "type": "string",
+      "description": "Unique snapshot identifier."
+    },
+    "timestamp_ns": {
+      "type": "integer",
+      "description": "Timestamp in nanoseconds since Unix epoch when features were computed."
+    },
+    "instrument_id": {
+      "type": "string",
+      "description": "Instrument identifier."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "Strategy that requires these features."
+    },
+    "features": {
+      "type": "object",
+      "description": "Map of feature_name -> value. Keys are strategy-specific.",
+      "additionalProperties": {
+        "type": ["number", "null"]
+      }
+    },
+    "lookback_window_ms": {
+      "type": ["integer", "null"],
+      "description": "Lookback window used for feature computation in milliseconds."
+    },
+    "stale": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if features are based on stale market data."
+    },
+    "missing_data": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if input market data had gaps."
+    }
+  },
+  "additionalProperties": false
+}

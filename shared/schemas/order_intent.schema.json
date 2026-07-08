@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "trading-robot-lab://schemas/order_intent/v1",
+  "title": "OrderIntent",
+  "description": "Order intent derived from a StrategySignal after position sizing. Must pass RiskEngine before execution.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "order_id",
+    "timestamp_ns",
+    "instrument_id",
+    "strategy_id",
+    "signal_id",
+    "side",
+    "order_type",
+    "quantity"
+  ],
+  "properties": {
+    "order_id": {
+      "type": "string",
+      "description": "Unique order intent identifier."
+    },
+    "timestamp_ns": {
+      "type": "integer",
+      "description": "Order intent creation timestamp in nanoseconds since Unix epoch."
+    },
+    "instrument_id": {
+      "type": "string",
+      "description": "Instrument identifier."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "Strategy that produced this order intent."
+    },
+    "signal_id": {
+      "type": "string",
+      "description": "Reference to the StrategySignal that triggered this order."
+    },
+    "side": {
+      "type": "string",
+      "enum": ["buy", "sell"],
+      "description": "Order side."
+    },
+    "order_type": {
+      "type": "string",
+      "enum": ["limit", "market"],
+      "description": "Order type."
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of contracts/lots."
+    },
+    "price": {
+      "type": ["number", "null"],
+      "description": "Limit price. Null for market orders."
+    },
+    "stop_price": {
+      "type": ["number", "null"],
+      "description": "Stop price for stop orders. Null if not a stop order."
+    },
+    "time_in_force": {
+      "type": "string",
+      "enum": ["day", "gtc", "ioc", "fok"],
+      "default": "day",
+      "description": "Time in force."
+    },
+    "max_slippage_bps": {
+      "type": ["number", "null"],
+      "description": "Maximum allowed slippage in basis points."
+    },
+    "urgency": {
+      "type": "string",
+      "enum": ["low", "normal", "high", "critical"],
+      "default": "normal",
+      "description": "Order urgency."
+    },
+    "parent_order_id": {
+      "type": ["string", "null"],
+      "description": "Parent order ID for child/linked orders."
+    },
+    "replace_of_order_id": {
+      "type": ["string", "null"],
+      "description": "If this is a cancel-replace, the order being replaced."
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "description": "Human-readable reason for this order."
+    }
+  },
+  "additionalProperties": false
+}

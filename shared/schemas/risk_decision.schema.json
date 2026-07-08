@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "trading-robot-lab://schemas/risk_decision/v1",
+  "title": "RiskDecision",
+  "description": "RiskEngine output for an OrderIntent. Every OrderIntent must receive exactly one RiskDecision.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "timestamp_ns",
+    "order_id",
+    "decision"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string",
+      "description": "Unique risk decision identifier."
+    },
+    "timestamp_ns": {
+      "type": "integer",
+      "description": "Decision timestamp in nanoseconds since Unix epoch."
+    },
+    "order_id": {
+      "type": "string",
+      "description": "Reference to the OrderIntent being evaluated."
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["ALLOW", "REDUCE", "REJECT", "CANCEL_ALL", "STOP_STRATEGY", "SAFE_MODE"],
+      "description": "Risk decision."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Human-readable reason for the decision."
+    },
+    "reason_code": {
+      "type": "string",
+      "description": "Machine-readable reason code (e.g. MAX_POSITION, MAX_DAILY_LOSS, STALE_DATA)."
+    },
+    "original_quantity": {
+      "type": ["integer", "null"],
+      "description": "Original requested quantity. Null if not applicable."
+    },
+    "approved_quantity": {
+      "type": ["integer", "null"],
+      "description": "Approved quantity after risk adjustment. Null if order is rejected."
+    },
+    "approved_price": {
+      "type": ["number", "null"],
+      "description": "Approved price after risk adjustment. Null if not adjusted."
+    },
+    "max_allowed_position": {
+      "type": ["integer", "null"],
+      "description": "Maximum position allowed by risk rules at this moment."
+    },
+    "current_position": {
+      "type": ["integer", "null"],
+      "description": "Current position at time of decision."
+    },
+    "daily_pnl": {
+      "type": ["number", "null"],
+      "description": "Current daily PnL at time of decision."
+    },
+    "risk_rule_triggered": {
+      "type": ["string", "null"],
+      "description": "Name of the specific risk rule that triggered the decision. Null if ALLOW."
+    },
+    "kill_switch_active": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if kill switch was active at time of decision."
+    }
+  },
+  "additionalProperties": false
+}
