@@ -1,0 +1,18 @@
+{
+  "order_id": "ord-20260708-001",
+  "timestamp_ns": 1751971200200000000,
+  "instrument_id": "RIU5",
+  "strategy_id": "ri-synthetic-index-lead-lag-v1",
+  "signal_id": "sig-20260708-001",
+  "side": "sell",
+  "order_type": "limit",
+  "quantity": 3,
+  "price": 148240.0,
+  "stop_price": null,
+  "time_in_force": "day",
+  "max_slippage_bps": 5.0,
+  "urgency": "normal",
+  "parent_order_id": null,
+  "replace_of_order_id": null,
+  "reason": "Short entry on spread reversion signal. Position sizing: 3 contracts within max position limit."
+}

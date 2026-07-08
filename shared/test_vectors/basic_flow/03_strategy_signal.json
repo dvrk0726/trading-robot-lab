@@ -1,0 +1,20 @@
+{
+  "signal_id": "sig-20260708-001",
+  "timestamp_ns": 1751971200150000000,
+  "instrument_id": "RIU5",
+  "strategy_id": "ri-synthetic-index-lead-lag-v1",
+  "strategy_version": "1.0.0",
+  "signal_type": "entry_short",
+  "signal_strength": 0.82,
+  "confidence": 0.75,
+  "target_price": 148240.0,
+  "target_quantity": null,
+  "order_type_hint": "limit",
+  "urgency": "normal",
+  "features_used": {
+    "spread_z_score": 2.35,
+    "lead_lag_score": 0.78
+  },
+  "reason": "Spread z-score 2.35 exceeds entry threshold 2.0. RI likely to revert toward synthetic index.",
+  "expires_at_ns": 1751971260000000000
+}

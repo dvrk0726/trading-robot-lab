@@ -1,0 +1,20 @@
+{
+  "event_id": "evt-20260708-001",
+  "timestamp_ns": 1751971200000000000,
+  "receive_timestamp_ns": 1751971200050000000,
+  "instrument_id": "RIU5",
+  "event_type": "tick",
+  "last_price": 148250.0,
+  "last_volume": 5,
+  "bid_price": 148240.0,
+  "bid_volume": 12,
+  "ask_price": 148260.0,
+  "ask_volume": 8,
+  "spread": 20.0,
+  "mid_price": 148250.0,
+  "order_book_depth": null,
+  "session_phase": "main",
+  "trading_halted": false,
+  "source": "replay",
+  "sequence_number": 100001
+}

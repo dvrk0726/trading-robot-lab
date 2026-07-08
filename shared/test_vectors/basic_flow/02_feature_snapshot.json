@@ -1,0 +1,17 @@
+{
+  "snapshot_id": "snap-20260708-001",
+  "timestamp_ns": 1751971200100000000,
+  "instrument_id": "RIU5",
+  "strategy_id": "ri-synthetic-index-lead-lag-v1",
+  "features": {
+    "synthetic_index": 148180.5,
+    "spread_ri_vs_synthetic": 69.5,
+    "spread_z_score": 2.35,
+    "rolling_volatility_1m": 0.0012,
+    "session_bucket": 1.0,
+    "lead_lag_score": 0.78
+  },
+  "lookback_window_ms": 60000,
+  "stale": false,
+  "missing_data": false
+}

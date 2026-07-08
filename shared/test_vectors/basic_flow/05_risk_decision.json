@@ -1,0 +1,16 @@
+{
+  "decision_id": "risk-20260708-001",
+  "timestamp_ns": 1751971200250000000,
+  "order_id": "ord-20260708-001",
+  "decision": "ALLOW",
+  "reason": "Order within position limits, daily loss limits, and rate limits. Market data is fresh.",
+  "reason_code": "OK",
+  "original_quantity": 3,
+  "approved_quantity": 3,
+  "approved_price": 148240.0,
+  "max_allowed_position": 10,
+  "current_position": 0,
+  "daily_pnl": 0.0,
+  "risk_rule_triggered": null,
+  "kill_switch_active": false
+}
