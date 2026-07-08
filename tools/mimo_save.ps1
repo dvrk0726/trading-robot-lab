@@ -49,6 +49,9 @@ git add -A
 Write-Host "Committing..."
 git commit -m $Message
 
+Write-Host "Rebasing on latest origin/main before push..."
+git pull --rebase
+
 Write-Host "Pushing..."
 git push
 
