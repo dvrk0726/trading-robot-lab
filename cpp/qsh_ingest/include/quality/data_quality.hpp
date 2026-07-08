@@ -49,6 +49,12 @@ struct DataQuality {
     int64_t book_crossed = 0;
     int64_t book_invalid_side = 0;
 
+    // L2 export diagnostics
+    int64_t l2_crossed_book_snapshots = 0;
+    int64_t l2_non_positive_spread_snapshots = 0;
+    int64_t l2_empty_bid_snapshots = 0;
+    int64_t l2_empty_ask_snapshots = 0;
+
     std::vector<std::string> warnings;
     std::vector<std::string> errors;
 };

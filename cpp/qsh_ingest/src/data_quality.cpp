@@ -72,6 +72,12 @@ bool write_data_quality_json(const std::string& path, const DataQuality& dq) {
     out << "    \"crossed_book\": " << dq.book_crossed << ",\n";
     out << "    \"invalid_side\": " << dq.book_invalid_side << "\n";
     out << "  },\n";
+    out << "  \"l2_export_diagnostics\": {\n";
+    out << "    \"crossed_book_snapshots\": " << dq.l2_crossed_book_snapshots << ",\n";
+    out << "    \"non_positive_spread_snapshots\": " << dq.l2_non_positive_spread_snapshots << ",\n";
+    out << "    \"empty_bid_snapshots\": " << dq.l2_empty_bid_snapshots << ",\n";
+    out << "    \"empty_ask_snapshots\": " << dq.l2_empty_ask_snapshots << "\n";
+    out << "  },\n";
     write_json_string_array(out, "warnings", dq.warnings, 1);
     out << ",\n";
     write_json_string_array(out, "errors", dq.errors, 1);
@@ -137,6 +143,13 @@ void print_data_quality_summary(const DataQuality& dq) {
         std::cout << "negative_level_volume: " << dq.book_negative_level_volume << std::endl;
         std::cout << "crossed_book:          " << dq.book_crossed << std::endl;
         std::cout << "invalid_side:          " << dq.book_invalid_side << std::endl;
+
+        std::cout << std::endl;
+        std::cout << "--- L2 export diagnostics ---" << std::endl;
+        std::cout << "crossed_book_snapshots:         " << dq.l2_crossed_book_snapshots << std::endl;
+        std::cout << "non_positive_spread_snapshots:  " << dq.l2_non_positive_spread_snapshots << std::endl;
+        std::cout << "empty_bid_snapshots:            " << dq.l2_empty_bid_snapshots << std::endl;
+        std::cout << "empty_ask_snapshots:            " << dq.l2_empty_ask_snapshots << std::endl;
     }
 
     if (!dq.warnings.empty()) {

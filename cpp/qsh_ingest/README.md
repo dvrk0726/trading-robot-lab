@@ -78,6 +78,26 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 20 --out <file.csv>
 
 # Test on a small fragment (first 10k records, max 100 snapshots)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --max-records 10000 --max-snapshots 100 --out test_l2.csv
+
+# Reconstruct with diagnostics (safe sample)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --out l2_sample.csv --diagnostics-out l2_diagnostics.csv --max-diagnostics 100
+```
+
+**L2 output is not strategy-ready until diagnostics are clean.**
+
+During `l3-to-l2`, the engine checks each exported snapshot for:
+- Crossed book: `best_bid >= best_ask`
+- Empty bid side: `best_bid <= 0`
+- Empty ask side: `best_ask <= 0`
+
+Invalid snapshots are counted and optionally written to a diagnostics CSV with columns:
+`ts, reason, best_bid, best_ask, spread, bid_qty_1, ask_qty_1, snapshots_written, records_processed`
+
+If any invalid snapshots are found, a warning is printed:
+```
+WARNING: exported L2 contains invalid best bid / best ask state.
+This L2 output is not strategy-ready until reconstruction diagnostics are clean.
 ```
 
 ## Tests

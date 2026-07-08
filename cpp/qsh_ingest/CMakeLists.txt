@@ -68,3 +68,7 @@ add_test(NAME test_ordlog_flags COMMAND test_ordlog_flags)
 add_executable(test_order_book tests/test_order_book.cpp)
 target_link_libraries(test_order_book PRIVATE qsh_lib)
 add_test(NAME test_order_book COMMAND test_order_book)
+
+add_executable(test_l2_diagnostics tests/test_l2_diagnostics.cpp)
+target_link_libraries(test_l2_diagnostics PRIVATE qsh_lib)
+add_test(NAME test_l2_diagnostics COMMAND test_l2_diagnostics)

@@ -188,3 +188,103 @@ Recommended scope:
 4. Load L2 CSV into Python Trading Lab for visualization
 5. Add mid price / spread / depth charts to dashboard
 6. Begin cross-correlation analysis for RI / synthetic index lead-lag
+
+---
+
+## M10 Diagnostics Update
+
+Date: 2026-07-08
+Task: M10_L3_L2_RECONSTRUCTION_DIAGNOSTICS.md
+
+### Problem
+
+Exported L2 snapshots could contain invalid book state:
+
+```
+best_bid = 15266
+best_ask = 14062
+spread = -1204
+```
+
+This means `best_bid >= best_ask` (crossed book). Such L2 is not strategy-ready.
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `include/quality/data_quality.hpp` | Added L2 export diagnostics counters: `l2_crossed_book_snapshots`, `l2_non_positive_spread_snapshots`, `l2_empty_bid_snapshots`, `l2_empty_ask_snapshots` |
+| `src/data_quality.cpp` | Added L2 diagnostics to JSON output and summary print |
+| `include/orderbook/l2_snapshot.hpp` | Added `L2DiagReason` enum, `L2DiagnosticEntry` struct, `write_l2_diagnostics_csv()` |
+| `src/l2_snapshot.cpp` | Implemented `write_l2_diagnostics_csv()` |
+| `src/main.cpp` | Added `--diagnostics-out` and `--max-diagnostics` CLI args to `l3-to-l2`; added snapshot validation logic; added warning output |
+| `cpp/qsh_ingest/README.md` | Added diagnostics command example and explanation |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_l2_diagnostics.cpp` | 10 synthetic tests for L2 diagnostics |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 5
+```
+
+New test `test_l2_diagnostics` covers:
+- Normal book not crossed
+- Crossed book detection (`best_bid >= best_ask`)
+- Non-positive spread detection (`spread <= 0`)
+- Empty bid detection (`best_bid == 0`)
+- Empty ask detection (`best_ask == 0`)
+- Diagnostics CSV write (4 entries with all reason types)
+- Diagnostics CSV empty (header only)
+- Diagnostic reason name strings
+- Wide spread is valid (not flagged)
+- Bid above ask is crossed
+
+### New CLI Args
+
+```
+--diagnostics-out <file.csv>   Write L2 diagnostics CSV
+--max-diagnostics N            Max diagnostics entries (default: 100)
+```
+
+### Diagnostics CSV Columns
+
+```
+ts, reason, best_bid, best_ask, spread, bid_qty_1, ask_qty_1, snapshots_written, records_processed
+```
+
+Reason values: `CROSSED_BOOK`, `NON_POSITIVE_SPREAD`, `EMPTY_BID`, `EMPTY_ASK`
+
+### Sample Diagnostic Command
+
+```powershell
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh --depth 5 --max-records 100000 --max-snapshots 10000 --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_depth5_sample.csv --diagnostics-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_depth5_diagnostics.csv --max-diagnostics 100
+```
+
+### Warning Output
+
+When invalid snapshots are detected:
+
+```
+WARNING: exported L2 contains invalid best bid / best ask state.
+This L2 output is not strategy-ready until reconstruction diagnostics are clean.
+```
+
+### Remaining Limitations
+
+- Diagnostics are detection-only; no automatic fix/recovery of invalid book state
+- `l2_non_positive_spread_snapshots` counter exists but is not yet incremented (crossed book and non-positive spread are currently equivalent given `best_bid >= best_ask` implies `spread <= 0`)
+- Real QSH file needed to observe actual diagnostic counts
+- No Python-side visualization of diagnostics CSV yet
+
+**L2 output is not strategy-ready until diagnostics are clean.**
