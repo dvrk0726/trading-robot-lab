@@ -32,6 +32,32 @@ Priority for HFT research:
 4. AuxInfo.qsh - auxiliary information
 ```
 
+## QSH specification
+
+The owner provided the official `qsh.pdf` specification for QSH version 4.
+
+Key format points:
+
+```text
+QSH stores historical market data required for reconstructing trading in real-time scale.
+Data is stored as binary frames.
+Supported streams include Quotes, Deals, OwnOrders, OwnTrades, Messages, AuxInfo, OrdLog.
+QSH files may be gzip-compressed.
+```
+
+Important parser details:
+
+```text
+DateTime uses .NET ticks.
+GrowDateTime uses growing millisecond timestamps.
+Numbers may use LEB128 / ULEB128 variable-length encoding.
+Quotes stream contains full book in the first frame and later only changes.
+Quote volume is positive for ask, negative for bid, zero means remove level.
+Deals stream uses bit flags and carries only changed fields.
+AuxInfo stream also uses bit flags and carries only changed fields.
+OrdLog stream represents FORTS order log data and is the best source for order-level replay if available.
+```
+
 ## QSH reader/reference material provided by owner
 
 The owner also provided example archives:
@@ -40,6 +66,8 @@ The owner also provided example archives:
 QscExample.zip
 qsh_example.zip
 qsh2qsh.zip
+qsh2txt.zip
+txt2qsh.zip
 ```
 
 Observed purpose:
@@ -48,6 +76,8 @@ Observed purpose:
 QscExample.zip - example QScalp connector / data model reference
 qsh_example.zip - QSH reader/writer reference implementation in C#
 qsh2qsh.zip    - contains qsh2qsh.exe converter utility
+qsh2txt.zip    - contains qsh2txt.exe text extractor utility
+txt2qsh.zip    - contains txt2qsh.exe text-to-QSH converter utility
 ```
 
 ## qsh2qsh.zip inspection
@@ -76,7 +106,55 @@ Usage: qsh2qsh [options] input_file [output_file]
 -c Compress output file(s).
 ```
 
-Security note: do not run unknown executables inside the project workflow until the owner explicitly decides to trust the source. Do not commit this EXE to git.
+## qsh2txt.zip inspection
+
+Archive contents:
+
+```text
+qsh2txt.exe
+```
+
+Basic file properties from local inspection:
+
+```text
+file type: Windows PE32 console executable, Intel i386, Mono/.NET assembly
+sha256: b516bd227141948c208f02977d267597f703cc2a154d17a717da134fdc88e7a7
+visible title: QScalp History Data Text Extractor
+visible usage: qsh2txt input_qsh_file
+```
+
+Likely use:
+
+```text
+Convert or extract QSH frames to text for quick inspection.
+Useful for validating our future Python parser output against an official-style converter.
+Do not depend on it as the main long-term pipeline.
+```
+
+## txt2qsh.zip inspection
+
+Archive contents:
+
+```text
+txt2qsh.exe
+```
+
+Basic file properties from local inspection:
+
+```text
+file type: Windows PE32 GUI executable, Intel i386, Mono/.NET assembly
+sha256: 936beba1862ffe0b53f6d69fedc7c3cccb902e889e9e673e643d0e9d781e3a6b
+visible title/strings: txt2qsh, QScalp History Data, QScalp (*.qsh)
+```
+
+Likely use:
+
+```text
+Convert text representation back into QSH.
+Useful mostly for tests or synthetic QSH creation, not required for the first parser.
+```
+
+Security note: do not run unknown executables inside the project workflow until the owner explicitly decides to trust the source. Do not commit EXE tools to git.
 
 ## Storage decision draft
 
@@ -128,14 +206,15 @@ Expected scope:
 2. Implement minimal Python parser prototype for Deals, Quotes, AuxInfo.
 3. Keep raw QSH files out of git.
 4. Produce Data Quality output from sample QSH files.
-5. Do not implement broker/live trading.
+5. Optionally compare parser output with qsh2txt output if the owner chooses to run the utility locally.
+6. Do not implement broker/live trading.
 ```
 
 ## Open questions
 
 ```text
 1. Can we find matching OrdLog.qsh for RIZ6 on 2026-07-07?
-2. What is the license status of qsh_example C# code and qsh2qsh.exe?
+2. What is the license status of qsh_example C# code and QScalp converter utilities?
 3. Should the first parser be pure Python, or should QSH be converted to TXT first for prototyping?
 4. What storage should be used after SQLite becomes too small: DuckDB, Parquet, or both?
 ```
