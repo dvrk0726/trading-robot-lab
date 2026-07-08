@@ -1,0 +1,111 @@
+# qsh_ingest — QScalp History Data Engine
+
+C++20 parser and order book reconstruction engine for QSH v4 files.
+
+## Purpose
+
+Parse historical QSH/OrdLog/Quotes/Deals/AuxInfo market data files and produce:
+- Normalized event streams (CSV)
+- L2 order book snapshots
+- Data Quality reports (JSON)
+- Metadata for Trading Lab integration
+
+## Safety
+
+- No broker connection
+- No live trading
+- No real order sending
+- Historical files only
+- No secrets or API keys
+
+## Requirements
+
+- CMake 3.16+
+- C++20 compiler (MSVC 2019+, GCC 10+, Clang 12+)
+- zlib (for gzip decompression)
+
+### Windows Setup
+
+Install zlib via vcpkg:
+
+```powershell
+git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+cd C:\vcpkg
+.\bootstrap-vcpkg.bat
+.\vcpkg install zlib:x64-windows
+```
+
+Or install via system package manager.
+
+## Build
+
+```powershell
+# Configure
+cmake -S cpp/qsh_ingest -B build/qsh_ingest -DCMAKE_BUILD_TYPE=Release
+
+# Build
+cmake --build build/qsh_ingest --config Release
+```
+
+### Debug build with sanitizers
+
+```powershell
+cmake -S cpp/qsh_ingest -B build/qsh_ingest_debug -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON -DENABLE_UBSAN=ON
+cmake --build build/qsh_ingest_debug --config Debug
+```
+
+### With vcpkg
+
+```powershell
+cmake -S cpp/qsh_ingest -B build/qsh_ingest -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build/qsh_ingest
+```
+
+## CLI Commands
+
+```bash
+# Inspect QSH file header
+qsh-ingest inspect <file.qsh>
+
+# Scan records and print Data Quality counters
+qsh-ingest quality <file.qsh>
+
+# Export normalized metadata/events
+qsh-ingest convert <file.qsh> --out <dir>
+
+# Reconstruct L2 snapshots from OrdLog
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 20 --out <file.csv>
+```
+
+## Tests
+
+```powershell
+cd build/qsh_ingest
+ctest --output-on-failure
+```
+
+## Architecture
+
+```
+cpp/qsh_ingest/
+  include/
+    qsh/              QSH format primitives
+    orderbook/        L3 book and L2 snapshots
+    quality/          Data Quality reports
+  src/                Implementation
+  tests/              Unit tests
+```
+
+## QSH Format Notes
+
+- QSH v4 files are gzip-compressed binary streams
+- Uses LEB128/ULEB128 variable-length integer encoding
+- OrdLog stream provides L3 order-level data (add/fill/cancel/remove)
+- Delta encoding: most fields are incremental from previous record
+- TxEnd flag marks transaction boundaries
+- .NET ticks timestamp (100ns since 0001-01-01)
+
+## Reference
+
+Implementation informed by [qsh-rs](https://github.com/2dav/qsh-rs) (Apache-2.0).
+No code copied verbatim. Format logic reimplemented in C++20.

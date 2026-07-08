@@ -1,0 +1,264 @@
+#include "orderbook/order_book.hpp"
+#include <algorithm>
+#include <cmath>
+
+namespace qsh {
+
+bool OrderBook::apply(const OrderLogRecord& rec) {
+    if (rec.event == OLMsgType::Add) {
+        add_order(rec);
+    } else if (rec.event == OLMsgType::Fill) {
+        fill_order(rec);
+    } else if (rec.event == OLMsgType::Cancel) {
+        cancel_order(rec);
+    } else if (rec.event == OLMsgType::Remove) {
+        remove_order(rec);
+    }
+
+    // Update timestamp
+    last_ts_ = rec.timestamp;
+
+    return true;
+}
+
+void OrderBook::clear() {
+    bid_levels_.clear();
+    ask_levels_.clear();
+    orders_.clear();
+}
+
+void OrderBook::add_order(const OrderLogRecord& rec) {
+    if (rec.side == Side::Unknown) {
+        ++errors_.invalid_side;
+        return;
+    }
+    if (rec.amount_rest == 0) {
+        // This shouldn't happen for Add but handle gracefully
+        return;
+    }
+
+    // Track order
+    orders_[rec.order_id] = {rec.side, rec.price, rec.amount_rest};
+
+    // Add to level
+    if (rec.side == Side::Buy) {
+        auto& lvl = bid_levels_[rec.price];
+        lvl.first += rec.amount_rest;
+        ++lvl.second;
+    } else {
+        auto& lvl = ask_levels_[rec.price];
+        lvl.first += rec.amount_rest;
+        ++lvl.second;
+    }
+}
+
+void OrderBook::fill_order(const OrderLogRecord& rec) {
+    auto it = orders_.find(rec.order_id);
+    if (it == orders_.end()) {
+        ++errors_.missing_order_id;
+        return;
+    }
+
+    auto& info = it->second;
+    Volume fill_amount = rec.amount;
+
+    // Reduce order volume
+    if (info.amount <= fill_amount) {
+        // Fully filled - remove
+        fill_amount = info.amount;
+        orders_.erase(it);
+    } else {
+        info.amount -= fill_amount;
+    }
+
+    // Reduce level volume
+    if (info.side == Side::Buy) {
+        auto lvl_it = bid_levels_.find(info.price);
+        if (lvl_it != bid_levels_.end()) {
+            lvl_it->second.first -= fill_amount;
+            if (lvl_it->second.first <= 0) {
+                bid_levels_.erase(lvl_it);
+            }
+            if (lvl_it != bid_levels_.end() && lvl_it->second.second > 0) {
+                --lvl_it->second.second;
+            }
+        } else {
+            ++errors_.level_not_found;
+        }
+    } else {
+        auto lvl_it = ask_levels_.find(info.price);
+        if (lvl_it != ask_levels_.end()) {
+            lvl_it->second.first -= fill_amount;
+            if (lvl_it->second.first <= 0) {
+                ask_levels_.erase(lvl_it);
+            }
+            if (lvl_it != ask_levels_.end() && lvl_it->second.second > 0) {
+                --lvl_it->second.second;
+            }
+        } else {
+            ++errors_.level_not_found;
+        }
+    }
+
+    // If order fully consumed, remove from tracking
+    if (orders_.find(rec.order_id) != orders_.end() && orders_[rec.order_id].amount <= 0) {
+        orders_.erase(rec.order_id);
+    }
+}
+
+void OrderBook::cancel_order(const OrderLogRecord& rec) {
+    auto it = orders_.find(rec.order_id);
+    if (it == orders_.end()) {
+        ++errors_.missing_order_id;
+        return;
+    }
+
+    auto& info = it->second;
+
+    if (rec.amount_rest == 0) {
+        // Full cancel - remove order entirely
+        Volume amount_to_remove = info.amount;
+
+        if (info.side == Side::Buy) {
+            auto lvl_it = bid_levels_.find(info.price);
+            if (lvl_it != bid_levels_.end()) {
+                lvl_it->second.first -= amount_to_remove;
+                --lvl_it->second.second;
+                if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
+                    bid_levels_.erase(lvl_it);
+                }
+            } else {
+                ++errors_.level_not_found;
+            }
+        } else {
+            auto lvl_it = ask_levels_.find(info.price);
+            if (lvl_it != ask_levels_.end()) {
+                lvl_it->second.first -= amount_to_remove;
+                --lvl_it->second.second;
+                if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
+                    ask_levels_.erase(lvl_it);
+                }
+            } else {
+                ++errors_.level_not_found;
+            }
+        }
+
+        orders_.erase(it);
+    } else {
+        // Partial cancel - reduce to amount_rest
+        Volume diff = info.amount - rec.amount_rest;
+        if (diff < 0) {
+            ++errors_.amount_mismatch;
+            return;
+        }
+
+        if (info.side == Side::Buy) {
+            auto lvl_it = bid_levels_.find(info.price);
+            if (lvl_it != bid_levels_.end()) {
+                lvl_it->second.first -= diff;
+                if (lvl_it->second.first < 0) {
+                    ++errors_.negative_level_volume;
+                    lvl_it->second.first = 0;
+                }
+            } else {
+                ++errors_.level_not_found;
+            }
+        } else {
+            auto lvl_it = ask_levels_.find(info.price);
+            if (lvl_it != ask_levels_.end()) {
+                lvl_it->second.first -= diff;
+                if (lvl_it->second.first < 0) {
+                    ++errors_.negative_level_volume;
+                    lvl_it->second.first = 0;
+                }
+            } else {
+                ++errors_.level_not_found;
+            }
+        }
+
+        info.amount = rec.amount_rest;
+    }
+}
+
+void OrderBook::remove_order(const OrderLogRecord& rec) {
+    auto it = orders_.find(rec.order_id);
+    if (it == orders_.end()) {
+        ++errors_.missing_order_id;
+        return;
+    }
+
+    auto& info = it->second;
+
+    if (info.side == Side::Buy) {
+        auto lvl_it = bid_levels_.find(info.price);
+        if (lvl_it != bid_levels_.end()) {
+            lvl_it->second.first -= info.amount;
+            --lvl_it->second.second;
+            if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
+                bid_levels_.erase(lvl_it);
+            }
+        }
+    } else {
+        auto lvl_it = ask_levels_.find(info.price);
+        if (lvl_it != ask_levels_.end()) {
+            lvl_it->second.first -= info.amount;
+            --lvl_it->second.second;
+            if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
+                ask_levels_.erase(lvl_it);
+            }
+        }
+    }
+
+    orders_.erase(it);
+}
+
+std::vector<L2SnapshotRow> OrderBook::snapshot(int depth) const {
+    std::vector<L2SnapshotRow> result;
+
+    auto bid_it = bid_levels_.begin();
+    auto ask_it = ask_levels_.begin();
+
+    for (int i = 0; i < depth; ++i) {
+        L2SnapshotRow row;
+        if (bid_it != bid_levels_.end()) {
+            row.bid_price = bid_it->first;
+            row.bid_qty = bid_it->second.first;
+            ++bid_it;
+        }
+        if (ask_it != ask_levels_.end()) {
+            row.ask_price = ask_it->first;
+            row.ask_qty = ask_it->second.first;
+            ++ask_it;
+        }
+        result.push_back(row);
+    }
+
+    return result;
+}
+
+double OrderBook::mid_price() const {
+    if (bid_levels_.empty() || ask_levels_.empty()) return 0.0;
+    return (bid_levels_.begin()->first + ask_levels_.begin()->first) * 0.5;
+}
+
+Price OrderBook::spread() const {
+    if (bid_levels_.empty() || ask_levels_.empty()) return 0;
+    return ask_levels_.begin()->first - bid_levels_.begin()->first;
+}
+
+Price OrderBook::best_bid() const {
+    if (bid_levels_.empty()) return 0;
+    return bid_levels_.begin()->first;
+}
+
+Price OrderBook::best_ask() const {
+    if (ask_levels_.empty()) return 0;
+    return ask_levels_.begin()->first;
+}
+
+bool OrderBook::check_crossed() const {
+    if (bid_levels_.empty() || ask_levels_.empty()) return false;
+    return bid_levels_.begin()->first >= ask_levels_.begin()->first;
+}
+
+}  // namespace qsh
