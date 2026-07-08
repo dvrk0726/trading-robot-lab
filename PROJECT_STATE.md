@@ -2,33 +2,82 @@
 
 Дата последнего обновления: 2026-07-08
 Репозиторий: `dvrk0726/trading-robot-lab`
-Статус: начальная исследовательская платформа + базовый регламент ИИ-команды
+Статус: архитектурно зафиксирована двухсистемная модель `Trading Lab + Trading Runtime + Shared Contracts`
 
 ## Назначение файла
 
-Этот файл фиксирует текущее состояние проекта: что уже сделано, что известно, какие решения приняты и какой следующий шаг.
+Этот файл фиксирует текущее состояние проекта: что уже сделано, какие решения приняты и какой следующий шаг.
 
 Любой ИИ-агент или разработчик должен читать этот файл после `AI_CONTEXT.md`.
 
-## Текущая цель
+## Главная цель проекта
 
-Сформировать надежную базу знаний и архитектурный каркас для разработки нового торгового робота.
+Построить не одного монолитного торгового робота, а дисциплинированную платформу для исследования и дальнейшего безопасного исполнения торговых стратегий на фьючерсах MOEX.
 
-На текущем этапе задача не в написании live-робота и не в подключении к брокеру. Задача — аккуратно отделить:
+Целевая модель:
 
-- исследование стратегии;
-- архитектуру системы;
-- риск-менеджмент;
-- бэктест;
-- replay-симуляцию;
-- paper trading;
-- будущий execution layer.
+```text
+Trading Lab      — исследование, тестирование, replay, отчеты, анализ.
+Trading Runtime  — легкое исполнение утвержденных Strategy Packages.
+Shared Contracts — единые форматы данных, сигналов, заявок, risk decisions и отчетов.
+```
+
+На текущем этапе задача не в live trading и не в подключении брокера.
+
+Текущая задача:
+
+```text
+исследование -> статистическая проверка -> backtest -> replay -> paper -> owner gate -> live later
+```
+
+## Принятое архитектурное решение
+
+Принято решение использовать две отдельные программы и общий слой контрактов:
+
+```text
+decisions/ADR-0002-two-system-lab-runtime-architecture.md
+```
+
+Суть решения:
+
+```text
+Trading Lab не умеет отправлять реальные заявки.
+Trading Runtime не запускает неутвержденные стратегии.
+Стратегии передаются из Lab в Runtime только через Strategy Package.
+Каждый OrderIntent проходит RiskEngine.
+Live disabled by default and owner-gated.
+```
+
+## Почему принято это решение
+
+После анализа материалов по `robot_uralpro`, Avellaneda-Stoikov, market-making алгоритмам, практическим тестам SIU5 и статистике стало ясно:
+
+```text
+исследовательский код нельзя смешивать с live execution;
+боевой runtime должен быть легким и строгим;
+но Lab и Runtime должны иметь общие контракты, чтобы тестовая логика не расходилась с реальной.
+```
+
+Главный риск, который предотвращает архитектура:
+
+```text
+в backtest стратегия работает по одной логике,
+а в live runtime — по другой.
+```
+
+Для этого вводятся:
+
+```text
+Shared Contracts
+Strategy Package
+Signal Parity Test
+Runtime Package Validation
+Risk Engine Gate
+```
 
 ## Что уже сделано
 
-### 1. Создан закрытый GitHub-репозиторий
-
-Создан приватный репозиторий:
+### 1. Создан приватный GitHub-репозиторий
 
 ```text
 trading-robot-lab
@@ -40,23 +89,23 @@ trading-robot-lab
 dvrk0726
 ```
 
-Назначение репозитория: хранить код, документацию, архитектурные решения, исследовательские материалы и контекст для ИИ-агентов.
+Назначение: хранить код, документацию, архитектурные решения, research notes, идеи стратегий, оценки и контекст для ИИ-агентов.
 
 ### 2. Подключен доступ ChatGPT/GitHub
 
 Доступ к репозиторию проверен.
 
-Текущие возможности:
+Доступны:
 
-- чтение файлов;
-- создание файлов;
-- обновление файлов;
-- создание GitHub Issues;
-- работа с репозиторием через GitHub connector.
+```text
+чтение файлов
+создание файлов
+обновление файлов
+создание GitHub Issues
+работа с репозиторием через GitHub connector
+```
 
-### 3. Созданы базовые контекстные документы
-
-Созданы и используются:
+### 3. Созданы базовые документы
 
 ```text
 README.md
@@ -64,75 +113,40 @@ AI_CONTEXT.md
 PROJECT_STATE.md
 SECURITY.md
 ROADMAP.md
+.env.example
+.gitignore
 ```
 
-`AI_CONTEXT.md` является главным стартовым файлом для любого нового ИИ-агента.
-
-В нем зафиксировано:
-
-- назначение проекта;
-- запрет воспринимать старый HFT-архив как готового робота;
-- порядок разработки;
-- базовая идея стратегии из старого проекта;
-- требования к новой архитектуре;
-- обязательные режимы `backtest`, `paper`, `live`;
-- базовые правила безопасности;
-- минимальный risk management;
-- инструкция для других ИИ-агентов.
+`AI_CONTEXT.md` является главным стартовым файлом для нового ИИ-агента.
 
 ### 4. Создана архитектурная документация
-
-Созданы документы:
 
 ```text
 docs/01_hybrid_architecture.md
 decisions/ADR-0001-hybrid-python-cpp-architecture.md
+decisions/ADR-0002-two-system-lab-runtime-architecture.md
+docs/system_architecture_and_user_interface_requirements.md
+docs/trading_robot_vision_and_research_plan.md
 ```
 
-Принято базовое архитектурное направление:
+Приняты базовые архитектурные принципы:
 
 ```text
-Python = исследование, анализ, прототипы, бэктесты, отчеты.
-C++    = будущий быстрый контур, risk engine, replay, paper/live execution gateway.
+Python = research, analysis, prototype, backtest, reporting.
+C++    = future low-latency core, risk, replay/paper/live execution gateway.
+Trading Lab and Trading Runtime are separate applications.
+Shared Contracts prevent logic drift.
 ```
 
-Главное правило архитектуры:
+Главное правило:
 
 ```text
 strategy -> risk -> execution -> broker/exchange
 ```
 
-Стратегия не должна напрямую отправлять заявки.
+Стратегия не отправляет заявки напрямую.
 
-### 5. Создана база знаний для стратегий
-
-Создана структура:
-
-```text
-strategy_knowledge_base/
-  README.md
-  ideas/
-    README.md
-    IDEA_TEMPLATE.md
-  strategies/
-    README.md
-    STRATEGY_TEMPLATE.md
-  strategy_families/
-    README.md
-  evaluations/
-    README.md
-    EVALUATION_TEMPLATE.md
-  research_notes/
-    README.md
-  strategy_master_agent/
-    STRATEGY_MASTER_PROMPT.md
-```
-
-Назначение: отделить сырые идеи от формализованных стратегий, research notes и оценок.
-
-### 6. Создан регламент взаимодействия ИИ-агентов
-
-Созданы документы:
+### 5. Создан регламент взаимодействия ИИ-агентов
 
 ```text
 docs/ai_team_workflow.md
@@ -140,13 +154,13 @@ docs/ai_agent_communication_protocol.md
 .github/ISSUE_TEMPLATE/ai_agent_task.md
 ```
 
-Открыто координационное GitHub Issue:
+Открыто координационное Issue:
 
 ```text
 #1 [ARCH] Establish AI agent communication workflow
 ```
 
-Принята схема общения агентов:
+Принята схема:
 
 ```text
 Issue -> work -> result -> review -> handoff -> state update
@@ -162,276 +176,354 @@ Architecture Agent           docs, ADR, roadmap, PROJECT_STATE
 Owner / Human Gate           финальные решения, особенно перед live
 ```
 
-Решено не использовать общий `AI_CHAT.md` как основной канал общения, чтобы не создавать конфликты и грязную историю.
-
-Для общения используются:
+### 6. Создана база знаний по стратегиям
 
 ```text
-GitHub Issues
-Pull Request comments
-Markdown-документы
-PROJECT_STATE.md
-ADR в decisions/
+strategy_knowledge_base/
+  ideas/
+  strategies/
+  strategy_families/
+  evaluations/
+  research_notes/
+  strategy_master_agent/
 ```
 
-## Что известно про старый HFT-архив
+### 7. Обработаны и структурированы ключевые материалы
 
-Старый архивный проект был предварительно разобран в диалоге.
+Research notes:
 
-Вывод: это не готовый инструмент для запуска, а исторический технический материал.
+```text
+strategy_knowledge_base/research_notes/NOTE-20260708-002-market-maker-algorithms-parts-1-4.md
+strategy_knowledge_base/research_notes/NOTE-20260708-003-market-maker-algorithms-parts-5-8.md
+strategy_knowledge_base/research_notes/NOTE-20260708-004-bulashev-statistics-for-traders.md
+strategy_knowledge_base/research_notes/NOTE-20260708-005-avellaneda-stoikov-limit-order-book.md
+strategy_knowledge_base/research_notes/NOTE-20260708-006-r0man-market-maker-test-siu5.md
+strategy_knowledge_base/research_notes/NOTE-20260708-007-robot-uralpro-hft-context.md
+```
 
-Предварительно обнаружены элементы:
+Ideas:
 
-- C# / WinForms проект `new_robot_uralpro`;
-- работа с QUIK DDE;
-- работа с TRANS2QUIK;
-- работа с Plaza2/ClientGate;
-- торговая логика по RI;
-- расчет синтетического индекса;
-- расчет спреда;
-- лимитные заявки;
-- перестановка заявок;
-- учет позиции;
-- закрытие позиции;
-- CSV-логи и старые результаты.
+```text
+strategy_knowledge_base/ideas/IDEA-20260708-002-inventory-imbalance-market-making.md
+strategy_knowledge_base/ideas/IDEA-20260708-003-regime-aware-market-making-price-function.md
+strategy_knowledge_base/ideas/IDEA-20260708-004-ri-synthetic-index-lead-lag.md
+```
 
-## Предварительный вывод по старому роботу
+Evaluation:
 
-Старый робот имеет ценность как:
+```text
+strategy_knowledge_base/evaluations/EVAL-20260708-001-siu5-market-maker-r0man.md
+```
 
-- учебный пример;
-- источник архитектурных идей;
-- источник торговой гипотезы;
-- материал для восстановления логики старой стратегии.
+## Главные выводы из материалов
 
-Старый робот не имеет статуса готового боевого решения.
+### 1. Старый `robot_uralpro` — не готовый боевой робот
+
+Он ценен как:
+
+```text
+источник архитектурных идей
+источник торговой гипотезы RI / synthetic index
+пример старого HFT event loop
+материал для изучения order management
+```
+
+Но не имеет статуса готового live решения.
 
 Причины:
 
-- устаревшая инфраструктура;
-- изменившийся рынок;
-- неизвестная актуальная прибыльность;
-- отсутствие современного risk engine;
-- отсутствие replay-бэктеста;
-- риск случайной отправки реальных заявок;
-- необходимость адаптации под современные данные и интерфейсы.
-
-## Рабочая гипотеза стратегии
-
-Основная гипотеза из старого робота:
-
 ```text
-Фьючерс RI может временно отклоняться от синтетического индекса, рассчитанного по корзине акций и валютному фактору.
+устаревшая инфраструктура
+изменившийся рынок
+неизвестная актуальная прибыльность
+отсутствие современного risk engine
+отсутствие replay-бэктеста
+риск случайной отправки реальных заявок
 ```
 
-Смысл:
+### 2. Первая стратегия-кандидат
 
-1. Считать синтетический индекс.
-2. Считать спред между фьючерсом и синтетическим индексом.
-3. Оценивать нормальное состояние спреда.
-4. Искать аномальные отклонения.
-5. Входить лимитной заявкой только если риск и условия рынка допустимы.
-6. Выходить при нормализации спреда или по защитным условиям.
+```text
+RI / Synthetic Index Lead-Lag Statistical Arbitrage
+```
 
-Эта гипотеза должна быть заново проверена на современных данных.
+Современная формулировка:
+
+```text
+Do not assume who leads. Measure who leads.
+```
+
+Нужно проверить:
+
+```text
+кто лидер: RI или synthetic index
+на каком лаге
+стабильно ли это внутри дня
+стабильно ли это по режимам рынка
+выживает ли edge после комиссий и slippage
+```
+
+### 3. Вторая стратегия-кандидат
+
+```text
+Regime-aware Inventory Market Making
+```
+
+Требует:
+
+```text
+order book data
+depth imbalance
+spread state
+fill probability
+inventory control
+volatility regime filter
+cancel latency
+queue approximation
+event-driven replay
+```
+
+Поэтому это более позднее направление.
+
+### 4. Статистика обязательна
+
+Правило проекта:
+
+```text
+No strategy is accepted without statistical validation.
+```
+
+Минимум:
+
+```text
+sample size
+expected trade return
+confidence interval
+PnL distribution
+MAE/MFE
+max drawdown
+loss streaks
+VaR / Expected Shortfall
+out-of-sample
+parameter stability
+commission/slippage sensitivity
+```
 
 ## Принятые принципы
 
-### Принцип 1. Backtest first
+### Principle 1. Research first
 
-До любого live-подключения должен быть создан бэктест.
+До live — только research, backtest, replay, paper.
 
-### Принцип 2. Strategy is not execution
+### Principle 2. Strategy is not execution
 
-Стратегия не должна напрямую отправлять заявки.
+Стратегия возвращает `OrderIntent`, но не отправляет заявку.
 
-Стратегия формирует сигнал или намерение. Заявка проходит через:
+### Principle 3. Risk Engine is mandatory
 
-```text
-strategy -> risk -> execution -> broker/exchange
-```
+Каждый `OrderIntent` проходит RiskEngine.
 
-### Принцип 3. Live выключен по умолчанию
+### Principle 4. Live disabled by default
 
-Любая новая система должна запускаться в безопасном режиме по умолчанию:
+Live mode must require explicit owner approval.
 
-```text
-TRADING_MODE=backtest
-```
+### Principle 5. Lab cannot trade
 
-Live-режим должен требовать явного ручного включения.
+Trading Lab cannot send real broker/exchange orders.
 
-### Принцип 4. Секреты не хранятся в GitHub
+### Principle 6. Runtime only runs approved packages
 
-В репозиторий нельзя добавлять реальные `.env`, токены, ключи, пароли и брокерские доступы.
+Trading Runtime can only run validated and approved Strategy Packages.
 
-### Принцип 5. Все важные решения фиксируются
+### Principle 7. Signal parity required
 
-Архитектурные решения должны фиксироваться в папке `decisions/` в формате ADR.
+Перед запуском в Runtime стратегия должна пройти проверку совпадения сигналов на test vectors.
 
-Крупные изменения состояния проекта должны фиксироваться в `PROJECT_STATE.md`.
+### Principle 8. Secrets are not stored in GitHub
 
-### Принцип 6. ИИ-агенты работают через GitHub Issues и PR comments
+No `.env`, broker keys, passwords, tokens, private keys.
 
-Не использовать хаотичное общение.
-
-Правильная схема:
+## Текущее целевое устройство проекта
 
 ```text
-1 задача = 1 Issue
-1 изменение = 1 commit / PR
-1 крупное решение = 1 ADR
-1 стратегическая идея = 1 IDEA file
-1 формальная стратегия = 1 STRAT file
-```
+apps/
+  lab/
+    backend/
+    frontend/
+    research/
+    reports/
 
-## Текущее состояние репозитория
+  runtime/
+    core/
+    risk/
+    order_manager/
+    strategy_loader/
+    telemetry/
+    execution/
 
-На текущий момент созданы основные документы и структура:
+shared/
+  contracts/
+  schemas/
+  strategy_sdk/
+  test_vectors/
 
-```text
-README.md
-AI_CONTEXT.md
-PROJECT_STATE.md
-SECURITY.md
-ROADMAP.md
-.gitignore
-.env.example
+strategy_packages/
+  examples/
+
 docs/
 decisions/
 strategy_knowledge_base/
-.github/ISSUE_TEMPLATE/ai_agent_task.md
-```
-
-Также создано координационное Issue:
-
-```text
-#1 [ARCH] Establish AI agent communication workflow
 ```
 
 ## Ближайшие задачи
 
-### Задача 1. Формализовать первую торговую идею
-
-Создать файл:
+### Task 1. Создать skeleton проекта
 
 ```text
-strategy_knowledge_base/ideas/IDEA-20260708-001-ri-synthetic-index-spread.md
+apps/lab/
+apps/runtime/
+shared/contracts/
+shared/schemas/
+shared/strategy_sdk/
+shared/test_vectors/
+strategy_packages/examples/
 ```
 
-Содержание:
-
-- рыночная гипотеза;
-- инструменты;
-- synthetic index;
-- spread formula;
-- почему идея могла работать раньше;
-- почему может не работать сейчас;
-- какие данные нужны;
-- как проверить;
-- риски;
-- статус.
-
-### Задача 2. Создать первую формальную стратегию
-
-После идеи создать:
+### Task 2. Описать первые Shared Contracts
 
 ```text
-strategy_knowledge_base/strategies/STRAT-20260708-001-ri-synthetic-index-spread.md
+MarketEvent
+FeatureSnapshot
+StrategySignal
+OrderIntent
+RiskDecision
+PositionSnapshot
+TradeEvent
+RuntimeLog
 ```
 
-Стратегия должна быть готова для передачи Python Research Agent на baseline backtest.
-
-### Задача 3. Создать research note по срочному рынку РФ
-
-Создать файл:
+### Task 3. Описать Strategy Package Standard
 
 ```text
-strategy_knowledge_base/research_notes/NOTE-20260708-001-moex-derivatives-market-basics.md
+manifest.yaml
+params.yaml
+risk_limits.yaml
+instruments.yaml
+validation_report.json
+approval.json
+package.hash
 ```
 
-Зафиксировать:
+### Task 4. Создать dummy no-trade strategy package
 
-- где брать спецификации контрактов;
-- где брать параметры срочного рынка;
-- что такое ГО;
-- что такое вариационная маржа;
-- что такое клиринг;
-- какие данные критичны для бэктеста фьючерсов.
+Цель: проверить, что Runtime может загрузить пакет, проверить hash/approval/schema and reject invalid package.
 
-### Задача 4. Подготовить первое ТЗ для Python Research Agent
+### Task 5. Формализовать STRAT по RI / Synthetic Index Lead-Lag
 
-После формализации стратегии создать GitHub Issue:
+Создать:
 
 ```text
-[PYTHON] Build baseline RI synthetic spread calculation
+strategy_knowledge_base/strategies/STRAT-20260708-001-ri-synthetic-index-lead-lag.md
 ```
 
-Цель: сделать расчет synthetic index / spread без брокера, без live, только research/backtest.
+### Task 6. Создать задачу Python Research Agent
 
-### Задача 5. Проверить, какие labels нужны в GitHub Issues
-
-Рекомендуемые labels:
+Issue:
 
 ```text
-strategy
-research
-backtest
-python
-cpp
-risk
-architecture
-docs
-security
-blocked
-needs-clarification
-needs-owner-decision
-no-live
+[PYTHON] Build RI synthetic index lead-lag research prototype
 ```
 
-Если labels еще не созданы в GitHub, их можно создать позже вручную или отдельной задачей.
+Цель:
+
+```text
+load data
+build synthetic index
+align timestamps
+calculate cross-correlation by lag
+classify leader/lagger
+produce research report
+no trading
+```
+
+### Task 7. Создать Runtime skeleton без брокера
+
+Runtime должен:
+
+```text
+load Strategy Package
+validate package
+read replay/paper MarketEvent stream
+run TradeAgent
+produce OrderIntent
+run RiskEngine
+write AuditLog
+not send real orders
+```
 
 ## Открытые вопросы
 
-### 1. Стек разработки
+### 1. Источник исторических данных
 
-Базовое направление принято: гибрид Python + C++.
+Нужно выбрать источник данных по фьючерсам MOEX, акциям для synthetic index, весам индекса, FX factor and session calendar.
 
-Открытый вопрос: конкретный стек библиотек Python/C++, формат данных и набор инструментов для бэктеста.
+### 2. Формат хранения данных
 
-### 2. Источник исторических данных
-
-Пока не выбран окончательно источник исторических данных по российскому срочному рынку.
-
-Нужно определить:
-
-- какие данные доступны;
-- какой период нужен;
-- нужны ли тики;
-- нужен ли стакан;
-- можно ли хранить данные в репозитории или только локально;
-- какие ограничения по лицензии и приватности.
-
-### 3. Глубина первого бэктеста
-
-Нужно решить, каким будет baseline:
+Candidates:
 
 ```text
-Level 1: simple time-series backtest
-Level 2: commission + slippage
-Level 3: order book replay
-Level 4: latency simulation
+Parquet
+PostgreSQL
+ClickHouse
+CSV only for small samples
 ```
 
-Безопасный старт: Level 1-2 без брокера и без live.
+### 3. Язык первого Runtime skeleton
 
-### 4. Кто выполняет роль Python Research Agent и C++ Core Agent
+Возможные варианты:
 
-Роли описаны, но конкретные исполнители могут быть:
+```text
+Python for earliest skeleton
+C# if closer to old robot context
+C++ later for low-latency core
+```
 
-- человек-разработчик;
-- другой ИИ-агент;
-- Codex/GitHub-integrated agent;
-- комбинация.
+Решение: не делать premature low-latency optimization before strategy edge is validated.
 
-Главное: любой исполнитель должен работать через документы и Issues, а не через устные догадки.
+### 4. UI stack
+
+Trading Lab needs web UI, but exact stack not selected yet.
+
+## Explicit Non-Goals Now
+
+```text
+no live trading
+no broker connection
+no real API keys
+no colocation setup
+no ultra-low-latency optimization
+no direct port of old robot into production
+no strategy profitability claims without validation
+```
+
+## Current Next Step
+
+Start Phase 1 from `ROADMAP.md`:
+
+```text
+Shared Contracts and Repository Skeleton
+```
+
+In parallel, Strategy Master Agent should formalize:
+
+```text
+STRAT-20260708-001-ri-synthetic-index-lead-lag.md
+```
+
+Then create GitHub Issues for:
+
+```text
+[ARCH] Create shared contracts and project skeleton
+[PYTHON] Build RI synthetic index lead-lag research prototype
+[RUNTIME] Build no-broker runtime skeleton
+```
