@@ -4,6 +4,29 @@ Owner decision date: 2026-07-08
 Primary agent: MiMo
 Status: ready for implementation
 
+## How to run MiMo
+
+Run this task with a short command. Do not paste the full task text into PowerShell.
+
+```powershell
+git pull
+mimo --model xiaomi/mimo-v2.5-pro --prompt "Выполни M9_CPP_QSH_ORDLOG_DATA_LAYER.md"
+```
+
+After MiMo finishes, save the work:
+
+```powershell
+.\tools\mimo_save.ps1 "Start C++ QSH OrdLog data layer"
+```
+
+Then check the last commit:
+
+```powershell
+git log --oneline -1
+```
+
+All detailed requirements are inside this file. MiMo must read and follow the whole file, not depend on the short prompt.
+
 ## Mission
 
 Build the first C++20 market microstructure data engine for Trading Lab.
