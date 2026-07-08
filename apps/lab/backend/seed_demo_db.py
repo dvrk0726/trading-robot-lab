@@ -383,18 +383,23 @@ def seed_demo_drawdown(cursor):
 
 
 def seed_demo_trades(cursor):
-    """Seed 8 demo trades with entry/exit markers."""
+    """Seed 8 demo trades with entry/exit markers.
+
+    Trade entry/exit timestamps must match timestamps in demo_price_series
+    so that markers are placed at exact data point coordinates on the chart.
+    Price series: 2026-07-01T10:00:00Z every 5 min, 75 points -> ends at 16:10.
+    """
     strategy_id = "dummy_visual_strategy"
     instrument = "RI_demo"
     trades = [
         ("DEMO-001", "BUY",  "2026-07-01T10:05:00Z", 139850.0, "2026-07-01T11:30:00Z", 140200.0,  2, 700.0,   "closed"),
         ("DEMO-002", "SELL", "2026-07-01T12:00:00Z", 140400.0, "2026-07-01T13:15:00Z", 140100.0,  1, 300.0,   "closed"),
         ("DEMO-003", "BUY",  "2026-07-01T14:00:00Z", 139900.0, "2026-07-01T15:00:00Z", 139700.0,  3, -600.0,  "closed"),
-        ("DEMO-004", "BUY",  "2026-07-01T15:30:00Z", 139600.0, "2026-07-01T16:45:00Z", 140050.0,  2, 900.0,   "closed"),
-        ("DEMO-005", "SELL", "2026-07-01T17:00:00Z", 140100.0, "2026-07-01T17:45:00Z", 140350.0,  1, -250.0,  "closed"),
-        ("DEMO-006", "BUY",  "2026-07-01T18:00:00Z", 140200.0, None,                   None,      2, None,    "open"),
-        ("DEMO-007", "SELL", "2026-07-01T19:00:00Z", 140500.0, "2026-07-01T20:00:00Z", 140150.0,  1, 350.0,   "closed"),
-        ("DEMO-008", "BUY",  "2026-07-01T20:30:00Z", 140050.0, None,                   None,      3, None,    "open"),
+        ("DEMO-004", "BUY",  "2026-07-01T15:30:00Z", 139600.0, "2026-07-01T16:00:00Z", 140050.0,  2, 900.0,   "closed"),
+        ("DEMO-005", "SELL", "2026-07-01T10:30:00Z", 140100.0, "2026-07-01T11:05:00Z", 140350.0,  1, -250.0,  "closed"),
+        ("DEMO-006", "BUY",  "2026-07-01T12:30:00Z", 140200.0, None,                   None,      2, None,    "open"),
+        ("DEMO-007", "SELL", "2026-07-01T13:45:00Z", 140500.0, "2026-07-01T14:30:00Z", 140150.0,  1, 350.0,   "closed"),
+        ("DEMO-008", "BUY",  "2026-07-01T15:05:00Z", 140050.0, None,                   None,      3, None,    "open"),
     ]
     for t in trades:
         cursor.execute("""

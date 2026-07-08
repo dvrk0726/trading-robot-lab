@@ -238,8 +238,11 @@ None. Table is empty.
 - **demo_equity_curve**: 75 equity curve points starting at 1,000,000
 - **demo_drawdown**: 75 drawdown percentages computed from equity curve
 - **demo_trades**: 8 demo trades (6 closed, 2 open), mixed BUY/SELL with entry/exit markers
+  - All trade entry/exit timestamps align exactly with demo_price_series timestamps
+  - Markers are placed at real time + price coordinates on the canvas chart
 - Strategy: `dummy_visual_strategy`
 - Instrument: `RI_demo`
+- Price chart: interactive canvas with zoom, pan, reset, tooltips, trade/exit/grid toggles, auto-scale Y
 
 ## How to Use
 

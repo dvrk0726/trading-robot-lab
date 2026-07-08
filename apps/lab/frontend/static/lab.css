@@ -387,3 +387,117 @@ pre {
     letter-spacing: 1px;
     font-family: var(--font-mono);
 }
+
+/* Canvas Chart Controls */
+
+.chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.chart-controls-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.chart-ctrl-btn {
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.chart-ctrl-btn:hover {
+    background: var(--bg-card-alt);
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.chart-ctrl-check {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+}
+
+.chart-ctrl-check input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.chart-controls-hint {
+    color: var(--text-muted);
+    font-size: 10px;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.chart-canvas-wrap {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #0f1117;
+}
+
+.chart-canvas-wrap canvas {
+    display: block;
+    width: 100%;
+}
+
+.chart-tooltip {
+    display: none;
+    position: absolute;
+    background: #1a1d27ee;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    pointer-events: none;
+    z-index: 10;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    line-height: 1.6;
+}
+
+.chart-range-sel {
+    height: 8px;
+    margin: 6px 10px 0;
+    position: relative;
+}
+
+.range-bar {
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.range-handle {
+    background: rgba(74, 158, 255, 0.25);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    cursor: grab;
+}
