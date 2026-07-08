@@ -22,10 +22,13 @@ static void print_help() {
     std::cout << "  inspect <file.qsh>                    Read and display QSH header\n";
     std::cout << "  quality <file.qsh>                    Scan records and print counters\n";
     std::cout << "  convert <file.qsh> --out <dir>        Export normalized metadata\n";
-    std::cout << "  l3-to-l2 <OrdLog.qsh> --depth N --out <file.csv>  L3->L2 reconstruction\n";
+    std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N] [--out <file.csv>]\n";
+    std::cout << "                          L3->L2 reconstruction\n";
     std::cout << "\nOptions:\n";
-    std::cout << "  --depth N    L2 depth (default: 20)\n";
-    std::cout << "  --out <path> Output file or directory\n";
+    std::cout << "  --depth N          L2 depth (default: 20)\n";
+    std::cout << "  --max-records N    Stop after N OrdLog records (for testing)\n";
+    std::cout << "  --max-snapshots N  Stop after N L2 snapshots (for testing)\n";
+    std::cout << "  --out <path>       Output file or directory\n";
     std::cout << "\nSafety:\n";
     std::cout << "  No broker connection. No live trading. Historical files only.\n";
 }
@@ -211,7 +214,7 @@ static int cmd_convert(const std::string& path, const std::string& out_dir) {
     return 0;
 }
 
-static int cmd_l3_to_l2(const std::string& path, int depth, const std::string& out_path) {
+static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records, int64_t max_snapshots, const std::string& out_path) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -224,7 +227,10 @@ static int cmd_l3_to_l2(const std::string& path, int depth, const std::string& o
         return 1;
     }
 
-    std::cout << "Reconstructing L2 (depth=" << depth << ") from OrdLog..." << std::endl;
+    std::cout << "Reconstructing L2 (depth=" << depth;
+    if (max_records > 0)  std::cout << ", max_records=" << max_records;
+    if (max_snapshots > 0) std::cout << ", max_snapshots=" << max_snapshots;
+    std::cout << ") from OrdLog..." << std::endl;
 
     OrderBook book;
     OrdLogReader reader;
@@ -237,17 +243,19 @@ static int cmd_l3_to_l2(const std::string& path, int depth, const std::string& o
     while (reader.next(file, rec)) {
         ++record_count;
 
-        if (!is_system_record(rec)) continue;
+        if (!is_system_record(rec)) {
+            if (max_records > 0 && record_count >= max_records) break;
+            continue;
+        }
         ++system_count;
 
         // NewSession clears the book
         if (has_flag(rec.order_flags, OLFlags::NewSession)) {
             book.clear();
+            if (max_records > 0 && record_count >= max_records) break;
             continue;
         }
 
-        // Skip Fill-only events that don't modify the book structure
-        // (they just indicate a trade happened, the order stays in the book)
         book.apply(rec);
 
         // Take snapshot on TxEnd
@@ -259,7 +267,10 @@ static int cmd_l3_to_l2(const std::string& path, int depth, const std::string& o
             entry.spread = book.spread();
             snapshots.push_back(entry);
             ++snapshot_count;
+            if (max_snapshots > 0 && snapshot_count >= max_snapshots) break;
         }
+
+        if (max_records > 0 && record_count >= max_records) break;
     }
 
     std::cout << "Records processed: " << record_count << std::endl;
@@ -327,21 +338,29 @@ int main(int argc, char* argv[]) {
 
     if (cmd == "l3-to-l2") {
         if (argc < 3) {
-            std::cerr << "Usage: qsh-ingest l3-to-l2 <OrdLog.qsh> --depth N --out <file.csv>" << std::endl;
+            std::cerr << "Usage: qsh-ingest l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N] [--out <file.csv>]" << std::endl;
             return 1;
         }
         std::string file_path = argv[2];
         int depth = 20;
+        int64_t max_records = 0;
+        int64_t max_snapshots = 0;
         std::string out_path = "l2_snapshots.csv";
         for (int i = 3; i < argc - 1; ++i) {
             if (std::strcmp(argv[i], "--depth") == 0 && i + 1 < argc) {
                 depth = std::atoi(argv[i + 1]);
             }
+            if (std::strcmp(argv[i], "--max-records") == 0 && i + 1 < argc) {
+                max_records = std::atoll(argv[i + 1]);
+            }
+            if (std::strcmp(argv[i], "--max-snapshots") == 0 && i + 1 < argc) {
+                max_snapshots = std::atoll(argv[i + 1]);
+            }
             if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
                 out_path = argv[i + 1];
             }
         }
-        return cmd_l3_to_l2(file_path, depth, out_path);
+        return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

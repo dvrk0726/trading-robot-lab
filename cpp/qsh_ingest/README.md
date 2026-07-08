@@ -75,6 +75,9 @@ qsh-ingest convert <file.qsh> --out <dir>
 
 # Reconstruct L2 snapshots from OrdLog
 qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 20 --out <file.csv>
+
+# Test on a small fragment (first 10k records, max 100 snapshots)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --max-records 10000 --max-snapshots 100 --out test_l2.csv
 ```
 
 ## Tests
