@@ -8,6 +8,7 @@
 #include "orderbook/l2_snapshot.hpp"
 #include "quality/data_quality.hpp"
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <filesystem>

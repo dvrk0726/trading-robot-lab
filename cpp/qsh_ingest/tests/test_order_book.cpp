@@ -153,6 +153,7 @@ static void test_empty_book() {
     auto snap = book.snapshot(5);
     assert(snap.size() == 5);
     for (const auto& row : snap) {
+        (void)row;
         assert(row.bid_price == 0);
         assert(row.ask_price == 0);
     }

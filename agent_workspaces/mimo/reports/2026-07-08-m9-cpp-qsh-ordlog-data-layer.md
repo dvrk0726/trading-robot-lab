@@ -75,17 +75,33 @@ ctest --output-on-failure
 
 ## 3. Build Result
 
-**Build tools not available on current system.** MSVC 2022 Community is installed but cmake and zlib are not present. The C++ code is complete and should compile once cmake and zlib are installed.
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. All targets compile clean (Release).
 
 ## 4. Test Result
 
-4 test files created:
+4 test files, all passing:
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 4
+```
+
 - `test_leb128.cpp` — 14 tests covering ULEB128, signed LEB128, growing integers, little-endian readers, QSH string reader, overflow detection
 - `test_qsh_header.cpp` — 6 tests covering valid header parsing, bad signature rejection, bad version rejection, empty streams, too-small files
 - `test_ordlog_flags.cpp` — 14 tests covering OLFlags, OLEntryFlags, DealFlags, AuxInfoFlags, event classification, side detection, system record checks, TxEnd detection
 - `test_order_book.cpp` — 9 tests covering add orders, snapshots, mid price, fill/cancel/clear operations
 
-Tests cannot be run until build tools are installed.
+## 4.1. Post-M9 Build Fix (2026-07-08)
+
+Fixed MSVC C4189 warnings-as-errors that prevented Release build:
+
+| File | Fix |
+|---|---|
+| `src/qsh_header.cpp` | Removed unused `ms_rem` and `total_sec` variables |
+| `src/main.cpp` | Added missing `#include <fstream>` for `std::ofstream` |
+| `tests/test_leb128.cpp` | Added `[[maybe_unused]]` to variables used only inside `assert` (optimized out in Release) |
+| `tests/test_ordlog_flags.cpp` | Added `[[maybe_unused]]` to variables used only inside `assert` |
+| `tests/test_order_book.cpp` | Added `(void)row` cast for range variable used only inside `assert` |
 
 ## 5. Supported QSH Features
 

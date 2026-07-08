@@ -6,7 +6,7 @@
 using namespace qsh;
 
 static void test_ol_flags() {
-    uint16_t flags = OLFlags::Add | OLFlags::Buy | OLFlags::TxEnd;
+    [[maybe_unused]] uint16_t flags = OLFlags::Add | OLFlags::Buy | OLFlags::TxEnd;
     assert(has_flag(flags, OLFlags::Add));
     assert(has_flag(flags, OLFlags::Buy));
     assert(has_flag(flags, OLFlags::TxEnd));
@@ -17,7 +17,7 @@ static void test_ol_flags() {
 }
 
 static void test_entry_flags() {
-    uint8_t flags = OLEntryFlags::DateTime | OLEntryFlags::OrderId | OLEntryFlags::Price;
+    [[maybe_unused]] uint8_t flags = OLEntryFlags::DateTime | OLEntryFlags::OrderId | OLEntryFlags::Price;
     assert(has_flag(flags, OLEntryFlags::DateTime));
     assert(has_flag(flags, OLEntryFlags::OrderId));
     assert(has_flag(flags, OLEntryFlags::Price));
@@ -27,7 +27,7 @@ static void test_entry_flags() {
 }
 
 static void test_deal_flags() {
-    uint8_t flags = DealFlags::Timestamp | DealFlags::Price | DealFlags::Amount;
+    [[maybe_unused]] uint8_t flags = DealFlags::Timestamp | DealFlags::Price | DealFlags::Amount;
     assert(has_flag(flags, DealFlags::Timestamp));
     assert(has_flag(flags, DealFlags::Price));
     assert(has_flag(flags, DealFlags::Amount));
@@ -36,7 +36,7 @@ static void test_deal_flags() {
 }
 
 static void test_auxinfo_flags() {
-    uint8_t flags = AuxInfoFlags::Timestamp | AuxInfoFlags::Price | AuxInfoFlags::SessionInfo;
+    [[maybe_unused]] uint8_t flags = AuxInfoFlags::Timestamp | AuxInfoFlags::Price | AuxInfoFlags::SessionInfo;
     assert(has_flag(flags, AuxInfoFlags::Timestamp));
     assert(has_flag(flags, AuxInfoFlags::Price));
     assert(has_flag(flags, AuxInfoFlags::SessionInfo));

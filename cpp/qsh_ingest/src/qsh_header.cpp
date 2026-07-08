@@ -80,12 +80,6 @@ std::string dotnet_ticks_to_string(int64_t ticks) {
         return "invalid";
     }
 
-    // Simple conversion to datetime string
-    // Days since epoch
-    int64_t total_sec = unix_ms / 1000;
-    int64_t ms_rem = unix_ms % 1000;
-
-    // Simplified: just show the raw ticks and unix ms
     return std::to_string(unix_ms) + "ms (ticks=" + std::to_string(ticks) + ")";
 }
 
