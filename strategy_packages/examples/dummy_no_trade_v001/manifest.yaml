@@ -1,0 +1,13 @@
+strategy_id: dummy_no_trade
+strategy_version: 0.1.0
+created_at: "2026-07-08T00:00:00Z"
+author: mimo-agent
+allowed_modes:
+  - research
+  - backtest
+  - replay
+required_market_data: []
+required_features: []
+min_runtime_version: "0.1.0"
+validation_report_id: "val-dummy-001"
+package_hash: "sha256:<computed_at_build_time>"

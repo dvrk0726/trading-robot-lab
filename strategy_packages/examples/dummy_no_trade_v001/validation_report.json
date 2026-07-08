@@ -1,0 +1,15 @@
+{
+  "report_id": "val-dummy-001",
+  "strategy_id": "dummy_no_trade",
+  "strategy_version": "0.1.0",
+  "validated_at": "2026-07-08T00:00:00Z",
+  "validated_by": "mimo-agent",
+  "schema_valid": true,
+  "hash_valid": true,
+  "signal_parity_passed": true,
+  "risk_limits_valid": true,
+  "errors": [],
+  "warnings": [
+    "This is a dummy no-trade package. No real strategy logic exists."
+  ]
+}

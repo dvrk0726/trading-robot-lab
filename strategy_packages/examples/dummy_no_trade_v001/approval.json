@@ -1,0 +1,10 @@
+{
+  "research_approved": true,
+  "backtest_approved": true,
+  "replay_approved": true,
+  "paper_approved": false,
+  "live_approved": false,
+  "approved_by": "",
+  "approved_at": "",
+  "notes": "Dummy no-trade package for infrastructure testing. Live approval is not granted."
+}

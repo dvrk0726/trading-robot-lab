@@ -1,0 +1,10 @@
+# Risk limits for dummy no-trade strategy.
+# All limits are zero because this strategy never trades.
+
+max_position: 0
+max_order_size: 0
+max_daily_loss: 0
+max_drawdown: 0.0
+max_signal_age_ms: 5000
+max_orders_per_second: 0
+max_market_data_staleness_ms: 10000
