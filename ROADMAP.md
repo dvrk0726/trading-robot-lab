@@ -1,6 +1,7 @@
 # ROADMAP
 
-Дата создания: 2026-07-08
+Дата создания: 2026-07-08  
+Дата последнего обновления: 2026-07-08  
 Статус: active roadmap
 
 ## Главная цель
@@ -13,12 +14,13 @@ Trading Runtime  — легкое исполнение утвержденных 
 Shared Contracts — единые форматы данных, сигналов, заявок, risk decisions и отчетов.
 ```
 
-## Current Strategic Decision
+## Current Strategic Decisions
 
-Принято архитектурное решение:
+Приняты архитектурные решения:
 
 ```text
 decisions/ADR-0002-two-system-lab-runtime-architecture.md
+decisions/ADR-0003-cpp-qsh-ordlog-data-engine.md
 ```
 
 Суть:
@@ -28,11 +30,51 @@ Trading Lab cannot send real orders.
 Trading Runtime cannot run unapproved strategy packages.
 Every OrderIntent must pass RiskEngine.
 Live mode is disabled by default and requires owner approval.
+C++20 is the primary language for QSH/OrdLog ingest and future low-level replay/runtime core.
+Python remains the research, dashboard, analysis and reporting layer.
 ```
+
+## Current Priority — M9 C++ QSH / OrdLog Data Layer
+
+Текущий главный фокус:
+
+```text
+M9_CPP_QSH_ORDLOG_DATA_LAYER.md
+```
+
+Цель текущего этапа:
+
+```text
+Raw QSH / OrdLog / Quotes / Deals / AuxInfo
+  -> C++20 parser / normalizer
+  -> L3 order book reconstruction
+  -> L2 snapshots / event stream
+  -> Data Quality report
+  -> Python Trading Lab visualization and research
+```
+
+Ключевое правило:
+
+```text
+2021 OrdLog = engineering sample, not current trading evidence.
+```
+
+Исторический `OrdLog.qsh` используется для:
+
+```text
+parser development
+L3 order book reconstruction
+replay mechanics
+queue/fill model prototype
+Data Quality checks
+historical order book visualization
+```
+
+Он не используется как доказательство текущей прибыльности стратегии.
 
 ## Phase 0 — Knowledge Base and Architecture Foundation
 
-Статус: mostly done
+Статус: done / maintained
 
 ### Done
 
@@ -42,113 +84,141 @@ PROJECT_STATE.md
 SECURITY.md
 docs/01_hybrid_architecture.md
 decisions/ADR-0001-hybrid-python-cpp-architecture.md
+decisions/ADR-0002-two-system-lab-runtime-architecture.md
+decisions/ADR-0003-cpp-qsh-ordlog-data-engine.md
 docs/ai_team_workflow.md
 docs/ai_agent_communication_protocol.md
 .github/ISSUE_TEMPLATE/ai_agent_task.md
 strategy_knowledge_base/
 ```
 
-### Added after research materials
-
-```text
-strategy_knowledge_base/research_notes/NOTE-20260708-002-market-maker-algorithms-parts-1-4.md
-strategy_knowledge_base/research_notes/NOTE-20260708-003-market-maker-algorithms-parts-5-8.md
-strategy_knowledge_base/research_notes/NOTE-20260708-004-bulashev-statistics-for-traders.md
-strategy_knowledge_base/research_notes/NOTE-20260708-005-avellaneda-stoikov-limit-order-book.md
-strategy_knowledge_base/research_notes/NOTE-20260708-006-r0man-market-maker-test-siu5.md
-strategy_knowledge_base/research_notes/NOTE-20260708-007-robot-uralpro-hft-context.md
-strategy_knowledge_base/ideas/IDEA-20260708-002-inventory-imbalance-market-making.md
-strategy_knowledge_base/ideas/IDEA-20260708-003-regime-aware-market-making-price-function.md
-strategy_knowledge_base/ideas/IDEA-20260708-004-ri-synthetic-index-lead-lag.md
-strategy_knowledge_base/evaluations/EVAL-20260708-001-siu5-market-maker-r0man.md
-docs/trading_robot_vision_and_research_plan.md
-decisions/ADR-0002-two-system-lab-runtime-architecture.md
-docs/system_architecture_and_user_interface_requirements.md
-```
-
 ## Phase 1 — Shared Contracts and Repository Skeleton
 
-Статус: next
+Статус: mostly done
 
-Цель: создать минимальную структуру проекта и общие схемы, чтобы Lab и Runtime не расходились.
-
-### Tasks
-
-1. Create repository folders:
+### Done / already started
 
 ```text
 apps/lab/
 apps/runtime/
-shared/contracts/
 shared/schemas/
-shared/strategy_sdk/
 shared/test_vectors/
 strategy_packages/examples/
+Strategy Package standard
+dummy no-trade package
+basic shared JSON schemas
+basic validation examples
+Trading Lab demo dashboard
+Trading Lab demo charts
 ```
 
-2. Define first schemas:
+### Remaining cleanup
 
 ```text
-MarketEvent
-FeatureSnapshot
-StrategySignal
-OrderIntent
-RiskDecision
-PositionSnapshot
-TradeEvent
-RuntimeLog
+1. Keep schemas aligned with QSH / microstructure events.
+2. Add normalized market data contracts for OrdLog, L3 events and L2 snapshots.
+3. Keep PROJECT_STATE.md updated after each major MiMo task.
 ```
 
-3. Define Strategy Package standard:
+## Phase 2 — Historical Market Data Layer MVP
+
+Статус: current / in progress through M9
+
+Цель: создать первый настоящий слой данных Trading Lab для микроструктурного анализа.
+
+### Tasks
+
+1. C++ QSH ingest skeleton:
 
 ```text
-manifest.yaml
-params.yaml
-risk_limits.yaml
-instruments.yaml
-validation_report.json
-approval.json
-package.hash
+cpp/qsh_ingest/
+CMake build
+qsh-ingest CLI
+inspect / quality / convert / l3-to-l2 commands
 ```
 
-4. Create example dummy strategy package:
+2. QSH stream support:
 
 ```text
-strategy_packages/examples/dummy_no_trade_v001/
+OrdLog.qsh first priority
+Quotes.qsh
+Deals.qsh
+AuxInfo.qsh
 ```
 
-5. Create signal parity test concept:
+3. OrdLog reconstruction:
 
 ```text
-test_vectors/market_events.csv
-test_vectors/expected_signals.csv
-test_vectors/expected_order_intents.csv
+TxEnd transaction grouping
+NewSession reset
+Add / Fill / Cancel / Remove classification
+L3 order book reconstruction
+L3 -> L2 snapshot export
+```
+
+4. Data Quality:
+
+```text
+records_total
+records_valid
+records_rejected
+first_timestamp
+last_timestamp
+stream_type
+instrument
+new_session_count
+tx_count
+add_count
+fill_count
+cancel_count
+remove_count
+unknown_side_count
+non_system_count
+book_reconstruction_errors
+warnings
+```
+
+5. Trading Lab integration:
+
+```text
+show imported files
+show Data Quality status
+show stream type
+show warnings/errors
+show historical order book availability
+prepare order book replay UI
 ```
 
 ### Done Criteria
 
 ```text
-Lab and Runtime have common contracts.
-Runtime can load a dummy Strategy Package.
-Runtime can reject package if approval/hash/schema is invalid.
-No broker adapter exists yet.
+C++ qsh-ingest builds.
+QSH header and stream type are detected.
+OrdLog records can be scanned.
+Data Quality report is generated.
+Limited L3 -> L2 reconstruction works safely.
+Python Trading Lab can display generated quality metadata.
+No raw real QSH is committed.
+No broker/live/order sending exists.
 ```
 
-## Phase 2 — Trading Lab Research MVP
+## Phase 3 — Trading Lab Research MVP
 
-Статус: upcoming
+Статус: upcoming after M9 data layer
 
-Цель: первая рабочая лаборатория для исследования RI / Synthetic Index Lead-Lag.
+Цель: первая рабочая лаборатория для исследования RI / Synthetic Index Lead-Lag and market microstructure signals.
 
 ### Tasks
 
-1. Data import MVP:
+1. Load normalized data:
 
 ```text
-load RI futures data
-load synthetic index components or prepared synthetic index sample
-validate timestamps
-handle missing data
+L2 snapshots
+trades
+spread
+mid price
+depth
+book imbalance
 ```
 
 2. Feature MVP:
@@ -159,6 +229,9 @@ spread = RI - synthetic_index
 returns
 rolling volatility
 session time bucket
+bid/ask imbalance
+trades per second
+cancel/add ratio
 ```
 
 3. Lead-lag analyzer:
@@ -183,11 +256,12 @@ hypothesis verdict: continue / reject / needs more data
 
 ```text
 The system can answer: does RI lead synthetic or synthetic lead RI on a sample dataset?
+The answer is marked as historical/sample-only unless current data is used.
 No trading logic is active.
 No broker connection exists.
 ```
 
-## Phase 3 — Backtest and Metrics MVP
+## Phase 4 — Backtest and Metrics MVP
 
 Статус: upcoming
 
@@ -238,34 +312,6 @@ Parameters and data range are recorded.
 Risk Engine runs in simulation mode.
 ```
 
-## Phase 4 — Trading Runtime Skeleton
-
-Статус: upcoming
-
-Цель: создать отдельную легкую программу Runtime, пока без брокера.
-
-### Tasks
-
-1. Runtime config loader.
-2. Strategy Package loader.
-3. Strategy Package validator.
-4. Simple TradeAgent interface.
-5. RiskEngine minimal rules.
-6. OrderManager stub.
-7. Telemetry/logging.
-8. Replay/paper event input.
-
-### Done Criteria
-
-```text
-Runtime loads approved package.
-Runtime receives MarketEvent stream.
-Runtime produces OrderIntent.
-Runtime applies RiskDecision.
-Runtime writes audit logs.
-Runtime cannot send real orders.
-```
-
 ## Phase 5 — Event-Driven Replay Bridge
 
 Статус: later
@@ -276,6 +322,7 @@ Runtime cannot send real orders.
 
 ```text
 event stream playback
+historical order book replay
 order lifecycle simulation
 partial fills
 cancel/replace simulation
@@ -291,9 +338,40 @@ runtime logs imported back into Lab
 ```text
 Replay result can be compared against simple backtest.
 Differences are visible and explainable.
+Historical order book state is visible in Trading Lab.
 ```
 
-## Phase 6 — Paper Trading
+## Phase 6 — Trading Runtime Skeleton
+
+Статус: later / after data layer and replay foundation
+
+Цель: создать отдельную легкую программу Runtime, пока без брокера.
+
+### Tasks
+
+```text
+runtime config loader
+Strategy Package loader
+Strategy Package validator
+TradeAgent interface
+RiskEngine minimal rules
+OrderManager stub
+Telemetry/logging
+Replay/paper event input
+```
+
+### Done Criteria
+
+```text
+Runtime loads approved package.
+Runtime receives MarketEvent stream.
+Runtime produces OrderIntent.
+Runtime applies RiskDecision.
+Runtime writes audit logs.
+Runtime cannot send real orders.
+```
+
+## Phase 7 — Paper Trading
 
 Статус: later / owner-gated
 
@@ -317,7 +395,7 @@ Paper trading can run without real broker order sending.
 Runtime logs can be analyzed in Trading Lab.
 ```
 
-## Phase 7 — Live Gate Preparation
+## Phase 8 — Live Gate Preparation
 
 Статус: future / blocked by owner decision
 
@@ -336,17 +414,6 @@ small size only
 manual monitoring plan required
 ```
 
-## Current Priority
-
-Immediate next tasks:
-
-```text
-1. Create shared contracts and repository skeleton.
-2. Formalize STRAT for RI / Synthetic Index Lead-Lag.
-3. Create GitHub Issue for Python Research Agent: lead-lag prototype.
-4. Create GitHub Issue for Architecture/Runtime Agent: shared contracts and Strategy Package standard.
-```
-
 ## Explicit Non-Goals Now
 
 ```text
@@ -354,14 +421,16 @@ no live trading
 no broker connection
 no real API keys
 no colocation setup
-no ultra-low-latency optimization
+no real order sending
 no direct port of old robot into production
+no profitability claims from old historical data
 ```
 
 ## Project Principle
 
 ```text
 Research first.
+Data Quality first.
 Runtime only executes approved packages.
 Risk Engine is mandatory.
 Live is a future owner-gated stage.
