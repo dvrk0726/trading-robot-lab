@@ -133,6 +133,56 @@ Runtime component status.
 | status | TEXT | DISABLED / NOT_IMPLEMENTED / ACTIVE |
 | description | TEXT | Current state description |
 
+### demo_price_series
+
+Synthetic price data for chart visualization.
+
+| Column | Type | Description |
+|---|---|---|
+| instrument | TEXT | Instrument identifier (e.g. RI_demo) |
+| strategy_id | TEXT | Strategy that generated this data |
+| ts | TEXT | ISO 8601 timestamp |
+| price | REAL | Price value |
+| volume | INTEGER | Trade volume |
+
+### demo_equity_curve
+
+Synthetic equity curve data.
+
+| Column | Type | Description |
+|---|---|---|
+| strategy_id | TEXT | Strategy identifier |
+| ts | TEXT | ISO 8601 timestamp |
+| equity | REAL | Portfolio equity value |
+
+### demo_drawdown
+
+Synthetic drawdown data (computed from equity curve).
+
+| Column | Type | Description |
+|---|---|---|
+| strategy_id | TEXT | Strategy identifier |
+| ts | TEXT | ISO 8601 timestamp |
+| drawdown_pct | REAL | Drawdown as percentage (negative) |
+
+### demo_trades
+
+Demo trade records with entry/exit markers.
+
+| Column | Type | Description |
+|---|---|---|
+| trade_id | TEXT | Unique trade identifier |
+| strategy_id | TEXT | Strategy identifier |
+| instrument | TEXT | Instrument traded |
+| side | TEXT | BUY or SELL |
+| entry_ts | TEXT | Entry timestamp |
+| entry_price | REAL | Entry price |
+| exit_ts | TEXT | Exit timestamp (null if open) |
+| exit_price | REAL | Exit price (null if open) |
+| quantity | INTEGER | Position size |
+| pnl | REAL | Realized PnL (null if open) |
+| status | TEXT | closed or open |
+
 ## Demo Data
 
 ### Live Status
@@ -181,6 +231,15 @@ Runtime component status.
 ### Backtest Runs
 
 None. Table is empty.
+
+### Demo Charts Data
+
+- **demo_price_series**: 75 synthetic price points for `RI_demo` (random walk, seed=42)
+- **demo_equity_curve**: 75 equity curve points starting at 1,000,000
+- **demo_drawdown**: 75 drawdown percentages computed from equity curve
+- **demo_trades**: 8 demo trades (6 closed, 2 open), mixed BUY/SELL with entry/exit markers
+- Strategy: `dummy_visual_strategy`
+- Instrument: `RI_demo`
 
 ## How to Use
 

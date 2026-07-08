@@ -70,6 +70,7 @@ NAV_ITEMS = [
     ("reports", "MiMo Reports"),
     ("sources", "Data Sources"),
     ("backtests", "Backtests"),
+    ("charts", "Charts"),
     ("runtime", "Runtime Status"),
 ]
 
@@ -417,6 +418,249 @@ def render_runtime():
 """
 
 
+# ---------------------------------------------------------------------------
+# SVG Chart Helpers
+# ---------------------------------------------------------------------------
+
+def _svg_polyline(points, color="#4a9eff", stroke_width=2):
+    """Generate SVG polyline from list of (x, y) tuples in viewBox coords."""
+    coords = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    return f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="{stroke_width}" />'
+
+
+def _svg_polygon(points, color="#ff4d4d33", stroke="none"):
+    """Generate SVG polygon (filled area)."""
+    coords = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    return f'<polygon points="{coords}" fill="{color}" stroke="{stroke}" />'
+
+
+def _svg_text(x, y, text, font_size=10, fill="#8a8f9e", anchor="end"):
+    """Generate SVG text element."""
+    return f'<text x="{x}" y="{y}" font-size="{font_size}" fill="{fill}" font-family="Consolas,Monaco,monospace" text-anchor="{anchor}">{esc(str(text))}</text>'
+
+
+def _svg_line(x1, y1, x2, y2, color="#2a2d3a", stroke_width=1):
+    return f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{color}" stroke-width="{stroke_width}" />'
+
+
+def _svg_triangle(cx, cy, size, direction, color):
+    """Draw a small triangle marker. direction: 'up' or 'down'."""
+    if direction == "up":
+        pts = f"{cx},{cy - size} {cx - size},{cy + size} {cx + size},{cy + size}"
+    else:
+        pts = f"{cx},{cy + size} {cx - size},{cy - size} {cx + size},{cy - size}"
+    return f'<polygon points="{pts}" fill="{color}" />'
+
+
+def _chart_frame(width, height, margin, title, y_min, y_max, y_steps=5):
+    """Generate common SVG elements: background, grid, axes, title. Returns (svg_parts, x_scale_func, y_scale_func)."""
+    ml, mt, mr, mb = margin
+    plot_w = width - ml - mr
+    plot_h = height - mt - mb
+
+    parts = []
+    # Background
+    parts.append(f'<rect width="{width}" height="{height}" fill="#0f1117" rx="4" />')
+    # Title
+    parts.append(_svg_text(ml, mt - 8, title, font_size=13, fill="#e0e0e0", anchor="start"))
+    # Plot area background
+    parts.append(f'<rect x="{ml}" y="{mt}" width="{plot_w}" height="{plot_h}" fill="#12141c" />')
+
+    # Horizontal grid + Y labels
+    y_range = y_max - y_min if y_max != y_min else 1
+    for i in range(y_steps + 1):
+        y_val = y_min + (y_range * i / y_steps)
+        y_pos = mt + plot_h - (plot_h * i / y_steps)
+        parts.append(_svg_line(ml, y_pos, ml + plot_w, y_pos, "#1e2030"))
+        label = f"{y_val:,.0f}" if abs(y_val) >= 1 else f"{y_val:.2f}"
+        parts.append(_svg_text(ml - 4, y_pos + 3, label, font_size=9))
+
+    def x_scale(i, n):
+        if n <= 1:
+            return ml + plot_w / 2
+        return ml + (plot_w * i / (n - 1))
+
+    def y_scale(val):
+        return mt + plot_h - (plot_h * (val - y_min) / y_range)
+
+    return parts, x_scale, y_scale
+
+
+def svg_price_chart(prices, trades):
+    """Generate inline SVG price chart with trade entry/exit markers."""
+    if not prices:
+        return '<p style="color:var(--text-muted)">No price data.</p>'
+
+    values = [p["price"] for p in prices]
+    y_min = min(values) * 0.999
+    y_max = max(values) * 1.001
+    width, height = 700, 320
+    margin = (60, 30, 20, 30)
+
+    parts, x_scale, y_scale = _chart_frame(width, height, margin,
+                                            "RI_demo — Price Series (DEMO)", y_min, y_max)
+
+    # Price polyline
+    pts = [(x_scale(i, len(prices)), y_scale(p["price"])) for i, p in enumerate(prices)]
+    parts.append(_svg_polyline(pts, "#4a9eff", 2))
+
+    # Trade markers
+    price_ts_map = {p["ts"]: i for i, p in enumerate(prices)}
+    for t in trades:
+        if t["entry_ts"] in price_ts_map:
+            idx = price_ts_map[t["entry_ts"]]
+            cx = x_scale(idx, len(prices))
+            cy = y_scale(t["entry_price"])
+            color = "#33cc66" if t["side"] == "BUY" else "#ff4d4d"
+            direction = "up" if t["side"] == "BUY" else "down"
+            parts.append(_svg_triangle(cx, cy, 6, direction, color))
+        if t["exit_ts"] and t["exit_ts"] in price_ts_map:
+            idx = price_ts_map[t["exit_ts"]]
+            cx = x_scale(idx, len(prices))
+            cy = y_scale(t["exit_price"])
+            parts.append(_svg_triangle(cx, cy, 6, "down", "#ffaa33"))
+
+    # Legend
+    lx = margin[0]
+    ly = height - 8
+    parts.append(_svg_triangle(lx, ly - 3, 4, "up", "#33cc66"))
+    parts.append(_svg_text(lx + 10, ly, "BUY entry", 9, "#8a8f9e", "start"))
+    parts.append(_svg_triangle(lx + 90, ly - 3, 4, "down", "#ff4d4d"))
+    parts.append(_svg_text(lx + 100, ly, "SELL entry", 9, "#8a8f9e", "start"))
+    parts.append(_svg_triangle(lx + 190, ly - 3, 4, "down", "#ffaa33"))
+    parts.append(_svg_text(lx + 200, ly, "Exit", 9, "#8a8f9e", "start"))
+
+    svg = f'<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">'
+    svg += "".join(parts)
+    svg += "</svg>"
+    return svg
+
+
+def svg_equity_chart(equity_points):
+    """Generate inline SVG equity curve chart."""
+    if not equity_points:
+        return '<p style="color:var(--text-muted)">No equity data.</p>'
+
+    values = [e["equity"] for e in equity_points]
+    y_min = min(values) * 0.998
+    y_max = max(values) * 1.002
+    width, height = 700, 280
+    margin = (70, 30, 20, 30)
+
+    parts, x_scale, y_scale = _chart_frame(width, height, margin,
+                                            "Equity Curve — dummy_visual_strategy (DEMO)", y_min, y_max)
+
+    pts = [(x_scale(i, len(equity_points)), y_scale(e["equity"])) for i, e in enumerate(equity_points)]
+    parts.append(_svg_polyline(pts, "#33cc66", 2))
+
+    # Fill area under curve
+    base_y = y_scale(y_min)
+    area_pts = [(pts[0][0], base_y)] + pts + [(pts[-1][0], base_y)]
+    parts.append(_svg_polygon(area_pts, "#33cc6615"))
+
+    svg = f'<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">'
+    svg += "".join(parts)
+    svg += "</svg>"
+    return svg
+
+
+def svg_drawdown_chart(dd_points):
+    """Generate inline SVG drawdown area chart."""
+    if not dd_points:
+        return '<p style="color:var(--text-muted)">No drawdown data.</p>'
+
+    values = [d["drawdown_pct"] for d in dd_points]
+    y_min = min(values) * 1.1  # drawdowns are negative
+    y_max = 0.0
+    width, height = 700, 250
+    margin = (55, 30, 20, 30)
+
+    parts, x_scale, y_scale = _chart_frame(width, height, margin,
+                                            "Drawdown — dummy_visual_strategy (DEMO)", y_min, y_max, y_steps=4)
+
+    # Drawdown polyline
+    pts = [(x_scale(i, len(dd_points)), y_scale(d["drawdown_pct"])) for i, d in enumerate(dd_points)]
+    parts.append(_svg_polyline(pts, "#ff4d4d", 1.5))
+
+    # Fill area above curve (drawdown is negative, fill between curve and zero line)
+    zero_y = y_scale(0)
+    area_pts = [(pts[0][0], zero_y)] + pts + [(pts[-1][0], zero_y)]
+    parts.append(_svg_polygon(area_pts, "#ff4d4d20"))
+
+    # Zero line
+    parts.append(_svg_line(margin[0], zero_y, width - margin[2], zero_y, "#555a6e", 1))
+
+    svg = f'<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">'
+    svg += "".join(parts)
+    svg += "</svg>"
+    return svg
+
+
+def render_charts():
+    prices = fetch_all("SELECT * FROM demo_price_series ORDER BY ts")
+    equity = fetch_all("SELECT * FROM demo_equity_curve ORDER BY ts")
+    drawdown = fetch_all("SELECT * FROM demo_drawdown ORDER BY ts")
+    trades = fetch_all("SELECT * FROM demo_trades ORDER BY entry_ts")
+
+    trades_rows = ""
+    for t in trades:
+        pnl_str = f"{t['pnl']:+,.0f}" if t['pnl'] is not None else "\u2014"
+        pnl_cls = "color:var(--success)" if t['pnl'] and t['pnl'] > 0 else "color:var(--danger)" if t['pnl'] and t['pnl'] < 0 else ""
+        exit_price_str = f"{t['exit_price']:,.0f}" if t['exit_price'] else "\u2014"
+        trades_rows += f"""<tr>
+  <td><code>{esc(t['trade_id'])}</code></td>
+  <td>{esc(t['side'])}</td>
+  <td>{esc(t['instrument'])}</td>
+  <td>{esc(t['entry_ts'])}</td>
+  <td>{t['entry_price']:,.0f}</td>
+  <td>{esc(t['exit_ts'] or '\u2014')}</td>
+  <td>{exit_price_str}</td>
+  <td>{t['quantity']}</td>
+  <td style="{pnl_cls}">{pnl_str}</td>
+  <td>{status_badge(t['status'])}</td>
+</tr>"""
+
+    banner = """
+<div class="chart-banner">
+  <strong>DEMO DATA ONLY</strong> &mdash; NO REAL MARKET DATA &mdash; NO BROKER &mdash; LIVE DISABLED
+</div>"""
+
+    return f"""
+{banner}
+<h2 class="section-title">Charts — Demo Visualizations</h2>
+<p style="color:var(--text-secondary);margin-bottom:16px;font-size:12px">
+  Synthetic price series, equity curve, and drawdown for <code>RI_demo</code> /
+  <code>dummy_visual_strategy</code>. All data is generated, not real.
+</p>
+
+<div class="chart-container">
+  <div class="chart-title">Price Chart with Trade Markers</div>
+  {svg_price_chart(prices, trades)}
+</div>
+
+<div class="chart-container">
+  <div class="chart-title">Equity Curve</div>
+  {svg_equity_chart(equity)}
+</div>
+
+<div class="chart-container">
+  <div class="chart-title">Drawdown</div>
+  {svg_drawdown_chart(drawdown)}
+</div>
+
+<h3 class="subsection-title">Demo Trades</h3>
+<table>
+<thead><tr>
+  <th>Trade ID</th><th>Side</th><th>Instrument</th>
+  <th>Entry Time</th><th>Entry Price</th>
+  <th>Exit Time</th><th>Exit Price</th>
+  <th>Qty</th><th>PnL</th><th>Status</th>
+</tr></thead>
+<tbody>{trades_rows}</tbody>
+</table>
+"""
+
+
 SECTION_RENDERERS = {
     "overview": render_overview,
     "schemas": render_schemas,
@@ -425,6 +669,7 @@ SECTION_RENDERERS = {
     "reports": render_reports,
     "sources": render_sources,
     "backtests": render_backtests,
+    "charts": render_charts,
     "runtime": render_runtime,
 }
 

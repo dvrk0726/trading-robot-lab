@@ -36,6 +36,7 @@ Then open: http://127.0.0.1:8000
 - MiMo Reports — completed agent work reports
 - Data Sources — available data feeds (demo/synthetic only)
 - Backtests — backtest run history (empty for now)
+- Charts — demo price chart, equity curve, drawdown, trades table (synthetic data only)
 - Runtime Status — runtime component status (all not implemented)
 
 ## Rules

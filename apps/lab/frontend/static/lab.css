@@ -355,3 +355,35 @@ pre {
     letter-spacing: 1px;
     margin: 16px 0 10px;
 }
+
+/* Charts */
+
+.chart-container {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.chart-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    font-family: var(--font-mono);
+}
+
+.chart-banner {
+    background: #2a1a1a;
+    border: 1px solid var(--danger);
+    border-radius: 6px;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    text-align: center;
+    color: var(--danger);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    font-family: var(--font-mono);
+}

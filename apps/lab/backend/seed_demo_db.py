@@ -4,8 +4,10 @@
 
 import sqlite3
 import os
+import math
+import random
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DB_PATH = REPO_ROOT / "data" / "lab" / "trading_lab_demo.sqlite"
@@ -117,6 +119,52 @@ def create_tables(cursor):
             component TEXT NOT NULL UNIQUE,
             status TEXT NOT NULL,
             description TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS demo_price_series (
+            id INTEGER PRIMARY KEY,
+            instrument TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            price REAL NOT NULL,
+            volume INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS demo_equity_curve (
+            id INTEGER PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            equity REAL NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS demo_drawdown (
+            id INTEGER PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            drawdown_pct REAL NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS demo_trades (
+            id INTEGER PRIMARY KEY,
+            trade_id TEXT NOT NULL UNIQUE,
+            strategy_id TEXT NOT NULL,
+            instrument TEXT NOT NULL,
+            side TEXT NOT NULL,
+            entry_ts TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            exit_ts TEXT,
+            exit_price REAL,
+            quantity INTEGER NOT NULL,
+            pnl REAL,
+            status TEXT NOT NULL
         )
     """)
 
@@ -267,6 +315,96 @@ def seed_runtime_status(cursor):
         """, c)
 
 
+def seed_demo_price_series(cursor):
+    """Generate 75 synthetic price points for RI_demo using random walk."""
+    random.seed(42)
+    base_price = 140000.0
+    strategy_id = "dummy_visual_strategy"
+    instrument = "RI_demo"
+    start = datetime(2026, 7, 1, 10, 0, 0, tzinfo=timezone.utc)
+    price = base_price
+    points = []
+    for i in range(75):
+        ts = (start + timedelta(minutes=i * 5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        change = random.gauss(0, 150)
+        price = max(base_price * 0.95, min(base_price * 1.05, price + change))
+        volume = random.randint(100, 500)
+        points.append((instrument, strategy_id, ts, round(price, 2), volume))
+    for p in points:
+        cursor.execute("""
+            INSERT OR REPLACE INTO demo_price_series
+            (instrument, strategy_id, ts, price, volume)
+            VALUES (?, ?, ?, ?, ?)
+        """, p)
+
+
+def seed_demo_equity_curve(cursor):
+    """Generate 75 synthetic equity curve points starting at 1_000_000."""
+    random.seed(42)
+    strategy_id = "dummy_visual_strategy"
+    start = datetime(2026, 7, 1, 10, 0, 0, tzinfo=timezone.utc)
+    equity = 1000000.0
+    points = []
+    for i in range(75):
+        ts = (start + timedelta(minutes=i * 5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        drift = random.gauss(800, 2000)
+        equity = max(900000, equity + drift)
+        points.append((strategy_id, ts, round(equity, 2)))
+    for p in points:
+        cursor.execute("""
+            INSERT OR REPLACE INTO demo_equity_curve
+            (strategy_id, ts, equity)
+            VALUES (?, ?, ?)
+        """, p)
+
+
+def seed_demo_drawdown(cursor):
+    """Compute drawdown from the seeded equity curve."""
+    random.seed(42)
+    strategy_id = "dummy_visual_strategy"
+    start = datetime(2026, 7, 1, 10, 0, 0, tzinfo=timezone.utc)
+    equity = 1000000.0
+    peak = equity
+    points = []
+    for i in range(75):
+        ts = (start + timedelta(minutes=i * 5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        drift = random.gauss(800, 2000)
+        equity = max(900000, equity + drift)
+        if equity > peak:
+            peak = equity
+        dd_pct = ((equity - peak) / peak) * 100 if peak > 0 else 0.0
+        points.append((strategy_id, ts, round(dd_pct, 4)))
+    for p in points:
+        cursor.execute("""
+            INSERT OR REPLACE INTO demo_drawdown
+            (strategy_id, ts, drawdown_pct)
+            VALUES (?, ?, ?)
+        """, p)
+
+
+def seed_demo_trades(cursor):
+    """Seed 8 demo trades with entry/exit markers."""
+    strategy_id = "dummy_visual_strategy"
+    instrument = "RI_demo"
+    trades = [
+        ("DEMO-001", "BUY",  "2026-07-01T10:05:00Z", 139850.0, "2026-07-01T11:30:00Z", 140200.0,  2, 700.0,   "closed"),
+        ("DEMO-002", "SELL", "2026-07-01T12:00:00Z", 140400.0, "2026-07-01T13:15:00Z", 140100.0,  1, 300.0,   "closed"),
+        ("DEMO-003", "BUY",  "2026-07-01T14:00:00Z", 139900.0, "2026-07-01T15:00:00Z", 139700.0,  3, -600.0,  "closed"),
+        ("DEMO-004", "BUY",  "2026-07-01T15:30:00Z", 139600.0, "2026-07-01T16:45:00Z", 140050.0,  2, 900.0,   "closed"),
+        ("DEMO-005", "SELL", "2026-07-01T17:00:00Z", 140100.0, "2026-07-01T17:45:00Z", 140350.0,  1, -250.0,  "closed"),
+        ("DEMO-006", "BUY",  "2026-07-01T18:00:00Z", 140200.0, None,                   None,      2, None,    "open"),
+        ("DEMO-007", "SELL", "2026-07-01T19:00:00Z", 140500.0, "2026-07-01T20:00:00Z", 140150.0,  1, 350.0,   "closed"),
+        ("DEMO-008", "BUY",  "2026-07-01T20:30:00Z", 140050.0, None,                   None,      3, None,    "open"),
+    ]
+    for t in trades:
+        cursor.execute("""
+            INSERT OR REPLACE INTO demo_trades
+            (trade_id, strategy_id, instrument, side, entry_ts, entry_price,
+             exit_ts, exit_price, quantity, pnl, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (t[0], strategy_id, instrument, t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8]))
+
+
 def main():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -284,12 +422,17 @@ def main():
     seed_mimo_reports(cursor)
     seed_data_sources(cursor)
     seed_runtime_status(cursor)
+    seed_demo_price_series(cursor)
+    seed_demo_equity_curve(cursor)
+    seed_demo_drawdown(cursor)
+    seed_demo_trades(cursor)
 
     conn.commit()
 
     print("=== Trading Lab Demo Database ===")
     tables = ["project_status", "schemas", "strategy_packages", "test_vectors",
-              "mimo_reports", "data_sources", "backtest_runs", "runtime_status"]
+              "mimo_reports", "data_sources", "backtest_runs", "runtime_status",
+              "demo_price_series", "demo_equity_curve", "demo_drawdown", "demo_trades"]
     for table in tables:
         count = cursor.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         print(f"  {table}: {count} rows")
