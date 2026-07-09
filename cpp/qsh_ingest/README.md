@@ -171,6 +171,13 @@ qsh-ingest orphan-cancel-audit <OrdLog.qsh> --out orphan_cancel_audit.csv --max-
 # spread, crossed status, and traces the target bid order 1925033994466246392.
 qsh-ingest snapshot-audit <OrdLog.qsh> --out snapshot_audit_before_crossing.csv --max-records 10000
 
+# Crossing window audit (M10Q)
+# Dumps records in a specified range with full book state tracking.
+# Used to find the exact record that creates a specific order or price level in the active book.
+# Reports: best bid/ask before/after, target order active status, mutation path.
+qsh-ingest crossing-window-audit <OrdLog.qsh> --from 1966 --to 2136 --out crossing_window_audit.csv
+qsh-ingest crossing-window-audit <OrdLog.qsh> --from 1966 --to 2136 --out audit.csv --target-order-id 1925033994466246392 --target-price 14100
+
 # First crossed-book root cause trace (M10N, enhanced M10O)
 # Produces: first_crossed_root_cause.csv, first_crossed_best_orders.csv,
 #           first_crossed_lifecycle.csv, first_crossed_bid_order_lifecycle.csv,
@@ -250,7 +257,7 @@ Run all validation modes against the local QSH sample:
 Options:
 
 ```powershell
-.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit
+.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit
 ```
 
 The script:
@@ -267,6 +274,7 @@ The script:
 - Optionally probes `missing_on_cancel` orders
 - Optionally runs orphan cancel/remove audit
 - Optionally runs first crossed-book root cause trace
+- Optionally runs crossing window audit for records 1966..2136
 
 Raw QSH must stay under `data/raw/qsh/...`. Generated reports stay under `data/reports/qsh/...`. Both are ignored by Git.
 

@@ -9,7 +9,8 @@ param(
     [switch]$RunMissingCancelProbe,
     [switch]$RunOrphanCancelAudit,
     [switch]$RunFirstCrossedProbe,
-    [switch]$RunSnapshotAudit
+    [switch]$RunSnapshotAudit,
+    [switch]$RunCrossingWindowAudit
 )
 
 $ErrorActionPreference = "Continue"
@@ -295,6 +296,22 @@ if ($RunSnapshotAudit) {
 } else {
     Write-Host ""
     Write-Host "Tip: run with -RunSnapshotAudit for snapshot record audit before first crossing." -ForegroundColor DarkGray
+}
+
+# --- 11b. Crossing-window-audit (optional) ---
+if ($RunCrossingWindowAudit) {
+    Write-Host ""
+    Write-Host "Running crossing-window-audit..." -ForegroundColor Cyan
+    $crossingAuditOut = "$ReportDirFull\crossing_window_1966_2136_audit.csv"
+    & $ExePath "crossing-window-audit" $QshFullPath "--from" "1966" "--to" "2136" "--out" $crossingAuditOut 2>&1 | Write-Host
+    if (Test-Path $crossingAuditOut) {
+        Write-Host "Crossing window audit output: $crossingAuditOut" -ForegroundColor Green
+    } else {
+        Write-Host "Crossing window audit output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunCrossingWindowAudit for crossing window audit of records 1966..2136." -ForegroundColor DarkGray
 }
 
 # --- 12. Summary ---

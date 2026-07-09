@@ -2277,3 +2277,129 @@ qsh-rs snapshot comparison skipped: not available locally
 1. **Investigate the actual ADD source of bid_order 1925033994466246392** — the order enters the book between records 1966 and 2136, likely via a non-snapshot Add event. A focused dump-records audit of records 1966-2136 should reveal the exact entry point.
 2. **Prove crossing root cause before filtering** — the crossing is NOT caused by snapshot initialization. It is caused by a real trading event. This means skip/ignore crossed filtering should NOT be applied to snapshot initialization.
 3. **L2 strategy-ready remains NO** — 7890 crossed snapshots remain. The root cause needs to be traced to its actual source (event at or before record 2136).
+
+---
+
+## M10Q Actual Add Source of Crossing Bid Order
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### 1. Build/Test Result
+
+```
+Build: OK (Release)
+Tests: 16/16 passed
+```
+
+### 2. Real-Sample Validation Result
+
+```
+local QSH found: data/raw/qsh/RTS-3.21/2021-01-05/RTS-3.21.2021-01-05.OrdLog.qsh
+crossing-window-audit executed successfully
+```
+
+### 3. Crossing-Window Audit Summary
+
+The `crossing-window-audit` command was run on records 1966..2136 with target order_id=1925033994466246392 and target_price=14100.
+
+**Entry Point Summary:**
+
+| Metric | Value |
+|---|---|
+| First record with target order_id | 2136 |
+| First record with target price BUY | 2136 |
+| First record with target order in book | 2136 |
+| First record with best_bid == target | 2136 |
+| First record with qty at target > 0 | 2136 |
+
+**Conclusion:** All entry points converge at record 2136. The order enters the book exactly at the crossing event record.
+
+### 4. Actual Entry Point of BUY 14100
+
+**Record 2136** is the ADD event that creates BUY 14100 in the active book.
+
+```
+record_index: 2136
+event_type:   ADD
+side:         BUY
+price:        14100
+amount:       111
+amount_rest:  111
+flags_hex:    0x114
+is_snapshot:  0
+is_system:    1
+best_bid_before: 14055
+best_ask_before: 14062
+best_bid_after:  14100
+best_ask_after:  14062
+qty_target_bid_before: 0
+qty_target_bid_after:  111
+```
+
+**Context (records 2130-2136):**
+
+| record_index | event_type | side | price | amount | best_bid_before | best_ask_before | best_bid_after |
+|---|---|---|---|---|---|---|---|
+| 2130 | CANCEL | BUY | 13991 | 3 | 14055 | 14062 | 14055 |
+| 2131 | CANCEL | SELL | 14298 | 1 | 14055 | 14062 | 14055 |
+| 2132 | CANCEL | SELL | 14168 | 3 | 14055 | 14062 | 14055 |
+| 2133 | CANCEL | SELL | 14067 | 2 | 14055 | 14062 | 14055 |
+| 2134 | CANCEL | BUY | 13917 | 1 | 14055 | 14062 | 14055 |
+| 2135 | CANCEL | BUY | 13610 | 8 | 14055 | 14062 | 14055 |
+| 2136 | ADD | BUY | 14100 | 111 | 14055 | 14062 | 14100 |
+
+Records 2130-2135 are CANCEL events that do not change the best bid/ask. Record 2136 is a normal ADD event that creates a new BUY order at 14100, which becomes the new best bid (14100 > 14055), crossing the book (14100 >= 14062).
+
+### 5. Actual Mutation Path
+
+**BUY 14100 is created by `add_order` at record 2136 from ADD event.**
+
+This is a straightforward order addition. The order enters the book via the normal `add_order` path in OrderBook::apply(). There is no move, orphan fill, or other exotic mechanism involved.
+
+### 6. M10O vs M10P Contradiction Resolution
+
+**Answer: A. Lifecycle trace started too late and missed ADD.**
+
+The M10O lifecycle trace showed "Had valid ADD: NO" because:
+1. M10O's `first-crossed-root-cause` command starts tracking order lifecycles only AFTER the first crossing detection (record 2136)
+2. The ADD event at record 2136 IS the crossing event itself
+3. By the time lifecycle tracking begins, the ADD has already been applied to the book
+4. The lifecycle trace therefore never sees the ADD event for order 1925033994466246392
+
+The M10P conclusion was correct: "bid_order must enter between records 1966 and 2136." The ADD happens exactly at record 2136, which is the last record in that range.
+
+**Fix:** The lifecycle tracing in `first-crossed-root-cause` should be enhanced to start tracking from file start, not only after first crossing detection. This is already possible using `l3-to-l2 --trace-order-id` which traces from the beginning of the file.
+
+### 7. Strict vs Reduce-Same-Price Comparison
+
+| Mode | first_crossing_event_record_index | first_crossing_snapshot_record_index | first_crossing_snapshot_index |
+|---|---|---|---|
+| strict | 2136 | 2210 | 2111 |
+| reduce-same-price | 2136 | 2242 | 2117 |
+
+**Key finding:** The `first_crossing_event_record_index` is identical (2136) in both modes. The crossing EVENT (ADD at 14100) is the same regardless of orphan fill handling mode.
+
+The difference is in `first_crossing_snapshot_record_index` (2210 vs 2242). This is because:
+1. In reduce-same-price mode, orphan fills reduce volume at the same price level
+2. This affects the book state during snapshot emission
+3. The first valid crossed snapshot is emitted later (at record 2242 instead of 2210)
+
+The task description's claim that "reduce-same-price first_crossing_event_record_index = 2242" appears to refer to `first_crossing_snapshot_record_index`, not `first_crossing_event_record_index`.
+
+### 8. Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/include/orderbook/order_book.hpp` | Added `level_qty(Price, Side)` method to OrderBook class |
+| `cpp/qsh_ingest/src/order_book.cpp` | Implemented `level_qty()` method |
+| `cpp/qsh_ingest/src/main.cpp` | Added `cmd_crossing_window_audit` command with full book state tracking, entry point detection, and mutation path identification; added command parsing in main(); updated help text |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunCrossingWindowAudit` switch |
+| `cpp/qsh_ingest/README.md` | Added crossing-window-audit CLI documentation and -RunCrossingWindowAudit flag |
+
+### 9. Next Recommended Task
+
+1. **Fix lifecycle tracing** — Enhance `first-crossed-root-cause` to trace orders from file start, not only after first crossing detection. This would have caught the ADD at record 2136.
+2. **Understand the 4265129 crossed snapshots** — The crossing at record 2136 is a single ADD event, but it causes millions of crossed snapshots. Investigate why the book remains crossed for so long.
+3. **L2 strategy-ready remains NO** — The crossing is caused by a real trading event (ADD at 14100), not a decoder bug. The root cause is in the market data itself. Consider whether crossed-book filtering should be applied to real trading events.

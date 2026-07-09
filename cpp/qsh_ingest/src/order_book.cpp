@@ -604,4 +604,15 @@ bool OrderBook::get_order_info(UID order_id, Side& out_side, Price& out_price, V
     return true;
 }
 
+Volume OrderBook::level_qty(Price price, Side side) const {
+    if (side == Side::Buy) {
+        auto it = bid_levels_.find(price);
+        if (it != bid_levels_.end()) return it->second.first;
+    } else if (side == Side::Sell) {
+        auto it = ask_levels_.find(price);
+        if (it != ask_levels_.end()) return it->second.first;
+    }
+    return 0;
+}
+
 }  // namespace qsh

@@ -57,6 +57,9 @@ static void print_help() {
     std::cout << "                        Detailed audit of orphan cancel/remove records\n";
     std::cout << "  snapshot-audit <OrdLog.qsh> [--out <file.csv>] [--max-records N]\n";
     std::cout << "                        Audit snapshot records before first crossing\n";
+    std::cout << "  crossing-window-audit <OrdLog.qsh> --from N --to N --out <file.csv>\n";
+    std::cout << "                        [--target-order-id ID] [--target-price P]\n";
+    std::cout << "                        Audit records in range with book state tracking\n";
     std::cout << "  first-crossed-root-cause <OrdLog.qsh> [--out-dir <dir>] [--context N]\n";
     std::cout << "                        Trace the exact orders causing first crossed book\n";
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
@@ -1380,6 +1383,285 @@ static int cmd_snapshot_audit(const std::string& path, const std::string& out_pa
     } else {
         std::cout << "CONCLUSION: E" << std::endl;
         std::cout << "  order does not appear in snapshot records before first crossing." << std::endl;
+    }
+
+    return 0;
+}
+
+// M10Q: Crossing window audit — dump records in a range with book state tracking.
+// Used to find the exact record that creates BUY 14100 in the active book.
+static int cmd_crossing_window_audit(const std::string& path, int64_t from_index, int64_t to_index,
+                                     const std::string& out_path, UID target_order_id, Price target_price) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: crossing-window-audit requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Running crossing window audit (records " << from_index << ".." << to_index << ")..." << std::endl;
+    std::cout << "Target order_id: " << target_order_id << std::endl;
+    std::cout << "Target price:    " << target_price << std::endl;
+
+    std::ofstream csv(out_path);
+    if (!csv.is_open()) {
+        std::cerr << "Error: cannot open output file: " << out_path << std::endl;
+        return 1;
+    }
+
+    // CSV header
+    csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+        << "flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system,"
+        << "raw_data_offset,raw_entry_flags,raw_order_flags_hex,raw_side_bits,raw_event_bits,"
+        << "has_order_id_field,has_price_field,has_amount_field,"
+        << "order_id_delta,price_delta,"
+        << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+        << "qty_target_bid_before,qty_target_bid_after,"
+        << "is_target_order,is_target_price_buy,"
+        << "target_order_active_before,target_order_active_after,"
+        << "mutation_path\n";
+
+    OrderBook book;
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+    int64_t tx_counter = 0;
+    int64_t written = 0;
+
+    // Entry point tracking
+    bool target_order_first_seen = false;
+    int64_t target_order_first_record = 0;
+    bool target_order_in_book_first = false;
+    int64_t target_order_in_book_first_record = 0;
+    bool target_price_buy_first = false;
+    int64_t target_price_buy_first_record = 0;
+    bool best_bid_is_target = false;
+    int64_t best_bid_target_first_record = 0;
+    bool target_level_qty_first = false;
+    int64_t target_level_qty_first_record = 0;
+
+    while (reader.next_debug(file, rec)) {
+        ++record_count;
+
+        if (has_flag(rec.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        // Skip non-system records
+        if (!is_system_record(rec)) continue;
+
+        // NewSession clears the book
+        if (has_flag(rec.order_flags, OLFlags::NewSession)) {
+            book.clear();
+            if (record_count >= from_index && record_count <= to_index) {
+                // Still output the NewSession record
+                bool is_snapshot = has_flag(rec.order_flags, OLFlags::Snapshot);
+                bool is_new_session = true;
+                bool is_txend = has_flag(rec.order_flags, OLFlags::TxEnd);
+                bool is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+                Volume repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+
+                csv << record_count << ","
+                    << rec.timestamp << ","
+                    << tx_counter << ","
+                    << rec.order_id << ","
+                    << ol_msg_type_name(rec.event) << ","
+                    << side_name(rec.side) << ","
+                    << rec.price << ","
+                    << rec.amount << ","
+                    << rec.amount_rest << ","
+                    << "0x" << std::hex << rec.order_flags << std::dec << ","
+                    << repl_act << ","
+                    << (is_snapshot ? 1 : 0) << ","
+                    << (is_new_session ? 1 : 0) << ","
+                    << (is_txend ? 1 : 0) << ","
+                    << 1 << ","
+                    << (is_non_system ? 1 : 0) << ","
+                    << rec.debug.raw_data_offset << ","
+                    << static_cast<int>(rec.debug.raw_entry_flags) << ","
+                    << "0x" << std::hex << rec.debug.raw_order_flags << std::dec << ","
+                    << "0x" << std::hex << (rec.order_flags & (OLFlags::Buy | OLFlags::Sell)) << std::dec << ","
+                    << "0x" << std::hex << (rec.order_flags & (OLFlags::Add | OLFlags::Fill | OLFlags::Moved | OLFlags::Canceled | OLFlags::CanceledGroup | OLFlags::CrossTrade)) << std::dec << ","
+                    << (rec.debug.has_order_id_field ? 1 : 0) << ","
+                    << (rec.debug.has_price_field ? 1 : 0) << ","
+                    << (rec.debug.has_amount_field ? 1 : 0) << ","
+                    << (rec.debug.order_id_after_delta - rec.debug.order_id_before_delta) << ","
+                    << (rec.debug.price_after_delta - rec.debug.price_before_delta) << ","
+                    << 0 << "," << 0 << "," << 0 << "," << 0 << ","
+                    << 0 << "," << 0 << ","
+                    << (rec.order_id == target_order_id ? 1 : 0) << ","
+                    << (rec.price == target_price && rec.side == Side::Buy ? 1 : 0) << ","
+                    << 0 << "," << 0 << ","
+                    << "NEW_SESSION"
+                    << "\n";
+                ++written;
+            }
+            continue;
+        }
+
+        // Track state before apply
+        Price best_bid_before = book.best_bid();
+        Price best_ask_before = book.best_ask();
+        Volume qty_target_bid_before = book.level_qty(target_price, Side::Buy);
+
+        bool target_order_active_before = false;
+        {
+            Side dummy_s; Price dummy_p; Volume dummy_v;
+            target_order_active_before = book.get_order_info(target_order_id, dummy_s, dummy_p, dummy_v);
+        }
+
+        // Detect mutation path
+        std::string mutation_path;
+        if (rec.order_id == target_order_id) {
+            if (rec.event == OLMsgType::Add) mutation_path = "add_order";
+            else if (rec.event == OLMsgType::Moved) mutation_path = "move_order";
+            else if (rec.event == OLMsgType::Fill) mutation_path = "fill_order";
+            else if (rec.event == OLMsgType::Cancel) mutation_path = "cancel_order";
+            else if (rec.event == OLMsgType::Remove) mutation_path = "remove_order";
+            else mutation_path = "other";
+        }
+        // Also detect if a BUY add at target_price creates the level
+        if (rec.event == OLMsgType::Add && rec.side == Side::Buy && rec.price == target_price) {
+            if (qty_target_bid_before == 0) {
+                mutation_path = "add_order_creates_level";
+            }
+        }
+
+        // Apply to book
+        book.apply(rec);
+
+        // Track state after apply
+        Price best_bid_after = book.best_bid();
+        Price best_ask_after = book.best_ask();
+        Volume qty_target_bid_after = book.level_qty(target_price, Side::Buy);
+
+        bool target_order_active_after = false;
+        {
+            Side dummy_s; Price dummy_p; Volume dummy_v;
+            target_order_active_after = book.get_order_info(target_order_id, dummy_s, dummy_p, dummy_v);
+        }
+
+        // Track entry points (earliest only)
+        if (rec.order_id == target_order_id && !target_order_first_seen) {
+            target_order_first_seen = true;
+            target_order_first_record = record_count;
+        }
+        if (target_order_active_after && !target_order_active_before && !target_order_in_book_first) {
+            target_order_in_book_first = true;
+            target_order_in_book_first_record = record_count;
+            if (mutation_path.empty()) {
+                // Infer from event type
+                if (rec.event == OLMsgType::Add) mutation_path = "add_order";
+                else if (rec.event == OLMsgType::Moved) mutation_path = "move_order";
+                else mutation_path = "inferred_" + std::string(ol_msg_type_name(rec.event));
+            }
+        }
+        if (rec.price == target_price && rec.side == Side::Buy && !target_price_buy_first) {
+            target_price_buy_first = true;
+            target_price_buy_first_record = record_count;
+        }
+        if (best_bid_after == target_price && !best_bid_is_target) {
+            best_bid_is_target = true;
+            best_bid_target_first_record = record_count;
+        }
+        if (qty_target_bid_after > 0 && qty_target_bid_before == 0 && !target_level_qty_first) {
+            target_level_qty_first = true;
+            target_level_qty_first_record = record_count;
+        }
+
+        // Output CSV for records in range
+        if (record_count >= from_index && record_count <= to_index) {
+            bool is_snapshot = has_flag(rec.order_flags, OLFlags::Snapshot);
+            bool is_new_session = has_flag(rec.order_flags, OLFlags::NewSession);
+            bool is_txend = has_flag(rec.order_flags, OLFlags::TxEnd);
+            bool is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+            Volume repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+
+            uint16_t side_bits = rec.order_flags & (OLFlags::Buy | OLFlags::Sell);
+            uint16_t event_bits = rec.order_flags & (OLFlags::Add | OLFlags::Fill | OLFlags::Moved |
+                OLFlags::Canceled | OLFlags::CanceledGroup | OLFlags::CrossTrade);
+
+            csv << record_count << ","
+                << rec.timestamp << ","
+                << tx_counter << ","
+                << rec.order_id << ","
+                << ol_msg_type_name(rec.event) << ","
+                << side_name(rec.side) << ","
+                << rec.price << ","
+                << rec.amount << ","
+                << rec.amount_rest << ","
+                << "0x" << std::hex << rec.order_flags << std::dec << ","
+                << repl_act << ","
+                << (is_snapshot ? 1 : 0) << ","
+                << (is_new_session ? 1 : 0) << ","
+                << (is_txend ? 1 : 0) << ","
+                << 1 << ","
+                << (is_non_system ? 1 : 0) << ","
+                << rec.debug.raw_data_offset << ","
+                << static_cast<int>(rec.debug.raw_entry_flags) << ","
+                << "0x" << std::hex << rec.debug.raw_order_flags << std::dec << ","
+                << "0x" << std::hex << side_bits << std::dec << ","
+                << "0x" << std::hex << event_bits << std::dec << ","
+                << (rec.debug.has_order_id_field ? 1 : 0) << ","
+                << (rec.debug.has_price_field ? 1 : 0) << ","
+                << (rec.debug.has_amount_field ? 1 : 0) << ","
+                << (rec.debug.order_id_after_delta - rec.debug.order_id_before_delta) << ","
+                << (rec.debug.price_after_delta - rec.debug.price_before_delta) << ","
+                << best_bid_before << ","
+                << best_ask_before << ","
+                << best_bid_after << ","
+                << best_ask_after << ","
+                << qty_target_bid_before << ","
+                << qty_target_bid_after << ","
+                << (rec.order_id == target_order_id ? 1 : 0) << ","
+                << (rec.price == target_price && rec.side == Side::Buy ? 1 : 0) << ","
+                << (target_order_active_before ? 1 : 0) << ","
+                << (target_order_active_after ? 1 : 0) << ","
+                << mutation_path
+                << "\n";
+            ++written;
+        }
+
+        if (record_count > to_index + 100) break;  // some margin past range
+    }
+
+    csv.close();
+    std::cout << "\nWrote " << written << " records to " << out_path << std::endl;
+
+    // Print entry point summary
+    std::cout << "\n=== Entry Point Summary ===" << std::endl;
+    std::cout << "target_order_id:                         " << target_order_id << std::endl;
+    std::cout << "target_price:                            " << target_price << std::endl;
+
+    std::cout << "\nFirst record with target order_id:       " << (target_order_first_seen ? std::to_string(target_order_first_record) : "NOT FOUND") << std::endl;
+    std::cout << "First record with target price BUY:      " << (target_price_buy_first ? std::to_string(target_price_buy_first_record) : "NOT FOUND") << std::endl;
+    std::cout << "First record with target order in book:  " << (target_order_in_book_first ? std::to_string(target_order_in_book_first_record) : "NOT FOUND") << std::endl;
+    std::cout << "First record with best_bid == target:    " << (best_bid_is_target ? std::to_string(best_bid_target_first_record) : "NOT FOUND") << std::endl;
+    std::cout << "First record with qty at target > 0:     " << (target_level_qty_first ? std::to_string(target_level_qty_first_record) : "NOT FOUND") << std::endl;
+
+    // Identify the actual entry record
+    int64_t entry_record = 0;
+    std::string entry_source;
+    if (target_order_in_book_first) {
+        entry_record = target_order_in_book_first_record;
+        entry_source = "order enters active book";
+    } else if (target_level_qty_first) {
+        entry_record = target_level_qty_first_record;
+        entry_source = "level qty becomes positive";
+    } else if (target_order_first_seen) {
+        entry_record = target_order_first_record;
+        entry_source = "order_id appears in record";
+    }
+
+    if (entry_record > 0) {
+        std::cout << "\nACTUAL ENTRY RECORD: " << entry_record << " (" << entry_source << ")" << std::endl;
+    } else {
+        std::cout << "\nENTRY RECORD NOT FOUND in range " << from_index << ".." << to_index << std::endl;
     }
 
     return 0;
@@ -3303,6 +3585,34 @@ int main(int argc, char* argv[]) {
             }
         }
         return cmd_snapshot_audit(file_path, out_path, max_records);
+    }
+
+    if (cmd == "crossing-window-audit") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest crossing-window-audit <OrdLog.qsh> --from N --to N --out <file.csv>\n"
+                      << "  [--target-order-id ID] [--target-price P]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_path = "crossing_window_audit.csv";
+        int64_t from_index = 1;
+        int64_t to_index = 0;
+        UID target_order_id = 1925033994466246392;
+        Price target_price = 14100;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--from") == 0 && i + 1 < argc) {
+                from_index = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--to") == 0 && i + 1 < argc) {
+                to_index = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--target-order-id") == 0 && i + 1 < argc) {
+                target_order_id = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--target-price") == 0 && i + 1 < argc) {
+                target_price = std::atoll(argv[++i]);
+            }
+        }
+        return cmd_crossing_window_audit(file_path, from_index, to_index, out_path, target_order_id, target_price);
     }
 
     if (cmd == "first-crossed-root-cause") {

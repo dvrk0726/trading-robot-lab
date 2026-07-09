@@ -192,6 +192,10 @@ public:
     // Returns true if order exists, false otherwise.
     bool get_order_info(UID order_id, Side& out_side, Price& out_price, Volume& out_qty) const;
 
+    // M10Q: Get total volume at a specific price level on given side.
+    // Returns 0 if level does not exist.
+    Volume level_qty(Price price, Side side) const;
+
     // Set fill semantics mode: "delta" (amount = filled qty) or "rest" (amount = original, fill = amount - amount_rest).
     void set_fill_delta_mode(bool use_delta) { fill_delta_mode_ = use_delta; }
 
