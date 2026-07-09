@@ -103,6 +103,30 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 \
 # First-crossed context trace (ring buffer of events around first crossed snapshot)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
   --out l2_sample.csv --trace-crossed-context 20
+
+# Trace best-level orders for crossed snapshots
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --snapshot-mode txend --out l2_txend.csv \
+  --trace-best-level-orders-out l2_best_orders.csv
+
+# Trace missing order IDs
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --snapshot-mode txend --out l2_txend.csv \
+  --trace-missing-order-out l2_missing_orders.csv
+
+# Auto-trace orders from first crossed snapshot
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --snapshot-mode txend --out l2_txend.csv \
+  --auto-trace-crossed-orders-out l2_auto_trace.csv
+
+# Full diagnostic command with all traces
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --snapshot-mode txend --out l2_txend.csv \
+  --diagnostics-out l2_txend_diagnostics.csv --max-diagnostics 100 \
+  --trace-crossed-out l2_txend_trace.csv --max-trace-events 100 \
+  --trace-best-level-orders-out l2_best_orders.csv \
+  --trace-missing-order-out l2_missing_orders.csv \
+  --auto-trace-crossed-orders-out l2_auto_trace.csv
 ```
 
 **L2 output is not strategy-ready until diagnostics are clean.**

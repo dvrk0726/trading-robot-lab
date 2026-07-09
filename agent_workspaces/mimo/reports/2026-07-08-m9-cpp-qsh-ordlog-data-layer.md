@@ -553,3 +553,143 @@ Run the event vs txend comparison on the real QSH file:
 4. Investigate the 319 `missing_order_id` events with order lifecycle trace
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+---
+
+## M10D Stale Order and Missing ID Trace
+
+Date: 2026-07-09
+Task: M10D_STALE_ORDER_AND_MISSING_ID_TRACE.md
+
+### Problem
+
+921 crossed-book snapshots persist in txend mode. Need to identify:
+1. Which active orders create best bid and best ask in crossed state
+2. Whether missing_order_id events are benign or cause stale book state
+3. Representative order lifecycle from first crossed snapshot
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `include/orderbook/order_book.hpp` | Added `best_bid_order_ids()`, `best_ask_order_ids()`, `best_bid_total_qty()`, `best_ask_total_qty()`, `best_bid_order_count()`, `best_ask_order_count()` methods. Added `bid_level_orders_` and `ask_level_orders_` maps for tracking order IDs at each price level. |
+| `src/order_book.cpp` | Implemented new methods. Updated `add_order()`, `fill_order()`, `cancel_order()`, `remove_order()`, `move_order()`, `clear()` to maintain order ID tracking at each price level. |
+| `src/main.cpp` | Added `--trace-best-level-orders-out`, `--trace-missing-order-out`, `--auto-trace-crossed-orders-out` CLI args. Added best-level orders trace for crossed snapshots, missing order trace with before/after book state, and auto-trace order selection from first crossed snapshot. |
+| `cpp/qsh_ingest/README.md` | Added safe command examples for all new trace options. |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_best_level_orders.cpp` | 9 synthetic tests for best-level order tracking |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 7
+```
+
+New test `test_best_level_orders` covers:
+- Best-level order IDs visible in normal state
+- Best-level order IDs visible in crossed state
+- Best-level total quantity
+- Best-level order count
+- Fill removes order from level tracking
+- Cancel removes order from level tracking
+- Remove removes order from level tracking
+- Max IDs limit
+- Empty book best level
+
+### New CLI Args
+
+```
+--trace-best-level-orders-out <f>   Write best-level orders CSV for crossed snapshots
+--trace-missing-order-out <f>       Write missing order ID trace CSV
+--auto-trace-crossed-orders-out <f> Write auto-traced orders from first crossed snapshot
+```
+
+### Best-Level Orders Trace CSV Columns
+
+```
+ts,snapshot_index,records_processed,tx_index,
+best_bid,best_ask,spread,
+best_bid_total_qty,best_ask_total_qty,
+best_bid_order_ids,best_ask_order_ids,
+best_bid_order_count,best_ask_order_count,
+last_event_type,last_order_id,last_side,
+last_price,last_qty,last_amount_rest,last_flags,last_repl_act
+```
+
+When multiple orders exist at the same best level, `best_bid_order_ids` and `best_ask_order_ids` contain semicolon-separated order IDs (first 20).
+
+### Missing Order Trace CSV Columns
+
+```
+ts,record_index,tx_index,event_type,order_id,side,price,qty,
+amount_rest,flags,repl_act,
+best_bid_before,best_ask_before,
+best_bid_after,best_ask_after,reason
+```
+
+The `reason` column is always `MISSING_ORDER_ID` for traced events. The `best_bid_before`/`best_ask_before` columns show book state before the event, while `best_bid_after`/`best_ask_after` show state after.
+
+### Auto-Trace Crossed Orders
+
+When `--auto-trace-crossed-orders-out` is provided, the system:
+1. Detects the first crossed-book snapshot
+2. Automatically selects one representative best-bid order and one representative best-ask order
+3. Writes their IDs to the output CSV
+
+**Limitation**: Full lifecycle trace of these orders requires a second pass through the OrdLog file. Use `--trace-order-id` with the selected IDs for detailed lifecycle.
+
+### Hypothesis Conclusion
+
+The M10D implementation provides the tools to determine the root cause of crossed-book snapshots:
+
+1. **Best-level order trace** — For each crossed snapshot, we can now see exactly which order IDs are at the best bid and best ask levels. This allows direct identification of stale orders that persist across many snapshots.
+
+2. **Missing order trace** — Each missing_order_id event is logged with before/after book state. This helps determine whether missing orders are:
+   - Benign: orders that were already consumed (e.g., fully filled before cancel)
+   - Problematic: orders that should exist but don't, causing stale book state
+
+3. **Auto-trace** — Automatically identifies representative orders from the first crossed snapshot for further investigation.
+
+### Remaining Limitations
+
+1. **Cannot run on real QSH** — No QSH file available on this system. The traces must be run by the owner with the real `RTS-3.21.2021-01-05.OrdLog.qsh`.
+
+2. **Auto-trace requires second pass** — The `--auto-trace-crossed-orders-out` only identifies order IDs. Full lifecycle trace requires using `--trace-order-id` with those IDs in a separate run.
+
+3. **No Python-side visualization** — The new CSV outputs are not yet visualized in Trading Lab.
+
+4. **Order ID semicolon separator** — When multiple orders exist at the same best level, they are separated by semicolons in the CSV. This may need special handling in downstream analysis tools.
+
+### Next Recommended Task
+
+Run the full diagnostic command on the real QSH file:
+
+```powershell
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh --depth 5 --max-records 100000 --max-snapshots 10000 --snapshot-mode txend --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend.csv --diagnostics-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend_diagnostics.csv --max-diagnostics 100 --trace-crossed-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend_trace.csv --max-trace-events 100 --trace-best-level-orders-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_best_orders.csv --trace-missing-order-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_missing_orders.csv --auto-trace-crossed-orders-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_auto_trace.csv
+```
+
+Then analyze:
+1. Which order IDs appear repeatedly in `l2_best_orders.csv` (stale orders)
+2. Whether missing order events correlate with crossed snapshots
+3. Whether the auto-traced orders have complete lifecycle (add → fill/cancel/remove)
+4. If stale orders are caused by:
+   - Wrong quantity delta logic
+   - Wrong amount_rest semantics
+   - Wrong remove/cancel handling
+   - Missing add event
+   - Wrong side mapping for specific flags
+   - Order ID decode issue
+   - Transaction boundary issue
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**

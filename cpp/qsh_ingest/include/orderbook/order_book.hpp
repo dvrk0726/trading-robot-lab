@@ -69,12 +69,34 @@ public:
     // Timestamp of last update.
     Timestamp last_timestamp() const { return last_ts_; }
 
+    // Get order IDs at best bid level (up to max_ids).
+    std::vector<UID> best_bid_order_ids(int max_ids = 20) const;
+
+    // Get order IDs at best ask level (up to max_ids).
+    std::vector<UID> best_ask_order_ids(int max_ids = 20) const;
+
+    // Get total volume at best bid level.
+    Volume best_bid_total_qty() const;
+
+    // Get total volume at best ask level.
+    Volume best_ask_total_qty() const;
+
+    // Get order count at best bid level.
+    int best_bid_order_count() const;
+
+    // Get order count at best ask level.
+    int best_ask_order_count() const;
+
 private:
     // Levels stored as price -> (volume, order_count), sorted.
     // Bid: descending by price (highest first).
     // Ask: ascending by price (lowest first).
     std::map<Price, std::pair<Volume, int>, std::greater<Price>> bid_levels_;
     std::map<Price, std::pair<Volume, int>> ask_levels_;
+
+    // Order IDs at each price level: price -> set of order_ids
+    std::map<Price, std::vector<UID>, std::greater<Price>> bid_level_orders_;
+    std::map<Price, std::vector<UID>> ask_level_orders_;
 
     // Order tracking: order_id -> (side, price, amount)
     struct OrderInfo {

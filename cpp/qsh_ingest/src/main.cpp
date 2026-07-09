@@ -49,6 +49,9 @@ static void print_help() {
     std::cout << "                        [--snapshot-mode event|txend]\n";
     std::cout << "                        [--trace-order-id <id>] [--trace-order-out <file.csv>]\n";
     std::cout << "                        [--trace-crossed-context N]\n";
+    std::cout << "                        [--trace-best-level-orders-out <file.csv>]\n";
+    std::cout << "                        [--trace-missing-order-out <file.csv>]\n";
+    std::cout << "                        [--auto-trace-crossed-orders-out <file.csv>]\n";
     std::cout << "                          L3->L2 reconstruction\n";
     std::cout << "\nOptions:\n";
     std::cout << "  --depth N              L2 depth (default: 20)\n";
@@ -64,6 +67,9 @@ static void print_help() {
     std::cout << "  --trace-order-id <id> Trace lifecycle of a specific order ID\n";
     std::cout << "  --trace-order-out <f> Write order lifecycle trace CSV\n";
     std::cout << "  --trace-crossed-context N  Ring buffer size for first-crossed context (default: 20)\n";
+    std::cout << "  --trace-best-level-orders-out <f>  Write best-level orders CSV for crossed snapshots\n";
+    std::cout << "  --trace-missing-order-out <f>      Write missing order ID trace CSV\n";
+    std::cout << "  --auto-trace-crossed-orders-out <f> Write auto-traced orders from first crossed snapshot\n";
     std::cout << "\nSafety:\n";
     std::cout << "  No broker connection. No live trading. Historical files only.\n";
 }
@@ -253,7 +259,10 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         const std::string& out_path, const std::string& diag_path, int64_t max_diagnostics,
                         const std::string& trace_path, int64_t max_trace_events,
                         SnapshotMode snap_mode, UID trace_order_id, const std::string& order_trace_path,
-                        int ring_buffer_size) {
+                        int ring_buffer_size,
+                        const std::string& best_level_orders_path,
+                        const std::string& missing_order_path,
+                        const std::string& auto_trace_crossed_path) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -320,6 +329,68 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         }
     }
 
+    // Best-level orders trace
+    std::ofstream best_level_file;
+    bool trace_best_level_active = !best_level_orders_path.empty();
+    if (trace_best_level_active) {
+        best_level_file.open(best_level_orders_path);
+        if (best_level_file.is_open()) {
+            best_level_file << "ts,snapshot_index,records_processed,tx_index,"
+                           << "best_bid,best_ask,spread,"
+                           << "best_bid_total_qty,best_ask_total_qty,"
+                           << "best_bid_order_ids,best_ask_order_ids,"
+                           << "best_bid_order_count,best_ask_order_count,"
+                           << "last_event_type,last_order_id,last_side,"
+                           << "last_price,last_qty,last_amount_rest,last_flags,last_repl_act\n";
+        }
+    }
+
+    // Missing order trace
+    std::ofstream missing_order_file;
+    bool trace_missing_order_active = !missing_order_path.empty();
+    if (trace_missing_order_active) {
+        missing_order_file.open(missing_order_path);
+        if (missing_order_file.is_open()) {
+            missing_order_file << "ts,record_index,tx_index,event_type,order_id,side,price,qty,"
+                              << "amount_rest,flags,repl_act,"
+                              << "best_bid_before,best_ask_before,"
+                              << "best_bid_after,best_ask_after,reason\n";
+        }
+    }
+
+    // Auto-trace crossed orders
+    std::ofstream auto_trace_file;
+    bool auto_trace_active = !auto_trace_crossed_path.empty();
+    UID auto_trace_bid_order = 0;
+    UID auto_trace_ask_order = 0;
+    bool auto_trace_ids_selected = false;
+    if (auto_trace_active) {
+        auto_trace_file.open(auto_trace_crossed_path);
+        if (auto_trace_file.is_open()) {
+            auto_trace_file << "ts,record_index,tx_index,event_type,order_id,side,price,qty,"
+                           << "amount_rest,flags,repl_act,"
+                           << "book_best_bid_after,book_best_ask_after,spread_after\n";
+        }
+    }
+
+    // Missing order event tracking (for before/after book state)
+    struct MissingOrderEvent {
+        Timestamp ts;
+        int64_t record_index;
+        int64_t tx_index;
+        OLMsgType event_type;
+        UID order_id;
+        Side side;
+        Price price;
+        Volume qty;
+        Volume amount_rest;
+        uint16_t flags;
+        Volume repl_act;
+        Price best_bid_before;
+        Price best_ask_before;
+    };
+    std::vector<MissingOrderEvent> pending_missing_events;
+
     OrderLogRecord rec;
     while (reader.next(file, rec)) {
         ++record_count;
@@ -357,7 +428,31 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             ++moved_count;
         }
 
+        // Track book state before apply for missing order trace
+        Price best_bid_before = book.best_bid();
+        Price best_ask_before = book.best_ask();
+        int64_t missing_before = book.errors().missing_order_id;
+
         book.apply(rec);
+
+        // Check if this event caused a missing_order_id error
+        if (trace_missing_order_active && book.errors().missing_order_id > missing_before) {
+            MissingOrderEvent moe;
+            moe.ts = rec.timestamp;
+            moe.record_index = record_count;
+            moe.tx_index = last_tx_index;
+            moe.event_type = rec.event;
+            moe.order_id = rec.order_id;
+            moe.side = rec.side;
+            moe.price = rec.price;
+            moe.qty = rec.amount;
+            moe.amount_rest = rec.amount_rest;
+            moe.flags = rec.order_flags;
+            moe.repl_act = last_repl_act;
+            moe.best_bid_before = best_bid_before;
+            moe.best_ask_before = best_ask_before;
+            pending_missing_events.push_back(moe);
+        }
 
         // Ring buffer: push current event
         RingEntry ring_entry;
@@ -505,6 +600,53 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         crossed_context_lines.push_back(oss.str());
                     }
                     post_crossed_count = 0;
+
+                    // Auto-select order IDs for tracing from first crossed snapshot
+                    if (auto_trace_active && !auto_trace_ids_selected) {
+                        auto bid_ids = book.best_bid_order_ids(1);
+                        auto ask_ids = book.best_ask_order_ids(1);
+                        if (!bid_ids.empty()) auto_trace_bid_order = bid_ids[0];
+                        if (!ask_ids.empty()) auto_trace_ask_order = ask_ids[0];
+                        auto_trace_ids_selected = true;
+                        std::cout << "Auto-trace: selected bid order " << auto_trace_bid_order
+                                  << ", ask order " << auto_trace_ask_order << std::endl;
+                    }
+                }
+
+                // Write best-level orders trace for crossed snapshot
+                if (trace_best_level_active && best_level_file.is_open()) {
+                    auto bid_ids = book.best_bid_order_ids(20);
+                    auto ask_ids = book.best_ask_order_ids(20);
+
+                    std::ostringstream bid_ids_str;
+                    for (size_t i = 0; i < bid_ids.size(); ++i) {
+                        if (i > 0) bid_ids_str << ";";
+                        bid_ids_str << bid_ids[i];
+                    }
+
+                    std::ostringstream ask_ids_str;
+                    for (size_t i = 0; i < ask_ids.size(); ++i) {
+                        if (i > 0) ask_ids_str << ";";
+                        ask_ids_str << ask_ids[i];
+                    }
+
+                    best_level_file << rec.timestamp << ","
+                        << snapshot_count << ","
+                        << record_count << ","
+                        << last_tx_index << ","
+                        << bb << "," << ba << "," << sp << ","
+                        << book.best_bid_total_qty() << ","
+                        << book.best_ask_total_qty() << ","
+                        << bid_ids_str.str() << ","
+                        << ask_ids_str.str() << ","
+                        << book.best_bid_order_count() << ","
+                        << book.best_ask_order_count() << ","
+                        << ol_msg_type_name(last_event_type) << ","
+                        << last_order_id << ","
+                        << side_name(last_side) << ","
+                        << last_price << "," << last_qty << ","
+                        << rec.amount_rest << ","
+                        << last_flags << "," << last_repl_act << "\n";
                 }
             }
 
@@ -607,12 +749,60 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         }
     }
 
+    // Write missing order trace
+    if (trace_missing_order_active && missing_order_file.is_open()) {
+        for (const auto& moe : pending_missing_events) {
+            missing_order_file << moe.ts << ","
+                << moe.record_index << ","
+                << moe.tx_index << ","
+                << ol_msg_type_name(moe.event_type) << ","
+                << moe.order_id << ","
+                << side_name(moe.side) << ","
+                << moe.price << ","
+                << moe.qty << ","
+                << moe.amount_rest << ","
+                << moe.flags << ","
+                << moe.repl_act << ","
+                << moe.best_bid_before << ","
+                << moe.best_ask_before << ","
+                << book.best_bid() << ","
+                << book.best_ask() << ","
+                << "MISSING_ORDER_ID"
+                << "\n";
+        }
+        missing_order_file.close();
+        std::cout << "Wrote " << pending_missing_events.size() << " missing order events to "
+                  << missing_order_path << std::endl;
+    }
+
+    // Write best-level orders trace
+    if (trace_best_level_active && best_level_file.is_open()) {
+        best_level_file.close();
+        std::cout << "Best-level orders trace written to " << best_level_orders_path << std::endl;
+    }
+
+    // Write auto-trace crossed orders
+    if (auto_trace_active && auto_trace_file.is_open()) {
+        // Note: For a proper implementation, we would need a second pass through the file
+        // to trace the lifecycle of the selected orders. For now, document this limitation.
+        if (auto_trace_ids_selected) {
+            auto_trace_file << "# Auto-selected order IDs from first crossed snapshot\n";
+            auto_trace_file << "# bid_order=" << auto_trace_bid_order << "\n";
+            auto_trace_file << "# ask_order=" << auto_trace_ask_order << "\n";
+            auto_trace_file << "# NOTE: Full lifecycle trace requires second pass through OrdLog file\n";
+            auto_trace_file << "# Use --trace-order-id with these IDs for detailed lifecycle\n";
+        }
+        auto_trace_file.close();
+        std::cout << "Auto-trace crossed orders written to " << auto_trace_crossed_path << std::endl;
+    }
+
     // Final strategy-ready status
     std::cout << "\n=== L2 Strategy-Ready Status ===" << std::endl;
     std::cout << "snapshot_mode:                    " << mode_name << std::endl;
     std::cout << "records_processed:                " << record_count << std::endl;
     std::cout << "transactions_seen:                " << transactions_seen << std::endl;
     std::cout << "snapshots_written:                " << snapshot_count << std::endl;
+    std::cout << "missing_order_id:                 " << book.errors().missing_order_id << std::endl;
     std::cout << "l2_crossed_book_snapshots:        " << l2_crossed << std::endl;
     std::cout << "l2_non_positive_spread_snapshots: " << l2_non_positive_spread << std::endl;
     if (!trace_path.empty()) {
@@ -620,6 +810,20 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     }
     if (trace_order_active) {
         std::cout << "order_trace_file:                 " << order_trace_path << std::endl;
+    }
+    if (trace_best_level_active) {
+        std::cout << "best_level_orders_file:           " << best_level_orders_path << std::endl;
+    }
+    if (trace_missing_order_active) {
+        std::cout << "missing_order_file:               " << missing_order_path << std::endl;
+        std::cout << "missing_order_events:             " << pending_missing_events.size() << std::endl;
+    }
+    if (auto_trace_active) {
+        std::cout << "auto_trace_file:                  " << auto_trace_crossed_path << std::endl;
+        if (auto_trace_ids_selected) {
+            std::cout << "auto_trace_bid_order:             " << auto_trace_bid_order << std::endl;
+            std::cout << "auto_trace_ask_order:             " << auto_trace_ask_order << std::endl;
+        }
     }
     std::cout << "L2 strategy-ready:                " << (has_invalid ? "NO" : "YES") << std::endl;
 
@@ -677,7 +881,10 @@ int main(int argc, char* argv[]) {
                       << "  [--max-snapshots N] [--out <file.csv>] [--diagnostics-out <file.csv>]\n"
                       << "  [--max-diagnostics N] [--trace-crossed-out <file.csv>] [--max-trace-events N]\n"
                       << "  [--snapshot-mode event|txend] [--trace-order-id <id>] [--trace-order-out <file.csv>]\n"
-                      << "  [--trace-crossed-context N]" << std::endl;
+                      << "  [--trace-crossed-context N]\n"
+                      << "  [--trace-best-level-orders-out <file.csv>]\n"
+                      << "  [--trace-missing-order-out <file.csv>]\n"
+                      << "  [--auto-trace-crossed-orders-out <file.csv>]" << std::endl;
             return 1;
         }
         std::string file_path = argv[2];
@@ -693,6 +900,9 @@ int main(int argc, char* argv[]) {
         UID trace_order_id = 0;
         std::string order_trace_path;
         int ring_buffer_size = 20;
+        std::string best_level_orders_path;
+        std::string missing_order_path;
+        std::string auto_trace_crossed_path;
         for (int i = 3; i < argc - 1; ++i) {
             if (std::strcmp(argv[i], "--depth") == 0 && i + 1 < argc) {
                 depth = std::atoi(argv[i + 1]);
@@ -738,10 +948,20 @@ int main(int argc, char* argv[]) {
             if (std::strcmp(argv[i], "--trace-crossed-context") == 0 && i + 1 < argc) {
                 ring_buffer_size = std::atoi(argv[i + 1]);
             }
+            if (std::strcmp(argv[i], "--trace-best-level-orders-out") == 0 && i + 1 < argc) {
+                best_level_orders_path = argv[i + 1];
+            }
+            if (std::strcmp(argv[i], "--trace-missing-order-out") == 0 && i + 1 < argc) {
+                missing_order_path = argv[i + 1];
+            }
+            if (std::strcmp(argv[i], "--auto-trace-crossed-orders-out") == 0 && i + 1 < argc) {
+                auto_trace_crossed_path = argv[i + 1];
+            }
         }
         return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path,
                             max_diagnostics, trace_path, max_trace_events, snap_mode,
-                            trace_order_id, order_trace_path, ring_buffer_size);
+                            trace_order_id, order_trace_path, ring_buffer_size,
+                            best_level_orders_path, missing_order_path, auto_trace_crossed_path);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

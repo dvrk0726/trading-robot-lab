@@ -1,6 +1,7 @@
 #include "orderbook/order_book.hpp"
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 
 namespace qsh {
 
@@ -26,6 +27,8 @@ bool OrderBook::apply(const OrderLogRecord& rec) {
 void OrderBook::clear() {
     bid_levels_.clear();
     ask_levels_.clear();
+    bid_level_orders_.clear();
+    ask_level_orders_.clear();
     orders_.clear();
 }
 
@@ -47,10 +50,12 @@ void OrderBook::add_order(const OrderLogRecord& rec) {
         auto& lvl = bid_levels_[rec.price];
         lvl.first += rec.amount_rest;
         ++lvl.second;
+        bid_level_orders_[rec.price].push_back(rec.order_id);
     } else {
         auto& lvl = ask_levels_[rec.price];
         lvl.first += rec.amount_rest;
         ++lvl.second;
+        ask_level_orders_[rec.price].push_back(rec.order_id);
     }
 }
 
@@ -63,10 +68,10 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
 
     auto& info = it->second;
     Volume fill_amount = rec.amount;
+    bool fully_filled = (info.amount <= fill_amount);
 
     // Reduce order volume
-    if (info.amount <= fill_amount) {
-        // Fully filled - remove
+    if (fully_filled) {
         fill_amount = info.amount;
         orders_.erase(it);
     } else {
@@ -78,11 +83,16 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
         auto lvl_it = bid_levels_.find(info.price);
         if (lvl_it != bid_levels_.end()) {
             lvl_it->second.first -= fill_amount;
+            if (fully_filled && lvl_it->second.second > 0) {
+                --lvl_it->second.second;
+            }
             if (lvl_it->second.first <= 0) {
                 bid_levels_.erase(lvl_it);
-            }
-            if (lvl_it != bid_levels_.end() && lvl_it->second.second > 0) {
-                --lvl_it->second.second;
+                bid_level_orders_.erase(info.price);
+            } else if (fully_filled) {
+                // Remove order id from level tracking
+                auto& ids = bid_level_orders_[info.price];
+                ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
             }
         } else {
             ++errors_.level_not_found;
@@ -91,11 +101,16 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
         auto lvl_it = ask_levels_.find(info.price);
         if (lvl_it != ask_levels_.end()) {
             lvl_it->second.first -= fill_amount;
+            if (fully_filled && lvl_it->second.second > 0) {
+                --lvl_it->second.second;
+            }
             if (lvl_it->second.first <= 0) {
                 ask_levels_.erase(lvl_it);
-            }
-            if (lvl_it != ask_levels_.end() && lvl_it->second.second > 0) {
-                --lvl_it->second.second;
+                ask_level_orders_.erase(info.price);
+            } else if (fully_filled) {
+                // Remove order id from level tracking
+                auto& ids = ask_level_orders_[info.price];
+                ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
             }
         } else {
             ++errors_.level_not_found;
@@ -103,7 +118,7 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
     }
 
     // If order fully consumed, remove from tracking
-    if (orders_.find(rec.order_id) != orders_.end() && orders_[rec.order_id].amount <= 0) {
+    if (!fully_filled && orders_.find(rec.order_id) != orders_.end() && orders_[rec.order_id].amount <= 0) {
         orders_.erase(rec.order_id);
     }
 }
@@ -128,6 +143,11 @@ void OrderBook::cancel_order(const OrderLogRecord& rec) {
                 --lvl_it->second.second;
                 if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
                     bid_levels_.erase(lvl_it);
+                    bid_level_orders_.erase(info.price);
+                } else {
+                    // Remove order id from level tracking
+                    auto& ids = bid_level_orders_[info.price];
+                    ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
                 }
             } else {
                 ++errors_.level_not_found;
@@ -139,6 +159,11 @@ void OrderBook::cancel_order(const OrderLogRecord& rec) {
                 --lvl_it->second.second;
                 if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
                     ask_levels_.erase(lvl_it);
+                    ask_level_orders_.erase(info.price);
+                } else {
+                    // Remove order id from level tracking
+                    auto& ids = ask_level_orders_[info.price];
+                    ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
                 }
             } else {
                 ++errors_.level_not_found;
@@ -198,6 +223,11 @@ void OrderBook::remove_order(const OrderLogRecord& rec) {
             --lvl_it->second.second;
             if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
                 bid_levels_.erase(lvl_it);
+                bid_level_orders_.erase(info.price);
+            } else {
+                // Remove order id from level tracking
+                auto& ids = bid_level_orders_[info.price];
+                ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
             }
         }
     } else {
@@ -207,6 +237,11 @@ void OrderBook::remove_order(const OrderLogRecord& rec) {
             --lvl_it->second.second;
             if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
                 ask_levels_.erase(lvl_it);
+                ask_level_orders_.erase(info.price);
+            } else {
+                // Remove order id from level tracking
+                auto& ids = ask_level_orders_[info.price];
+                ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
             }
         }
     }
@@ -233,6 +268,11 @@ void OrderBook::move_order(const OrderLogRecord& rec) {
             --lvl_it->second.second;
             if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
                 bid_levels_.erase(lvl_it);
+                bid_level_orders_.erase(old_price);
+            } else {
+                // Remove order id from old level
+                auto& ids = bid_level_orders_[old_price];
+                ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
             }
         } else {
             ++errors_.level_not_found;
@@ -244,6 +284,11 @@ void OrderBook::move_order(const OrderLogRecord& rec) {
             --lvl_it->second.second;
             if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
                 ask_levels_.erase(lvl_it);
+                ask_level_orders_.erase(old_price);
+            } else {
+                // Remove order id from old level
+                auto& ids = ask_level_orders_[old_price];
+                ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
             }
         } else {
             ++errors_.level_not_found;
@@ -258,10 +303,12 @@ void OrderBook::move_order(const OrderLogRecord& rec) {
         auto& lvl = bid_levels_[new_price];
         lvl.first += new_amount;
         ++lvl.second;
+        bid_level_orders_[new_price].push_back(rec.order_id);
     } else {
         auto& lvl = ask_levels_[new_price];
         lvl.first += new_amount;
         ++lvl.second;
+        ask_level_orders_[new_price].push_back(rec.order_id);
     }
 
     // Update order tracking
@@ -316,6 +363,58 @@ Price OrderBook::best_ask() const {
 bool OrderBook::check_crossed() const {
     if (bid_levels_.empty() || ask_levels_.empty()) return false;
     return bid_levels_.begin()->first >= ask_levels_.begin()->first;
+}
+
+std::vector<UID> OrderBook::best_bid_order_ids(int max_ids) const {
+    std::vector<UID> result;
+    if (bid_levels_.empty()) return result;
+    Price best = bid_levels_.begin()->first;
+    auto it = bid_level_orders_.find(best);
+    if (it != bid_level_orders_.end()) {
+        int count = 0;
+        for (UID id : it->second) {
+            if (count >= max_ids) break;
+            result.push_back(id);
+            ++count;
+        }
+    }
+    return result;
+}
+
+std::vector<UID> OrderBook::best_ask_order_ids(int max_ids) const {
+    std::vector<UID> result;
+    if (ask_levels_.empty()) return result;
+    Price best = ask_levels_.begin()->first;
+    auto it = ask_level_orders_.find(best);
+    if (it != ask_level_orders_.end()) {
+        int count = 0;
+        for (UID id : it->second) {
+            if (count >= max_ids) break;
+            result.push_back(id);
+            ++count;
+        }
+    }
+    return result;
+}
+
+Volume OrderBook::best_bid_total_qty() const {
+    if (bid_levels_.empty()) return 0;
+    return bid_levels_.begin()->second.first;
+}
+
+Volume OrderBook::best_ask_total_qty() const {
+    if (ask_levels_.empty()) return 0;
+    return ask_levels_.begin()->second.first;
+}
+
+int OrderBook::best_bid_order_count() const {
+    if (bid_levels_.empty()) return 0;
+    return bid_levels_.begin()->second.second;
+}
+
+int OrderBook::best_ask_order_count() const {
+    if (ask_levels_.empty()) return 0;
+    return ask_levels_.begin()->second.second;
 }
 
 }  // namespace qsh

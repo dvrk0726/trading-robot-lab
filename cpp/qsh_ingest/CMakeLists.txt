@@ -76,3 +76,7 @@ add_test(NAME test_l2_diagnostics COMMAND test_l2_diagnostics)
 add_executable(test_snapshot_mode tests/test_snapshot_mode.cpp)
 target_link_libraries(test_snapshot_mode PRIVATE qsh_lib)
 add_test(NAME test_snapshot_mode COMMAND test_snapshot_mode)
+
+add_executable(test_best_level_orders tests/test_best_level_orders.cpp)
+target_link_libraries(test_best_level_orders PRIVATE qsh_lib)
+add_test(NAME test_best_level_orders COMMAND test_best_level_orders)
