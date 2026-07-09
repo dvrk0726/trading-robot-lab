@@ -33,14 +33,20 @@ void OrderBook::clear() {
 }
 
 void OrderBook::add_order(const OrderLogRecord& rec) {
+    ++errors_.add_records_seen;
     if (rec.side == Side::Unknown) {
         ++errors_.invalid_side;
+        ++errors_.add_records_skipped;
+        ++errors_.skip_invalid_side;
         return;
     }
     if (rec.amount_rest == 0) {
         // This shouldn't happen for Add but handle gracefully
+        ++errors_.add_records_skipped;
+        ++errors_.skip_zero_amount;
         return;
     }
+    ++errors_.add_records_applied;
 
     // Track order
     orders_[rec.order_id] = {rec.side, rec.price, rec.amount_rest};
@@ -63,6 +69,10 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
     auto it = orders_.find(rec.order_id);
     if (it == orders_.end()) {
         ++errors_.missing_order_id;
+        ++errors_.missing_on_fill;
+        if (rec.side == Side::Buy) ++errors_.missing_on_buy;
+        else if (rec.side == Side::Sell) ++errors_.missing_on_sell;
+        else ++errors_.missing_on_unknown_side;
         return;
     }
 
@@ -146,6 +156,10 @@ void OrderBook::cancel_order(const OrderLogRecord& rec) {
     auto it = orders_.find(rec.order_id);
     if (it == orders_.end()) {
         ++errors_.missing_order_id;
+        ++errors_.missing_on_cancel;
+        if (rec.side == Side::Buy) ++errors_.missing_on_buy;
+        else if (rec.side == Side::Sell) ++errors_.missing_on_sell;
+        else ++errors_.missing_on_unknown_side;
         return;
     }
 
@@ -230,6 +244,10 @@ void OrderBook::remove_order(const OrderLogRecord& rec) {
     auto it = orders_.find(rec.order_id);
     if (it == orders_.end()) {
         ++errors_.missing_order_id;
+        ++errors_.missing_on_remove;
+        if (rec.side == Side::Buy) ++errors_.missing_on_buy;
+        else if (rec.side == Side::Sell) ++errors_.missing_on_sell;
+        else ++errors_.missing_on_unknown_side;
         return;
     }
 
@@ -272,6 +290,10 @@ void OrderBook::move_order(const OrderLogRecord& rec) {
     auto it = orders_.find(rec.order_id);
     if (it == orders_.end()) {
         ++errors_.missing_order_id;
+        ++errors_.missing_on_move;
+        if (rec.side == Side::Buy) ++errors_.missing_on_buy;
+        else if (rec.side == Side::Sell) ++errors_.missing_on_sell;
+        else ++errors_.missing_on_unknown_side;
         return;
     }
 

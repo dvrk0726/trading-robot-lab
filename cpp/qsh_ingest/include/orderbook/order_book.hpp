@@ -30,6 +30,33 @@ struct BookErrors {
     int64_t negative_level_volume = 0;
     int64_t crossed_book_after_update = 0;
     int64_t invalid_side = 0;
+
+    // M10G: Missing order diagnostics by event type
+    int64_t missing_on_fill = 0;
+    int64_t missing_on_cancel = 0;
+    int64_t missing_on_remove = 0;
+    int64_t missing_on_move = 0;
+
+    // M10G: Missing order diagnostics by side
+    int64_t missing_on_buy = 0;
+    int64_t missing_on_sell = 0;
+    int64_t missing_on_unknown_side = 0;
+
+    // M10G: Snapshot/NewSession tracking
+    int64_t snapshot_records_seen = 0;
+    int64_t snapshot_orders_loaded = 0;
+    int64_t new_session_records_seen = 0;
+    int64_t book_clears_due_to_new_session = 0;
+    int64_t first_valid_book_record_index = 0;
+
+    // M10G: ADD record tracking
+    int64_t add_records_seen = 0;
+    int64_t add_records_applied = 0;
+    int64_t add_records_skipped = 0;
+    int64_t skip_invalid_side = 0;
+    int64_t skip_zero_amount = 0;
+    int64_t skip_non_system = 0;
+    int64_t skip_non_zero_repl_act = 0;
 };
 
 // L3 order book reconstruction from OrdLog events.
@@ -65,6 +92,7 @@ public:
 
     // Error counters.
     const BookErrors& errors() const { return errors_; }
+    BookErrors& errors_ref() { return errors_; }
 
     // Timestamp of last update.
     Timestamp last_timestamp() const { return last_ts_; }
@@ -93,6 +121,24 @@ public:
 
     // Set fill semantics mode: "delta" (amount = filled qty) or "rest" (amount = original, fill = amount - amount_rest).
     void set_fill_delta_mode(bool use_delta) { fill_delta_mode_ = use_delta; }
+
+    // M10G: Record index of first missing_order_id event (for timing diagnostics)
+    int64_t first_missing_order_record_index() const { return first_missing_order_record_index_; }
+    void set_first_missing_order_record_index(int64_t idx) {
+        if (first_missing_order_record_index_ == 0) first_missing_order_record_index_ = idx;
+    }
+
+    // M10G: Record index of first crossed book snapshot
+    int64_t first_crossed_book_record_index() const { return first_crossed_book_record_index_; }
+    void set_first_crossed_book_record_index(int64_t idx) {
+        if (first_crossed_book_record_index_ == 0) first_crossed_book_record_index_ = idx;
+    }
+
+    // M10G: Record index of first valid book state
+    int64_t first_valid_book_record_index() const { return errors_.first_valid_book_record_index; }
+    void set_first_valid_book_record_index(int64_t idx) {
+        if (errors_.first_valid_book_record_index == 0) errors_.first_valid_book_record_index = idx;
+    }
 
 private:
     // Levels stored as price -> (volume, order_count), sorted.
@@ -123,6 +169,10 @@ private:
     void remove_order(const OrderLogRecord& rec);
     void move_order(const OrderLogRecord& rec);
     bool check_crossed() const;
+
+    // M10G: Timing diagnostics
+    int64_t first_missing_order_record_index_ = 0;
+    int64_t first_crossed_book_record_index_ = 0;
 };
 
 }  // namespace qsh

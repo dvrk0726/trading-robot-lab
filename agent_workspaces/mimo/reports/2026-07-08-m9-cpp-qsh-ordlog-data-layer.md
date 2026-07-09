@@ -924,3 +924,150 @@ The enhanced lifecycle trace (with before/after state) will help determine which
 4. Analyze lifecycle trace for the two known crossed orders to identify stale order root cause
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+---
+
+## M10G Missing Order ID and Snapshot Init
+
+Date: 2026-07-09
+Task: M10G_MISSING_ORDER_ID_AND_SNAPSHOT_INIT.md
+
+### Problem
+
+Crossed-book snapshots persist in txend mode (7890 out of 10000). Need to investigate:
+1. Missing order timing — whether missing_order_id starts before or after crossed book
+2. Snapshot/NewSession handling — whether book initialization is correct
+3. ADD decoding/filtering — whether ADD records are skipped
+4. Selected order lifecycle — trace specific crossed orders
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `include/orderbook/order_book.hpp` | Added new diagnostic counters to `BookErrors`: `missing_on_fill/cancel/remove/move`, `missing_on_buy/sell/unknown_side`, `snapshot_records_seen`, `new_session_records_seen`, `book_clears_due_to_new_session`, `first_valid_book_record_index`, `add_records_seen/applied/skipped`, `skip_invalid_side/zero_amount/non_system/non_zero_repl_act`. Added timing tracking: `first_missing_order_record_index_`, `first_crossed_book_record_index_`. Added methods: `errors_ref()`, `set_first_missing_order_record_index()`, `set_first_crossed_book_record_index()`, `set_first_valid_book_record_index()`. |
+| `src/order_book.cpp` | Updated `fill_order()`, `cancel_order()`, `remove_order()`, `move_order()` to track missing_order_id by event type and side. Updated `add_order()` to track ADD records seen/applied/skipped. |
+| `src/main.cpp` | Added tracking for Snapshot records, NewSession records, first valid book record index, first missing order record index, first crossed book record index. Added comprehensive diagnostic output for all new counters. |
+| `CMakeLists.txt` | Added `test_m10g_diagnostics` test target. |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_m10g_diagnostics.cpp` | 10 synthetic tests for M10G diagnostics |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 10
+```
+
+New test `test_m10g_diagnostics` covers:
+- NewSession clears book and increments counters
+- Snapshot records are tracked
+- ADD records seen/applied/skipped counters
+- missing_order_id before crossed book scenario
+- missing_order_id by event type (fill, cancel, remove, move)
+- missing_order_id by side (buy, sell, unknown)
+- Selected order lifecycle trace (add, partial fill, full fill)
+- first_valid_book_record_index getter/setter
+- first_missing_order_record_index getter/setter (idempotent)
+- first_crossed_book_record_index getter/setter (idempotent)
+
+### New Diagnostic Counters
+
+#### Missing Order Timing
+
+```
+first_missing_order_record_index: Record index of first missing_order_id event
+first_crossed_book_record_index:  Record index of first crossed book snapshot
+```
+
+If `first_missing_order_record_index < first_crossed_book_record_index`, missing_order_id starts BEFORE crossed book.
+
+#### Missing Order by Event Type
+
+```
+missing_on_fill:   Count of missing_order_id on Fill events
+missing_on_cancel: Count of missing_order_id on Cancel events
+missing_on_remove: Count of missing_order_id on Remove events
+missing_on_move:   Count of missing_order_id on Move events
+```
+
+#### Missing Order by Side
+
+```
+missing_on_buy:         Count of missing_order_id on Buy side
+missing_on_sell:        Count of missing_order_id on Sell side
+missing_on_unknown_side: Count of missing_order_id on Unknown side
+```
+
+#### Snapshot/NewSession Tracking
+
+```
+snapshot_records_seen:           Count of records with Snapshot flag
+new_session_records_seen:        Count of records with NewSession flag
+book_clears_due_to_new_session:  Count of book.clear() calls due to NewSession
+first_valid_book_record_index:   Record index when book first has both bid and ask
+```
+
+#### ADD Record Tracking
+
+```
+add_records_seen:    Count of Add events processed
+add_records_applied: Count of Add events successfully applied to book
+add_records_skipped: Count of Add events skipped
+skip_invalid_side:   Count of Add events skipped due to invalid side
+skip_zero_amount:    Count of Add events skipped due to zero amount_rest
+```
+
+### Hypothesis Conclusion
+
+The M10G implementation adds comprehensive diagnostics to determine:
+
+1. **Missing order timing** — Whether missing_order_id events start before or after crossed book state. If before, missing orders may cause crossed book. If after, crossed book may be caused by something else.
+
+2. **Missing order distribution** — By event type and side, to identify patterns (e.g., mostly Fill events on Buy side).
+
+3. **Snapshot/NewSession handling** — Whether book initialization is correct (NewSession clears book, Snapshot records are tracked).
+
+4. **ADD record tracking** — Whether ADD records are being skipped due to invalid side or zero amount.
+
+### What Remains Unresolved
+
+1. **Cannot run on real QSH** — No QSH file available on this system. The diagnostics must be run by the owner with the real `RTS-3.21.2021-01-05.OrdLog.qsh`.
+
+2. **7890 crossed snapshots persist** — Root cause depends on diagnostic results from real data.
+
+3. **319 missing_order_id events** — Need correlation with crossed book state and timing analysis.
+
+### Recommended Owner Commands
+
+```powershell
+# Run with all diagnostics
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend `
+  --trace-order-id 1925033994466246392,1925033994522131746 `
+  --trace-order-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_lifecycle_trace.csv `
+  --trace-missing-order-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_missing_orders.csv `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend.csv
+```
+
+### Next Recommended Task
+
+1. Owner runs the diagnostic command on real QSH file
+2. Analyze timing: does missing_order_id start before or after crossed book?
+3. Analyze distribution: which event types and sides cause missing orders?
+4. Check ADD record tracking: are any ADD records being skipped?
+5. Correlate missing_order_id events with crossed book snapshots
+6. Determine if missing orders are benign (already consumed) or problematic (missing ADD events)
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**

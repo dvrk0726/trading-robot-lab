@@ -414,6 +414,16 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         ++record_count;
 
         if (!is_system_record(rec)) {
+            // M10G: Track non-system records
+            if (has_flag(rec.order_flags, OLFlags::Add)) {
+                ++book.errors_ref().add_records_skipped;
+                if (has_flag(rec.order_flags, OLFlags::NonSystem)) {
+                    ++book.errors_ref().skip_non_system;
+                }
+                if (has_flag(rec.order_flags, OLFlags::NonZeroReplAct)) {
+                    ++book.errors_ref().skip_non_zero_repl_act;
+                }
+            }
             if (max_records > 0 && record_count >= max_records) break;
             continue;
         }
@@ -438,6 +448,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         // NewSession clears the book
         if (has_flag(rec.order_flags, OLFlags::NewSession)) {
             book.clear();
+            ++book.errors_ref().new_session_records_seen;
+            ++book.errors_ref().book_clears_due_to_new_session;
             if (max_records > 0 && record_count >= max_records) break;
             continue;
         }
@@ -451,6 +463,16 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         Price best_ask_before = book.best_ask();
         int64_t missing_before = book.errors().missing_order_id;
 
+        // M10G: Track Snapshot records
+        if (has_flag(rec.order_flags, OLFlags::Snapshot)) {
+            ++book.errors_ref().snapshot_records_seen;
+        }
+
+        // M10G: Track first valid book record (has bid and ask)
+        if (book.bid_depth() > 0 && book.ask_depth() > 0) {
+            book.set_first_valid_book_record_index(record_count);
+        }
+
         // Track active order state before apply for traced orders
         bool is_traced_order = trace_order_active && trace_order_set.count(rec.order_id) > 0;
         Side traced_side_before = Side::Unknown;
@@ -463,22 +485,27 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         book.apply(rec);
 
         // Check if this event caused a missing_order_id error
-        if (trace_missing_order_active && book.errors().missing_order_id > missing_before) {
-            MissingOrderEvent moe;
-            moe.ts = rec.timestamp;
-            moe.record_index = record_count;
-            moe.tx_index = last_tx_index;
-            moe.event_type = rec.event;
-            moe.order_id = rec.order_id;
-            moe.side = rec.side;
-            moe.price = rec.price;
-            moe.qty = rec.amount;
-            moe.amount_rest = rec.amount_rest;
-            moe.flags = rec.order_flags;
-            moe.repl_act = last_repl_act;
-            moe.best_bid_before = best_bid_before;
-            moe.best_ask_before = best_ask_before;
-            pending_missing_events.push_back(moe);
+        if (book.errors().missing_order_id > missing_before) {
+            // M10G: Track first missing order record index
+            book.set_first_missing_order_record_index(record_count);
+
+            if (trace_missing_order_active) {
+                MissingOrderEvent moe;
+                moe.ts = rec.timestamp;
+                moe.record_index = record_count;
+                moe.tx_index = last_tx_index;
+                moe.event_type = rec.event;
+                moe.order_id = rec.order_id;
+                moe.side = rec.side;
+                moe.price = rec.price;
+                moe.qty = rec.amount;
+                moe.amount_rest = rec.amount_rest;
+                moe.flags = rec.order_flags;
+                moe.repl_act = last_repl_act;
+                moe.best_bid_before = best_bid_before;
+                moe.best_ask_before = best_ask_before;
+                pending_missing_events.push_back(moe);
+            }
         }
 
         // Ring buffer: push current event
@@ -587,6 +614,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             if (bb > 0 && ba > 0 && bb >= ba) {
                 ++l2_crossed;
                 ++l2_non_positive_spread;
+                // M10G: Track first crossed book record index
+                book.set_first_crossed_book_record_index(record_count);
                 if (max_diagnostics <= 0 || static_cast<int64_t>(diagnostics.size()) < max_diagnostics) {
                     L2DiagnosticEntry de;
                     de.timestamp = rec.timestamp;
@@ -727,6 +756,51 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::cout << "  crossed_book:          " << errs.crossed_book_after_update << std::endl;
     std::cout << "  invalid_side:          " << errs.invalid_side << std::endl;
 
+    // M10G: Missing order timing diagnostics
+    std::cout << "\nMissing order timing:" << std::endl;
+    std::cout << "  first_missing_order_record_index: " << book.first_missing_order_record_index() << std::endl;
+    std::cout << "  first_crossed_book_record_index:  " << book.first_crossed_book_record_index() << std::endl;
+    if (book.first_missing_order_record_index() > 0 && book.first_crossed_book_record_index() > 0) {
+        if (book.first_missing_order_record_index() < book.first_crossed_book_record_index()) {
+            std::cout << "  missing_order_id starts BEFORE crossed book" << std::endl;
+        } else if (book.first_missing_order_record_index() > book.first_crossed_book_record_index()) {
+            std::cout << "  missing_order_id starts AFTER crossed book" << std::endl;
+        } else {
+            std::cout << "  missing_order_id starts at SAME record as crossed book" << std::endl;
+        }
+    }
+
+    // M10G: Missing order counts by event type
+    std::cout << "\nMissing order by event type:" << std::endl;
+    std::cout << "  missing_on_fill:   " << errs.missing_on_fill << std::endl;
+    std::cout << "  missing_on_cancel: " << errs.missing_on_cancel << std::endl;
+    std::cout << "  missing_on_remove: " << errs.missing_on_remove << std::endl;
+    std::cout << "  missing_on_move:   " << errs.missing_on_move << std::endl;
+
+    // M10G: Missing order counts by side
+    std::cout << "\nMissing order by side:" << std::endl;
+    std::cout << "  missing_on_buy:         " << errs.missing_on_buy << std::endl;
+    std::cout << "  missing_on_sell:        " << errs.missing_on_sell << std::endl;
+    std::cout << "  missing_on_unknown_side:" << errs.missing_on_unknown_side << std::endl;
+
+    // M10G: Snapshot/NewSession tracking
+    std::cout << "\nSnapshot/NewSession tracking:" << std::endl;
+    std::cout << "  snapshot_records_seen:           " << errs.snapshot_records_seen << std::endl;
+    std::cout << "  new_session_records_seen:        " << errs.new_session_records_seen << std::endl;
+    std::cout << "  book_clears_due_to_new_session:  " << errs.book_clears_due_to_new_session << std::endl;
+    std::cout << "  first_valid_book_record_index:   " << errs.first_valid_book_record_index << std::endl;
+
+    // M10G: ADD record tracking
+    std::cout << "\nADD record tracking:" << std::endl;
+    std::cout << "  add_records_seen:    " << errs.add_records_seen << std::endl;
+    std::cout << "  add_records_applied: " << errs.add_records_applied << std::endl;
+    std::cout << "  add_records_skipped: " << errs.add_records_skipped << std::endl;
+    if (errs.add_records_skipped > 0) {
+        std::cout << "  skip_reasons:" << std::endl;
+        std::cout << "    invalid_side:      " << errs.skip_invalid_side << std::endl;
+        std::cout << "    zero_amount:       " << errs.skip_zero_amount << std::endl;
+    }
+
     // L2 diagnostics summary
     std::cout << "\nL2 export diagnostics:" << std::endl;
     std::cout << "  crossed_book_snapshots:         " << l2_crossed << std::endl;
@@ -846,6 +920,14 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::cout << "negative_level_volume:            " << book.errors().negative_level_volume << std::endl;
     std::cout << "l2_crossed_book_snapshots:        " << l2_crossed << std::endl;
     std::cout << "l2_non_positive_spread_snapshots: " << l2_non_positive_spread << std::endl;
+    // M10G: Additional diagnostics
+    std::cout << "first_missing_order_record_index: " << book.first_missing_order_record_index() << std::endl;
+    std::cout << "first_crossed_book_record_index:  " << book.first_crossed_book_record_index() << std::endl;
+    std::cout << "add_records_seen:                 " << book.errors().add_records_seen << std::endl;
+    std::cout << "add_records_applied:              " << book.errors().add_records_applied << std::endl;
+    std::cout << "add_records_skipped:              " << book.errors().add_records_skipped << std::endl;
+    std::cout << "snapshot_records_seen:            " << book.errors().snapshot_records_seen << std::endl;
+    std::cout << "new_session_records_seen:         " << book.errors().new_session_records_seen << std::endl;
     if (!trace_path.empty()) {
         std::cout << "trace_file:                       " << trace_path << std::endl;
     }
