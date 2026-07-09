@@ -180,6 +180,31 @@ WARNING: exported L2 contains invalid best bid / best ask state.
 This L2 output is not strategy-ready until reconstruction diagnostics are clean.
 ```
 
+## Real-Sample Validation
+
+Run all validation modes against the local QSH sample:
+
+```powershell
+.\tools\run_qsh_real_sample_checks.ps1
+```
+
+Options:
+
+```powershell
+.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe
+```
+
+The script:
+- Builds qsh_ingest and runs tests (unless `-SkipBuild`)
+- Runs four `l3-to-l2` modes with `--summary-out`
+- Prints a compact comparison table
+- Reports L2 strategy-ready status
+- Optionally probes `missing_on_cancel` orders
+
+Raw QSH must stay under `data/raw/qsh/...`. Generated reports stay under `data/reports/qsh/...`. Both are ignored by Git.
+
+**L2 strategy-ready must remain NO until crossed-book diagnostics are clean.**
+
 ## Tests
 
 ```powershell

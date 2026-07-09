@@ -96,6 +96,7 @@ data/orderbook/
 *.bat
 *.cmd
 *.ps1
+!tools/*.ps1
 *.so
 *.dylib
 *.jar

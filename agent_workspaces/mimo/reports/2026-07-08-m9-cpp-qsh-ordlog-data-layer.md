@@ -1826,3 +1826,105 @@ This suggests the root cause is deeper than transaction grouping — the orders 
 2. Check if these orders appear in a different QSH file (e.g., Trades stream)
 3. Investigate decoder semantics for Canceled/CanceledGroup flags — may need to skip cancel events for orders not in book
 4. Consider adding a "skip-orphan-cancel" mode that doesn't count missing_order_id for cancel/remove events on unknown orders
+
+---
+
+## M10M validation script fix and OrdLog debug continuation
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### Build/Test Result
+
+```
+Build: OK (MSVC 2022 + vcpkg/zlib, Release clean)
+Tests: 14/14 passed (100%)
+```
+
+### tools/run_qsh_real_sample_checks.ps1
+
+**Now exists in Git.** Complete rewrite from M10L version. Supports:
+
+- `-QshPath`, `-ReportDir`, `-SkipBuild`, `-RunMissingCancelProbe`
+- Auto-detects repo root (works from any working directory)
+- Runs four modes with `--summary-out` and CSV output
+- Prints compact markdown table with all diagnostic fields
+- Reports L2 strategy-ready status
+- Optional `missing-cancel-probe` run
+
+### Local QSH Found
+
+```
+data/raw/qsh/RTS-3.21/2021-01-05/RTS-3.21.2021-01-05.OrdLog.qsh
+```
+
+### Compact Validation Table
+
+| mode | missing_order_id | missing_on_fill | missing_on_cancel | missing_on_remove | orphan_fill_events | orphan_fill_level_reductions | crossed_book_snapshots | non_positive_spread_snapshots | first_missing_order_record_index | first_crossed_book_record_index | l2_strategy_ready |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| per-record strict | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| per-record reduce-same-price | 171 | 0 | 170 | 1 | 148 | 148 | 7884 | 7884 | 1966 | 2242 | NO |
+| snapshot-records-mode load | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| tx-grouped | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+
+### Missing-Cancel-Probe Status
+
+**Works.** Probe of 100 missing_on_cancel orders confirms M10L finding:
+
+```
+Total missing_on_cancel: 100
+With prior ADD:          0
+With prior Snapshot:     0
+With any occurrence:     0
+```
+
+None of the missing_on_cancel orders have any prior occurrence in the file. Orders are being cancelled that were never added to the book.
+
+### OrdLog Debug Continuation
+
+#### Key observations from M10M run:
+
+1. **reduce-same-price mode changes first_missing_order_record_index** from 1651 to 1966. This means orphan fill handling affects which order is first flagged as missing. The reduce-same-price mode resolves 148 orphan fills (matching `missing_on_fill`) by reducing level volume, but `missing_on_cancel` (170) and `missing_on_remove` (1) remain unchanged.
+
+2. **reduce-same-price mode shifts first_crossed_book_record_index** from 2210 to 2242. The 6 crossed-book reduction (7890 → 7884) is small but measurable. The shifted index suggests the first few crossed snapshots were caused by orphan fill volume that reduce-same-price now handles.
+
+3. **missing_on_cancel=170 is the dominant unresolved issue.** These 170 cancel events reference orders with zero prior occurrence. The probe confirms this is not a transaction-grouping issue — the orders genuinely don't exist anywhere in the OrdLog stream.
+
+4. **snapshot-records-mode load has no effect.** Loading snapshot records as order adds doesn't change any counter. The missing orders are not from snapshot records.
+
+5. **tx-grouped mode has no effect.** Transaction grouping doesn't change any counter. The missing orders are not from intra-transaction matching.
+
+#### Root cause analysis:
+
+The 170 `missing_on_cancel` events are orders that:
+- Were never added via ADD records
+- Never appeared in Snapshot records
+- Are being cancelled in the OrdLog stream
+
+Possible explanations:
+1. **System-level orders** — These may be orders from the exchange's internal matching engine that bypass the normal ADD lifecycle. They exist in the book but their ADD events are not recorded in the OrdLog stream.
+2. **Cross-session carry-over** — Orders from a previous trading session that persist in the book but whose ADD events are in a different file.
+3. **Semantic mismatch** — The Canceled/CanceledGroup flags may have different semantics for orders that were never explicitly added (e.g., implied cancels of resting orders).
+
+#### System vs non-system records:
+
+The missing_on_cancel orders should be checked for their raw_flags to determine if they are system or non-system records. If they are all system records, the issue is likely (1) or (2). If they are non-system, the issue may be (3).
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `tools/run_qsh_real_sample_checks.ps1` | Complete rewrite: added `-SkipBuild`, `-RunMissingCancelProbe`, repo root detection, CSV output, markdown table, strategy-ready status |
+| `cpp/qsh_ingest/README.md` | Added Real-Sample Validation section with script usage |
+
+### L2 Strategy-Ready Status
+
+**NO.** Crossed snapshots remain at 7890 (strict) / 7884 (reduce-same-price). The missing_on_cancel=170 issue persists across all modes and is the primary blocker.
+
+### Next Recommended Task
+
+1. **Check raw_flags of missing_on_cancel orders** — Use `dump-records --audit` on records around the first missing_on_cancel event to determine if these are system or non-system records.
+2. **Investigate "skip-orphan-cancel" mode** — Add a mode that doesn't count `missing_order_id` for cancel/remove events on orders not in the active book. If this reduces crossed snapshots, the orphan cancels are benign.
+3. **Check if missing_on_cancel orders affect book state** — If the cancel events don't mutate the book (because the order isn't found), they may not cause crossed books. The crossed book root cause may be elsewhere.
+4. **Trace the first crossed book order** — Use `--auto-trace-crossed-orders-out` with the strict mode to identify which specific orders create the crossed state, then trace their lifecycle.
