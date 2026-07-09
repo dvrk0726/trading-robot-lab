@@ -80,3 +80,7 @@ add_test(NAME test_snapshot_mode COMMAND test_snapshot_mode)
 add_executable(test_best_level_orders tests/test_best_level_orders.cpp)
 target_link_libraries(test_best_level_orders PRIVATE qsh_lib)
 add_test(NAME test_best_level_orders COMMAND test_best_level_orders)
+
+add_executable(test_tracing_side_effects tests/test_tracing_side_effects.cpp)
+target_link_libraries(test_tracing_side_effects PRIVATE qsh_lib)
+add_test(NAME test_tracing_side_effects COMMAND test_tracing_side_effects)

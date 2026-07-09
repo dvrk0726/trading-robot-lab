@@ -693,3 +693,71 @@ Then analyze:
    - Transaction boundary issue
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+## M10E Regression Compare Order Book Behavior
+
+Date: 2026-07-09
+Task: M10E_REGRESSION_COMPARE_ORDERBOOK_BEHAVIOR.md
+
+### What Caused the Regression
+
+Dangling reference bug in `OrderBook::fill_order()`. When an order was fully filled:
+
+```cpp
+if (fully_filled) {
+    fill_amount = info.amount;
+    orders_.erase(it);  // info becomes dangling!
+}
+// ... later uses info.side and info.price — undefined behavior
+```
+
+`info` is a reference to `it->second`. After `orders_.erase(it)`, `info` is a dangling reference. The subsequent use of `info.side` and `info.price` to update level volumes was undefined behavior. M10D's added tracing code changed the memory layout, causing the UB to corrupt book state differently — producing 7890 crossed snapshots instead of 921.
+
+### What Was Fixed
+
+Saved `side` and `price` from the order info **before** erasing the order from the map:
+
+```cpp
+Side side = info.side;
+Price price = info.price;
+
+if (fully_filled) {
+    fill_amount = info.amount;
+    orders_.erase(it);
+}
+// Uses saved side/price instead of dangling info
+```
+
+### Changed Files
+
+| File | Change |
+|---|---|
+| `src/order_book.cpp` | Fixed dangling reference in `fill_order()` — save `side`/`price` before `orders_.erase()` |
+| `tests/test_tracing_side_effects.cpp` | New: 8 regression tests proving tracing is side-effect-free |
+| `CMakeLists.txt` | Added `test_tracing_side_effects` test target |
+
+### Build/Test Result
+
+```
+cmake --build build/qsh_ingest --config Release — PASS
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 8
+```
+
+### Is Tracing Now Side-Effect-Free?
+
+Yes. All `OrderBook` read methods (`best_bid_order_ids`, `best_ask_order_ids`, `best_bid_total_qty`, `best_ask_total_qty`, `best_bid_order_count`, `best_ask_order_count`) are `const` and use `find()` — no `operator[]` on read paths, no map insertion during diagnostics. The regression test `test_baseline_vs_traced_txend_same_counters` proves that calling all tracing methods between snapshots produces identical L2 counters.
+
+### Must Owner Rerun?
+
+Yes. Owner must rerun the real-sample baseline/traced commands to confirm the crossed-book count returns to 921 (M10C level):
+
+```powershell
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh --depth 5 --max-records 100000 --max-snapshots 10000 --snapshot-mode txend --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend.csv --diagnostics-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend_diagnostics.csv --max-diagnostics 100 --trace-crossed-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend_trace.csv --max-trace-events 100 --trace-best-level-orders-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_best_orders.csv --trace-missing-order-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_missing_orders.csv --auto-trace-crossed-orders-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_auto_trace.csv
+```
+
+Expected: `crossed_book_snapshots: 921` (same as M10C txend). If it matches, the regression is fixed.
+
+### Next Recommended Task
+
+Continue investigating the remaining 921 crossed snapshots (M10C baseline). These are likely caused by stale orders / missing order lifecycle, not by tracing side effects. Use the best-level and missing-order traces to identify root cause.

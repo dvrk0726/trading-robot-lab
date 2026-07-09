@@ -70,6 +70,10 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
     Volume fill_amount = rec.amount;
     bool fully_filled = (info.amount <= fill_amount);
 
+    // Save side and price before potential erase (info becomes dangling after erase)
+    Side side = info.side;
+    Price price = info.price;
+
     // Reduce order volume
     if (fully_filled) {
         fill_amount = info.amount;
@@ -79,8 +83,8 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
     }
 
     // Reduce level volume
-    if (info.side == Side::Buy) {
-        auto lvl_it = bid_levels_.find(info.price);
+    if (side == Side::Buy) {
+        auto lvl_it = bid_levels_.find(price);
         if (lvl_it != bid_levels_.end()) {
             lvl_it->second.first -= fill_amount;
             if (fully_filled && lvl_it->second.second > 0) {
@@ -88,17 +92,17 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
             }
             if (lvl_it->second.first <= 0) {
                 bid_levels_.erase(lvl_it);
-                bid_level_orders_.erase(info.price);
+                bid_level_orders_.erase(price);
             } else if (fully_filled) {
                 // Remove order id from level tracking
-                auto& ids = bid_level_orders_[info.price];
+                auto& ids = bid_level_orders_[price];
                 ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
             }
         } else {
             ++errors_.level_not_found;
         }
     } else {
-        auto lvl_it = ask_levels_.find(info.price);
+        auto lvl_it = ask_levels_.find(price);
         if (lvl_it != ask_levels_.end()) {
             lvl_it->second.first -= fill_amount;
             if (fully_filled && lvl_it->second.second > 0) {
@@ -106,10 +110,10 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
             }
             if (lvl_it->second.first <= 0) {
                 ask_levels_.erase(lvl_it);
-                ask_level_orders_.erase(info.price);
+                ask_level_orders_.erase(price);
             } else if (fully_filled) {
                 // Remove order id from level tracking
-                auto& ids = ask_level_orders_[info.price];
+                auto& ids = ask_level_orders_[price];
                 ids.erase(std::remove(ids.begin(), ids.end(), rec.order_id), ids.end());
             }
         } else {
