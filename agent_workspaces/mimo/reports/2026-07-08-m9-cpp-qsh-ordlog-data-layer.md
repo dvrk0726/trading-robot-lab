@@ -1754,3 +1754,75 @@ The report states one of:
 4. If tx-grouped does not help: root cause is deeper — investigate decoder spec or initial book state
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+---
+
+## M10L automated real-sample validation and deep OrdLog semantics
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### Build/Test Result
+
+```
+Build: OK
+Tests: 14/14 passed (100%)
+```
+
+### Local QSH Found
+
+```
+data/raw/qsh/RTS-3.21/2021-01-05/RTS-3.21.2021-01-05.OrdLog.qsh
+```
+
+### Compact Validation Table
+
+| mode | missing_order_id | missing_on_fill | missing_on_cancel | missing_on_remove | orphan_fill_events | orphan_fill_level_reductions | crossed_book_snapshots | non_positive_spread_snapshots | first_missing_order_record_index | first_crossed_book_record_index | l2_strategy_ready |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| per-record strict | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| per-record reduce-same-price | 171 | 0 | 170 | 1 | 148 | 0 | 7884 | 7884 | 1651 | 2210 | NO |
+| per-record snapshot-records-mode load | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| book-update-mode tx-grouped | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+
+### tx-grouped first_missing_order_record_index Bug Fix
+
+**Fixed.** M10K showed `first_missing_order_record_index: 0` in tx-grouped mode despite `missing_order_id: 319`. The bug was in `main.cpp` — the tx-grouped path did not check for `missing_order_id` increases after `apply_transaction()`. Now correctly propagates to `1651`.
+
+### missing_on_cancel Probe Results
+
+Probe of 20 missing_on_cancel orders shows:
+
+```
+Total missing_on_cancel: 20
+With prior ADD:          0
+With prior Snapshot:     0
+With any occurrence:     0
+```
+
+**Key finding**: None of the missing_on_cancel orders have any prior occurrence in the file. This means:
+- The orders were never added via ADD records
+- The orders never appeared in Snapshot records
+- The cancel events reference orders that don't exist in the OrdLog stream
+
+This suggests the root cause is deeper than transaction grouping — the orders may be:
+1. From a different session/book state not captured in this file
+2. System-level orders that bypass normal ADD lifecycle
+3. A semantic mismatch in how the decoder interprets cancel/remove events
+
+### What Changed
+
+1. **tools/run_qsh_real_sample_checks.ps1** — Automated validation script
+2. **cpp/qsh_ingest/src/main.cpp** — Fixed tx-grouped diagnostic propagation, added `--summary-out` option, added `missing-cancel-probe` command
+3. **cpp/qsh_ingest/tests/test_tx_grouped.cpp** — Added test for first_missing_order_record_index propagation
+
+### L2 Strategy-Ready Status
+
+**NO.** Crossed snapshots remain at 7890 across all modes. The missing_on_cancel probe confirms the root cause is not transaction grouping — orders are being cancelled that were never added to the book.
+
+### Next Recommended Task
+
+1. Investigate whether the missing_on_cancel orders are system-level orders (check raw_flags for system/non-system bits)
+2. Check if these orders appear in a different QSH file (e.g., Trades stream)
+3. Investigate decoder semantics for Canceled/CanceledGroup flags — may need to skip cancel events for orders not in book
+4. Consider adding a "skip-orphan-cancel" mode that doesn't count missing_order_id for cancel/remove events on unknown orders

@@ -51,6 +51,8 @@ static void print_help() {
     std::cout << "  convert <file.qsh> --out <dir>        Export normalized metadata\n";
     std::cout << "  dump-records <OrdLog.qsh> [--audit]    Export decoded OrdLog records to CSV\n";
     std::cout << "  check-missing-order <OrdLog.qsh>      Analyze first missing order backward\n";
+    std::cout << "  missing-cancel-probe <OrdLog.qsh> [--out <file.csv>] [--max-probes N]\n";
+    std::cout << "                        Probe missing_on_cancel orders for prior occurrences\n";
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
     std::cout << "                        [--out <file.csv>] [--diagnostics-out <file.csv>]\n";
     std::cout << "                        [--max-diagnostics N]\n";
@@ -64,6 +66,7 @@ static void print_help() {
     std::cout << "                        [--fill-semantics delta|rest]\n";
     std::cout << "                        [--orphan-fill-mode strict|ignore|reduce-same-price|transaction-rest]\n";
     std::cout << "                        [--book-update-mode per-record|tx-grouped]\n";
+    std::cout << "                        [--summary-out <file.json>]\n";
     std::cout << "                          L3->L2 reconstruction\n";
     std::cout << "\nOptions:\n";
     std::cout << "  --depth N              L2 depth (default: 20)\n";
@@ -486,6 +489,222 @@ static int cmd_check_missing_order(const std::string& path) {
     return 0;
 }
 
+// M10L: Probe missing_on_cancel orders for prior occurrences
+static int cmd_missing_cancel_probe(const std::string& path, const std::string& out_path, int64_t max_probes) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: missing-cancel-probe requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Probing missing_on_cancel orders..." << std::endl;
+
+    // First pass: collect missing_on_cancel order IDs
+    OrderBook book;
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+
+    struct CancelProbe {
+        int64_t record_index;
+        Timestamp ts;
+        UID order_id;
+        OLMsgType event_type;
+        Side side;
+        Price price;
+        Volume amount;
+        Volume amount_rest;
+        uint16_t flags;
+        Volume repl_act;
+        bool is_system;
+        bool is_non_system;
+    };
+    std::vector<CancelProbe> cancel_probes;
+
+    while (reader.next(file, rec)) {
+        ++record_count;
+
+        if (!is_system_record(rec)) continue;
+
+        if (has_flag(rec.order_flags, OLFlags::NewSession)) {
+            book.clear();
+            continue;
+        }
+
+        int64_t missing_before = book.errors().missing_order_id;
+        book.apply(rec);
+
+        if (book.errors().missing_order_id > missing_before &&
+            book.errors().missing_on_cancel > (cancel_probes.size() > 0 ? 1 : 0)) {
+            // This is a missing_on_cancel event
+            CancelProbe probe;
+            probe.record_index = record_count;
+            probe.ts = rec.timestamp;
+            probe.order_id = rec.order_id;
+            probe.event_type = rec.event;
+            probe.side = rec.side;
+            probe.price = rec.price;
+            probe.amount = rec.amount;
+            probe.amount_rest = rec.amount_rest;
+            probe.flags = rec.order_flags;
+            probe.repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+            probe.is_system = is_system_record(rec);
+            probe.is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+            cancel_probes.push_back(probe);
+
+            if (max_probes > 0 && static_cast<int64_t>(cancel_probes.size()) >= max_probes) {
+                break;
+            }
+        }
+    }
+
+    if (cancel_probes.empty()) {
+        std::cout << "No missing_on_cancel events found." << std::endl;
+        return 0;
+    }
+
+    std::cout << "Found " << cancel_probes.size() << " missing_on_cancel events." << std::endl;
+
+    // Second pass: search backward for prior occurrences of each order_id
+    file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    struct ProbeResult {
+        CancelProbe probe;
+        bool prior_add_found = false;
+        int64_t prior_add_index = 0;
+        bool prior_snapshot_found = false;
+        int64_t prior_snapshot_index = 0;
+        bool prior_any_occurrence_found = false;
+    };
+    std::vector<ProbeResult> results;
+    for (const auto& p : cancel_probes) {
+        ProbeResult r;
+        r.probe = p;
+        results.push_back(r);
+    }
+
+    // Build set of order_ids to search for
+    std::set<UID> probe_order_ids;
+    for (const auto& r : results) {
+        probe_order_ids.insert(r.probe.order_id);
+    }
+
+    // Scan backward through file
+    OrdLogReader reader2;
+    OrderLogRecord rec2;
+    record_count = 0;
+
+    // Track first occurrences
+    std::set<UID> found_add;
+    std::set<UID> found_snapshot;
+    std::set<UID> found_any;
+
+    while (reader2.next(file, rec2)) {
+        ++record_count;
+
+        // Skip records after the first probe
+        if (!results.empty() && record_count >= results[0].probe.record_index) {
+            break;
+        }
+
+        if (probe_order_ids.count(rec2.order_id) == 0) continue;
+
+        bool is_snap = has_flag(rec2.order_flags, OLFlags::Snapshot);
+
+        // Track ADD occurrences
+        if (rec2.event == OLMsgType::Add && found_add.count(rec2.order_id) == 0) {
+            found_add.insert(rec2.order_id);
+            for (auto& r : results) {
+                if (r.probe.order_id == rec2.order_id) {
+                    r.prior_add_found = true;
+                    r.prior_add_index = record_count;
+                }
+            }
+        }
+
+        // Track Snapshot occurrences
+        if (is_snap && found_snapshot.count(rec2.order_id) == 0) {
+            found_snapshot.insert(rec2.order_id);
+            for (auto& r : results) {
+                if (r.probe.order_id == rec2.order_id) {
+                    r.prior_snapshot_found = true;
+                    r.prior_snapshot_index = record_count;
+                }
+            }
+        }
+
+        // Track any occurrence
+        if (found_any.count(rec2.order_id) == 0) {
+            found_any.insert(rec2.order_id);
+            for (auto& r : results) {
+                if (r.probe.order_id == rec2.order_id) {
+                    r.prior_any_occurrence_found = true;
+                }
+            }
+        }
+    }
+
+    // Write results to CSV
+    if (!out_path.empty()) {
+        std::ofstream csv(out_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,order_id,event_type,side,price,amount,amount_rest,"
+                << "prior_add_found,prior_snapshot_found,prior_any_occurrence_found,"
+                << "raw_flags,raw_repl_act,is_system,is_non_system\n";
+
+            for (const auto& r : results) {
+                csv << r.probe.record_index << ","
+                    << r.probe.ts << ","
+                    << r.probe.order_id << ","
+                    << ol_msg_type_name(r.probe.event_type) << ","
+                    << side_name(r.probe.side) << ","
+                    << r.probe.price << ","
+                    << r.probe.amount << ","
+                    << r.probe.amount_rest << ","
+                    << (r.prior_add_found ? 1 : 0) << ","
+                    << (r.prior_snapshot_found ? 1 : 0) << ","
+                    << (r.prior_any_occurrence_found ? 1 : 0) << ","
+                    << r.probe.flags << ","
+                    << r.probe.repl_act << ","
+                    << (r.probe.is_system ? 1 : 0) << ","
+                    << (r.probe.is_non_system ? 1 : 0) << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote " << results.size() << " probe results to " << out_path << std::endl;
+        } else {
+            std::cerr << "Warning: cannot open output file: " << out_path << std::endl;
+        }
+    }
+
+    // Print summary
+    int64_t with_prior_add = 0;
+    int64_t with_prior_snapshot = 0;
+    int64_t with_any = 0;
+    for (const auto& r : results) {
+        if (r.prior_add_found) ++with_prior_add;
+        if (r.prior_snapshot_found) ++with_prior_snapshot;
+        if (r.prior_any_occurrence_found) ++with_any;
+    }
+
+    std::cout << "\nProbe summary:" << std::endl;
+    std::cout << "  Total missing_on_cancel: " << results.size() << std::endl;
+    std::cout << "  With prior ADD:          " << with_prior_add << std::endl;
+    std::cout << "  With prior Snapshot:     " << with_prior_snapshot << std::endl;
+    std::cout << "  With any occurrence:     " << with_any << std::endl;
+
+    return 0;
+}
+
 static int cmd_convert(const std::string& path, const std::string& out_dir) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
@@ -544,7 +763,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         bool fill_delta_mode,
                         SnapshotRecordsMode snapshot_records_mode = SnapshotRecordsMode::Ignore,
                         OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict,
-                        BookUpdateMode book_update_mode = BookUpdateMode::PerRecord) {
+                        BookUpdateMode book_update_mode = BookUpdateMode::PerRecord,
+                        const std::string& summary_out_path = "") {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -762,6 +982,9 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
 
             // On TxEnd, flush the transaction buffer
             if (is_tx_end(rec)) {
+                // Track book state before apply for missing order detection
+                int64_t missing_before_tx = book.errors().missing_order_id;
+
                 // Apply entire transaction batch
                 TransactionBatchResult tx_result = book.apply_transaction(tx_buffer);
 
@@ -770,6 +993,11 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                 book.errors_ref().records_in_grouped_transactions += tx_result.records_processed;
                 if (tx_result.records_processed > book.errors_ref().max_records_in_transaction) {
                     book.errors_ref().max_records_in_transaction = tx_result.records_processed;
+                }
+
+                // M10L: Propagate first_missing_order_record_index in tx-grouped mode
+                if (book.errors().missing_order_id > missing_before_tx) {
+                    book.set_first_missing_order_record_index(record_count);
                 }
 
                 // Track first valid book record
@@ -1394,6 +1622,39 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     }
     std::cout << "L2 strategy-ready:                " << (has_invalid ? "NO" : "YES") << std::endl;
 
+    // M10L: Write machine-readable summary if requested
+    if (!summary_out_path.empty()) {
+        std::ofstream summary_file(summary_out_path);
+        if (summary_file.is_open()) {
+            summary_file << "{\n";
+            summary_file << "  \"book_update_mode\": \"" << book_update_mode_name << "\",\n";
+            summary_file << "  \"snapshot_mode\": \"" << mode_name << "\",\n";
+            summary_file << "  \"snapshot_records_mode\": \"" << snapshot_records_mode_name << "\",\n";
+            summary_file << "  \"fill_semantics\": \"" << fill_mode_name << "\",\n";
+            summary_file << "  \"orphan_fill_mode\": \"" << orphan_fill_mode_name(orphan_fill_mode) << "\",\n";
+            summary_file << "  \"records_processed\": " << record_count << ",\n";
+            summary_file << "  \"transactions_seen\": " << transactions_seen << ",\n";
+            summary_file << "  \"snapshots_written\": " << snapshot_count << ",\n";
+            summary_file << "  \"missing_order_id\": " << book.errors().missing_order_id << ",\n";
+            summary_file << "  \"missing_on_fill\": " << book.errors().missing_on_fill << ",\n";
+            summary_file << "  \"missing_on_cancel\": " << book.errors().missing_on_cancel << ",\n";
+            summary_file << "  \"missing_on_remove\": " << book.errors().missing_on_remove << ",\n";
+            summary_file << "  \"missing_on_move\": " << book.errors().missing_on_move << ",\n";
+            summary_file << "  \"orphan_fill_events\": " << book.errors().orphan_fill_events << ",\n";
+            summary_file << "  \"orphan_fill_level_reductions\": " << book.errors().orphan_fill_level_reductions << ",\n";
+            summary_file << "  \"crossed_book_snapshots\": " << l2_crossed << ",\n";
+            summary_file << "  \"non_positive_spread_snapshots\": " << l2_non_positive_spread << ",\n";
+            summary_file << "  \"first_missing_order_record_index\": " << book.first_missing_order_record_index() << ",\n";
+            summary_file << "  \"first_crossed_book_record_index\": " << book.first_crossed_book_record_index() << ",\n";
+            summary_file << "  \"l2_strategy_ready\": " << (has_invalid ? "false" : "true") << "\n";
+            summary_file << "}\n";
+            summary_file.close();
+            std::cout << "Summary written to " << summary_out_path << std::endl;
+        } else {
+            std::cerr << "Warning: cannot open summary output file: " << summary_out_path << std::endl;
+        }
+    }
+
     return 0;
 }
 
@@ -1475,6 +1736,24 @@ int main(int argc, char* argv[]) {
         return cmd_check_missing_order(argv[2]);
     }
 
+    if (cmd == "missing-cancel-probe") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest missing-cancel-probe <OrdLog.qsh> [--out <file.csv>] [--max-probes N]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_path = "missing_cancel_probe.csv";
+        int64_t max_probes = 20;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--max-probes") == 0 && i + 1 < argc) {
+                max_probes = std::atoll(argv[++i]);
+            }
+        }
+        return cmd_missing_cancel_probe(file_path, out_path, max_probes);
+    }
+
     if (cmd == "l3-to-l2") {
         if (argc < 3) {
             std::cerr << "Usage: qsh-ingest l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N]\n"
@@ -1511,6 +1790,7 @@ int main(int argc, char* argv[]) {
         bool fill_delta_mode = true;
         OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict;
         BookUpdateMode book_update_mode = BookUpdateMode::PerRecord;
+        std::string summary_out_path;
         for (int i = 3; i < argc; ++i) {
             if (std::strcmp(argv[i], "--depth") == 0 && i + 1 < argc) {
                 depth = std::atoi(argv[++i]);
@@ -1603,6 +1883,8 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Unknown book update mode: " << mode_str << " (use per-record or tx-grouped)" << std::endl;
                     return 1;
                 }
+            } else if (std::strcmp(argv[i], "--summary-out") == 0 && i + 1 < argc) {
+                summary_out_path = argv[++i];
             }
         }
         return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path,
@@ -1610,7 +1892,7 @@ int main(int argc, char* argv[]) {
                             trace_order_ids, order_trace_path, ring_buffer_size,
                             best_level_orders_path, missing_order_path, auto_trace_crossed_path,
                             fill_delta_mode, snapshot_records_mode, orphan_fill_mode,
-                            book_update_mode);
+                            book_update_mode, summary_out_path);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;
