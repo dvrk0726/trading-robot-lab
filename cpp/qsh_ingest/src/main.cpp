@@ -59,6 +59,7 @@ static void print_help() {
     std::cout << "                        [--trace-missing-order-out <file.csv>]\n";
     std::cout << "                        [--auto-trace-crossed-orders-out <file.csv>]\n";
     std::cout << "                        [--fill-semantics delta|rest]\n";
+    std::cout << "                        [--orphan-fill-mode strict|ignore|reduce-same-price|transaction-rest]\n";
     std::cout << "                          L3->L2 reconstruction\n";
     std::cout << "\nOptions:\n";
     std::cout << "  --depth N              L2 depth (default: 20)\n";
@@ -78,6 +79,8 @@ static void print_help() {
     std::cout << "  --trace-missing-order-out <f>      Write missing order ID trace CSV\n";
     std::cout << "  --auto-trace-crossed-orders-out <f> Write auto-traced orders from first crossed snapshot\n";
     std::cout << "  --fill-semantics <mode>  Fill interpretation: delta (default) or rest\n";
+    std::cout << "  --orphan-fill-mode <mode>  Orphan fill handling: strict (default), ignore,\n";
+    std::cout << "                             reduce-same-price, or transaction-rest\n";
     std::cout << "  --audit                  Include raw decoder state in dump-records output\n";
     std::cout << "\nSafety:\n";
     std::cout << "  No broker connection. No live trading. Historical files only.\n";
@@ -534,7 +537,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         const std::string& missing_order_path,
                         const std::string& auto_trace_crossed_path,
                         bool fill_delta_mode,
-                        SnapshotRecordsMode snapshot_records_mode = SnapshotRecordsMode::Ignore) {
+                        SnapshotRecordsMode snapshot_records_mode = SnapshotRecordsMode::Ignore,
+                        OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -551,7 +555,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     const char* fill_mode_name = fill_delta_mode ? "delta" : "rest";
     std::cout << "Reconstructing L2 (depth=" << depth
               << ", snapshot_mode=" << mode_name
-              << ", fill_semantics=" << fill_mode_name;
+              << ", fill_semantics=" << fill_mode_name
+              << ", orphan_fill_mode=" << orphan_fill_mode_name(orphan_fill_mode);
     if (max_records > 0)  std::cout << ", max_records=" << max_records;
     if (max_snapshots > 0) std::cout << ", max_snapshots=" << max_snapshots;
     if (!trace_order_ids.empty()) {
@@ -566,6 +571,7 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
 
     OrderBook book;
     book.set_fill_delta_mode(fill_delta_mode);
+    book.set_orphan_fill_mode(orphan_fill_mode);
     OrdLogReader reader;
     std::vector<L2SnapshotEntry> snapshots;
     std::vector<L2DiagnosticEntry> diagnostics;
@@ -1082,6 +1088,13 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         std::cout << "    zero_amount:       " << errs.skip_zero_amount << std::endl;
     }
 
+    // M10J: Orphan fill counters
+    std::cout << "\nOrphan fill counters:" << std::endl;
+    std::cout << "  orphan_fill_events:                " << errs.orphan_fill_events << std::endl;
+    std::cout << "  orphan_fill_ignored:               " << errs.orphan_fill_ignored << std::endl;
+    std::cout << "  orphan_fill_level_reductions:      " << errs.orphan_fill_level_reductions << std::endl;
+    std::cout << "  orphan_fill_transaction_rest_updates: " << errs.orphan_fill_transaction_rest_updates << std::endl;
+
     // L2 diagnostics summary
     std::cout << "\nL2 export diagnostics:" << std::endl;
     std::cout << "  crossed_book_snapshots:         " << l2_crossed << std::endl;
@@ -1329,6 +1342,7 @@ int main(int argc, char* argv[]) {
                       << "  [--trace-missing-order-out <file.csv>]\n"
                       << "  [--auto-trace-crossed-orders-out <file.csv>]\n"
                       << "  [--fill-semantics delta|rest]\n"
+                      << "  [--orphan-fill-mode strict|ignore|reduce-same-price|transaction-rest]\n"
                       << "  [--snapshot-records-mode ignore|load|marker]" << std::endl;
             return 1;
         }
@@ -1350,6 +1364,7 @@ int main(int argc, char* argv[]) {
         std::string missing_order_path;
         std::string auto_trace_crossed_path;
         bool fill_delta_mode = true;
+        OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict;
         for (int i = 3; i < argc; ++i) {
             if (std::strcmp(argv[i], "--depth") == 0 && i + 1 < argc) {
                 depth = std::atoi(argv[++i]);
@@ -1418,13 +1433,27 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Unknown snapshot records mode: " << mode_str << " (use ignore, load, or marker)" << std::endl;
                     return 1;
                 }
+            } else if (std::strcmp(argv[i], "--orphan-fill-mode") == 0 && i + 1 < argc) {
+                std::string mode_str = argv[++i];
+                if (mode_str == "strict") {
+                    orphan_fill_mode = OrphanFillMode::Strict;
+                } else if (mode_str == "ignore") {
+                    orphan_fill_mode = OrphanFillMode::Ignore;
+                } else if (mode_str == "reduce-same-price") {
+                    orphan_fill_mode = OrphanFillMode::ReduceSamePrice;
+                } else if (mode_str == "transaction-rest") {
+                    orphan_fill_mode = OrphanFillMode::TransactionRest;
+                } else {
+                    std::cerr << "Unknown orphan fill mode: " << mode_str << " (use strict, ignore, reduce-same-price, or transaction-rest)" << std::endl;
+                    return 1;
+                }
             }
         }
         return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path,
                             max_diagnostics, trace_path, max_trace_events, snap_mode,
                             trace_order_ids, order_trace_path, ring_buffer_size,
                             best_level_orders_path, missing_order_path, auto_trace_crossed_path,
-                            fill_delta_mode, snapshot_records_mode);
+                            fill_delta_mode, snapshot_records_mode, orphan_fill_mode);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

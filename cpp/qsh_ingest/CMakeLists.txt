@@ -100,3 +100,7 @@ add_test(NAME test_m10h_snapshot_semantics COMMAND test_m10h_snapshot_semantics)
 add_executable(test_decoder_audit tests/test_decoder_audit.cpp)
 target_link_libraries(test_decoder_audit PRIVATE qsh_lib)
 add_test(NAME test_decoder_audit COMMAND test_decoder_audit)
+
+add_executable(test_orphan_fill_modes tests/test_orphan_fill_modes.cpp)
+target_link_libraries(test_orphan_fill_modes PRIVATE qsh_lib)
+add_test(NAME test_orphan_fill_modes COMMAND test_orphan_fill_modes)

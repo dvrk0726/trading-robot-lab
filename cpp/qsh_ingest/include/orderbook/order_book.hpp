@@ -22,6 +22,24 @@ struct L2SnapshotRow {
     Volume ask_qty = 0;
 };
 
+// M10J: Orphan fill handling mode
+enum class OrphanFillMode {
+    Strict,           // Current: require order_id in active map, count missing_order_id
+    Ignore,           // Skip orphan fills entirely, do not mutate book
+    ReduceSamePrice,  // Reduce volume at same price level without order_id lookup
+    TransactionRest   // Use amount_rest to update most recent resting order in same transaction
+};
+
+inline const char* orphan_fill_mode_name(OrphanFillMode m) {
+    switch (m) {
+        case OrphanFillMode::Strict:          return "strict";
+        case OrphanFillMode::Ignore:          return "ignore";
+        case OrphanFillMode::ReduceSamePrice: return "reduce-same-price";
+        case OrphanFillMode::TransactionRest: return "transaction-rest";
+        default:                              return "unknown";
+    }
+}
+
 // Error counters for book reconstruction.
 struct BookErrors {
     int64_t missing_order_id = 0;
@@ -57,6 +75,14 @@ struct BookErrors {
     int64_t skip_zero_amount = 0;
     int64_t skip_non_system = 0;
     int64_t skip_non_zero_repl_act = 0;
+
+    // M10J: Orphan fill counters
+    int64_t orphan_fill_events = 0;
+    int64_t orphan_fill_ignored = 0;
+    int64_t orphan_fill_level_reductions = 0;
+    int64_t orphan_fill_transaction_rest_updates = 0;
+    int64_t crossed_book_snapshots = 0;
+    int64_t non_positive_spread_snapshots = 0;
 };
 
 // L3 order book reconstruction from OrdLog events.
@@ -122,6 +148,9 @@ public:
     // Set fill semantics mode: "delta" (amount = filled qty) or "rest" (amount = original, fill = amount - amount_rest).
     void set_fill_delta_mode(bool use_delta) { fill_delta_mode_ = use_delta; }
 
+    // M10J: Set orphan fill handling mode.
+    void set_orphan_fill_mode(OrphanFillMode mode) { orphan_fill_mode_ = mode; }
+
     // M10G: Record index of first missing_order_id event (for timing diagnostics)
     int64_t first_missing_order_record_index() const { return first_missing_order_record_index_; }
     void set_first_missing_order_record_index(int64_t idx) {
@@ -162,6 +191,7 @@ private:
     BookErrors errors_;
     Timestamp last_ts_ = 0;
     bool fill_delta_mode_ = true;  // true: amount=delta (default), false: amount=original, fill=amount-amount_rest
+    OrphanFillMode orphan_fill_mode_ = OrphanFillMode::Strict;  // M10J: orphan fill handling mode
 
     void add_order(const OrderLogRecord& rec);
     void fill_order(const OrderLogRecord& rec);

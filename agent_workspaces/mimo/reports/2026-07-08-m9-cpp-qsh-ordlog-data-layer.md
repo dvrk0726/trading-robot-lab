@@ -1435,3 +1435,184 @@ The `--audit` dump of records 1600-1670 will reveal the exact sequence of events
 4. Use `--snapshot-records-mode load` to test if Snapshot records resolve the issue
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+---
+
+## M10J qsh-rs L3toL2 fill order model comparison
+
+Date: 2026-07-09
+Task: M10J_COMPARE_QSH_RS_L3TOL2_AND_FILL_ORDER_MODEL.md
+
+### Problem
+
+Need to compare our OrdLog L3->L2 reconstruction with `qsh-rs`, especially the Fill handling model. The first missing order (order_id=319, record 1651) has no prior ADD event, suggesting orphan FILL records may require different handling.
+
+### qsh-rs Analysis
+
+Repository: https://github.com/2dav/qsh-rs (Apache-2.0)
+
+Key files analyzed:
+- `src/parse.rs` — OrderLog parser
+- `src/orderbook.rs` — L3 book implementation
+- `src/types.rs` — Type definitions
+- `src/utils/l3tol2.rs` — L3 to L2 converter
+- `src/utils/moex2conv.rs` — MOEX-specific conversion
+- `examples/l3book.rs` — L3 book example
+- `tools/l3tol2/src/main.rs` — L3toL2 tool
+
+### Model Comparison Table
+
+| Topic | Our Implementation | qsh-rs Implementation | Match/Mismatch |
+|---|---|---|---|
+| **order_id delta decoding** | Add: `read_growing()` (ULEB128), non-Add: `read_leb128()` (signed LEB128) | Add: `growing()` (ULEB128), non-Add: `leb()` (signed LEB128) | MATCH |
+| **price delta decoding** | `read_leb128()` (signed LEB128, accumulates) | `leb()` (signed LEB128, accumulates) | MATCH |
+| **amount / amount_rest** | Supports delta (amount=filled) and rest (amount=original) modes | amount = filled quantity (delta mode only) | MATCH (we are more flexible) |
+| **Fill update target** | Direct lookup in `orders_` map | Transaction-grouped: first match in transaction, then `book.trade()` | MISMATCH |
+| **orphan Fill handling** | Ignore (count `missing_order_id`) | `book.trade()` requires order_id in level (assert/panic) | MISMATCH |
+| **Cancel handling** | Lookup in `orders_` map, reduce level volume | Lookup in level by order_id, reduce volume | MATCH |
+| **Remove handling** | Separate `remove_order()`, erases from `orders_` | `cancel()` with `amount_rest=0` | MATCH |
+| **Snapshot records** | NewSession clears book | NewSession clears book | MATCH |
+| **TxEnd grouping** | Process records individually | Group by TxEnd, process as transactions | MISMATCH |
+| **best bid/ask L2 export** | `snapshot(depth)` returns `L2SnapshotRow` | `snapshot(depth)` returns bid/ask pairs | MATCH |
+
+### Key Difference: Orphan Fill Handling
+
+**qsh-rs model** (`moex2conv.rs`):
+1. Groups records by TxEnd boundaries
+2. Within transaction, identifies fill_ids (order_ids with Fill flag)
+3. Groups orders into `Chunk::Trades(src, tgt)` where:
+   - `src` = Add orders whose order_id is in fill_ids
+   - `tgt` = Fill orders
+4. For single src: reduces src amount/amount_rest for matching fills, yields `L3Message::Trade(rec)` for non-matching
+5. For multiple src: binary search by order_id, reduces matching, yields Trade for non-matching
+6. `book.trade()` requires order_id in level (strict, asserts/panics if not found)
+
+**Our model**:
+1. Processes records individually (no transaction grouping)
+2. `fill_order()` looks up order_id in `orders_` map
+3. If not found: counts `missing_order_id`, returns (ignores)
+4. If found: reduces order volume and level volume
+
+**Implication**: qsh-rs would fail (panic) on the same orphan fills that we silently ignore. This suggests qsh-rs expects all fills to have a matching order in the level, and the orphan fill problem may be specific to our implementation or data format.
+
+### Root Cause Hypothesis
+
+The orphan FILL records (order_id changes by -820 on every FILL, creating order IDs that were never added) suggest:
+1. These are **intra-transaction matching events** where the order was added and filled within the same transaction
+2. Our implementation doesn't group by transaction, so we miss the Add event that precedes the Fill
+3. qsh-rs handles this by grouping records into transactions first, then processing the group
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `include/orderbook/order_book.hpp` | Added `OrphanFillMode` enum (Strict, Ignore, ReduceSamePrice, TransactionRest). Added `orphan_fill_mode_` member and `set_orphan_fill_mode()`. Added orphan fill counters to `BookErrors`. |
+| `src/order_book.cpp` | Updated `fill_order()` to handle orphan fills based on mode: Strict (original), Ignore, ReduceSamePrice (reduces level volume), TransactionRest (placeholder). |
+| `src/main.cpp` | Added `--orphan-fill-mode` CLI arg. Added orphan fill counters to output. Updated help text and usage. |
+| `cpp/qsh_ingest/README.md` | Added orphan fill mode documentation and examples. |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added `test_orphan_fill_modes` test target. |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_orphan_fill_modes.cpp` | 10 synthetic tests for orphan fill modes: strict, ignore, reduce-same-price (delta/rest), level removal, level not found, transaction-rest, mode preservation, sell side, zero amount |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 13
+```
+
+New test `test_orphan_fill_modes` covers:
+- Strict mode keeps missing_order_id
+- Ignore mode does not mutate book
+- Reduce-same-price mode reduces volume (delta mode)
+- Reduce-same-price mode reduces volume (rest mode)
+- Reduce-same-price mode removes level when volume goes to zero
+- Reduce-same-price mode ignores when level not found
+- Transaction-rest mode (falls through to ignore)
+- Mode preserved across operations
+- Sell side handling
+- Zero amount handling
+
+### New CLI Args
+
+```
+--orphan-fill-mode <mode>  Orphan fill handling: strict (default), ignore,
+                           reduce-same-price, or transaction-rest
+```
+
+### Orphan Fill Counters
+
+```
+orphan_fill_events:                    Total orphan fill events
+orphan_fill_ignored:                   Orphan fills skipped (ignore mode or level not found)
+orphan_fill_level_reductions:          Orphan fills that reduced level volume
+orphan_fill_transaction_rest_updates:  Orphan fills handled by transaction-rest mode
+```
+
+### Decision
+
+**Answer to "When a FILL references an order_id that is not in active order map":**
+
+Based on qsh-rs analysis, the recommended approach is **Option E: group fills by transaction**. However, since our implementation doesn't currently group by transaction, we provide multiple experimental modes:
+
+1. **strict** (default): Current behavior, count missing_order_id
+2. **ignore**: Skip orphan fills entirely
+3. **reduce-same-price**: Reduce volume at same price level (experimental, may help with intra-transaction matching)
+4. **transaction-rest**: Placeholder for transaction-based grouping (not yet implemented)
+
+**Default remains strict** until evidence from real QSH data shows which mode produces clean L2.
+
+### Recommended Owner Commands
+
+```powershell
+# Compare orphan fill modes on real QSH data
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend `
+  --orphan-fill-mode strict `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_orphan_strict.csv
+
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend `
+  --orphan-fill-mode reduce-same-price `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_orphan_reduce.csv
+```
+
+Compare:
+- `crossed_book_snapshots` between modes
+- `orphan_fill_events` and `orphan_fill_level_reductions`
+- Whether reduce-same-price mode reduces crossed snapshots
+
+### Expected Output
+
+The report states: **B. qsh-rs uses a different Fill/orphan Fill model and we added diagnostic mode.**
+
+qsh-rs uses transaction-grouped processing where fills are matched against orders added in the same transaction. Our implementation processes records individually, causing orphan fills when the Add event was in a previous transaction. The `--orphan-fill-mode` flag provides diagnostic options to test different handling strategies.
+
+### What Remains Unresolved
+
+1. **Cannot run on real QSH** — No QSH file available on this system. The orphan fill mode comparison must be run by the owner.
+2. **Transaction-rest mode not implemented** — Requires transaction grouping infrastructure.
+3. **7890 crossed snapshots persist** — Root cause depends on orphan fill mode comparison results.
+
+### Next Recommended Task
+
+1. Owner runs orphan fill mode comparison on real QSH file
+2. If reduce-same-price reduces crossed: consider making it default
+3. If not: implement transaction grouping (like qsh-rs) for proper orphan fill handling
+4. Investigate whether the orphan fills are caused by intra-transaction matching
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**

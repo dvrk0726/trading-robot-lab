@@ -68,6 +68,51 @@ void OrderBook::add_order(const OrderLogRecord& rec) {
 void OrderBook::fill_order(const OrderLogRecord& rec) {
     auto it = orders_.find(rec.order_id);
     if (it == orders_.end()) {
+        // M10J: Orphan fill handling
+        ++errors_.orphan_fill_events;
+        if (orphan_fill_mode_ == OrphanFillMode::Ignore) {
+            ++errors_.orphan_fill_ignored;
+            return;
+        } else if (orphan_fill_mode_ == OrphanFillMode::ReduceSamePrice) {
+            // Reduce volume at same price level without order_id lookup
+            Volume fill_amount = fill_delta_mode_ ? rec.amount : (rec.amount - rec.amount_rest);
+            if (fill_amount <= 0) {
+                ++errors_.orphan_fill_ignored;
+                return;
+            }
+            if (rec.side == Side::Buy) {
+                auto lvl_it = bid_levels_.find(rec.price);
+                if (lvl_it != bid_levels_.end()) {
+                    lvl_it->second.first -= fill_amount;
+                    ++errors_.orphan_fill_level_reductions;
+                    if (lvl_it->second.first <= 0) {
+                        bid_levels_.erase(lvl_it);
+                        bid_level_orders_.erase(rec.price);
+                    }
+                } else {
+                    ++errors_.orphan_fill_ignored;
+                }
+            } else if (rec.side == Side::Sell) {
+                auto lvl_it = ask_levels_.find(rec.price);
+                if (lvl_it != ask_levels_.end()) {
+                    lvl_it->second.first -= fill_amount;
+                    ++errors_.orphan_fill_level_reductions;
+                    if (lvl_it->second.first <= 0) {
+                        ask_levels_.erase(lvl_it);
+                        ask_level_orders_.erase(rec.price);
+                    }
+                } else {
+                    ++errors_.orphan_fill_ignored;
+                }
+            }
+            return;
+        } else if (orphan_fill_mode_ == OrphanFillMode::TransactionRest) {
+            // Use amount_rest to update most recent resting order in same transaction
+            // For now, fall through to strict mode (requires transaction context)
+            ++errors_.orphan_fill_ignored;
+            return;
+        }
+        // Strict mode: count as missing_order_id (original behavior)
         ++errors_.missing_order_id;
         ++errors_.missing_on_fill;
         if (rec.side == Side::Buy) ++errors_.missing_on_buy;

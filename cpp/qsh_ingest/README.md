@@ -146,6 +146,13 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --snapshot-records-mode load --out l2_snapshots
 # amount before/after, is_add_order_id_path
 qsh-ingest dump-records <OrdLog.qsh> --dump-records-out audit.csv \
   --dump-records-from 1600 --dump-records-to 1670 --audit
+
+# Experimental: orphan fill mode (M10J)
+# strict: default, require order_id in active map, count missing_order_id
+# ignore: skip orphan fills entirely, do not mutate book
+# reduce-same-price: reduce volume at same price level without order_id lookup
+# transaction-rest: use amount_rest to update most recent resting order (not yet implemented)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-fill-mode reduce-same-price --out l2_snapshots.csv
 ```
 
 **L2 output is not strategy-ready until diagnostics are clean.**
