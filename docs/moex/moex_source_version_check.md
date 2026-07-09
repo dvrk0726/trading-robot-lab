@@ -64,6 +64,7 @@ Uploaded files checked:
 Spectra_fastgate-1.29.0.0.1188.zip
 fast_9_templates.xml
 spectra_fastgate_ru(1).pdf
+spectra_fastgate_ru (1)(1).pdf
 ```
 
 ### ZIP package contents
@@ -121,7 +122,9 @@ A future production collector should load templates.xml dynamically and verify t
 Do not hardcode binary layouts without a version check.
 ```
 
-## Important FAST 1.29.0 document notes
+## FAST document revision alignment
+
+### FAST 1.29.0
 
 The uploaded `spectra_fastgate_ru(1).pdf` is:
 
@@ -130,6 +133,38 @@ FAST protocol specification
 Version 1.29.0
 Document date: 2025-09-04
 ```
+
+### FAST 1.29.1
+
+The uploaded `spectra_fastgate_ru (1)(1).pdf` is:
+
+```text
+FAST protocol specification
+Version 1.29.1
+Document date: 2025-11-19
+```
+
+The visible change log for 1.29.1 says:
+
+```text
+1. Removed MOEX Board line from General Fast Gate description.
+2. Removed MOEX Board substring from FAST-template and message-sequence-reset sections.
+3. Removed MOEX Board market segment rows from SecurityDefinition market segment table:
+   - SBOARD, ESXXXX
+   - SBOARDC, ESXXXX
+   - SBOARDB, ESXXXX
+```
+
+Interpretation:
+
+```text
+FAST 1.29.1 supersedes FAST 1.29.0 as documentation.
+For the SPECTRA ORDERS-LOG collector path, the visible 1.29.1 changes are not core OrdersLogMessage/BookMessage schema changes.
+They mainly remove MOEX Board references.
+Still, all future docs should reference 1.29.1 when citing the FAST PDF.
+```
+
+## Important FAST 1.29.x document notes
 
 Important changes from the document history:
 
@@ -200,7 +235,7 @@ Version this enum.
 
 ### 5. MDEntryType additions/changes
 
-FAST 1.29.0 documents changes for Market Data Snapshot/Incremental MDEntryType:
+FAST 1.29.x documents changes for Market Data Snapshot/Incremental MDEntryType:
 
 ```text
 u = funding rate when contract price deviates from underlying beyond configured level
@@ -353,12 +388,13 @@ Related summary:
 docs/moex/fast_spectra_t0_templates_notes.md
 ```
 
-### spectra_fastgate_ru.pdf / spectra_fastgate_ru(1).pdf
+### spectra_fastgate_ru.pdf / spectra_fastgate_ru(1).pdf / spectra_fastgate_ru (1)(1).pdf
 
 Status:
 
 ```text
 first-pass summarized and version-aligned for FAST_9.0 package
+latest uploaded FAST doc revision: 1.29.1 dated 2025-11-19
 ```
 
 Related summary:
@@ -395,6 +431,7 @@ templatesT1/templates.xml
 ```text
 The template mismatch between uploaded T0 templates and FAST_9.0/templates.xml is resolved for this file set.
 Real decoder implementation is allowed only if it remains template/version-aware and starts with dry-run/synthetic tests.
+For documentation, prefer FAST specification 1.29.1 over 1.29.0, but keep the FAST_9.0 template hash check.
 ```
 
 Allowed now:
