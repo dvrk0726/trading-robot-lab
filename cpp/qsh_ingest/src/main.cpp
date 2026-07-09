@@ -1117,6 +1117,14 @@ static int cmd_first_crossed_root_cause(const std::string& path, const std::stri
     // Collect lifecycle events for best-level orders
     std::set<UID> tracked_orders;
 
+    // M10O: Saved copies of lifecycle state at first-crossed detection
+    // (protected from NewSession clearing during post-crossed collection)
+    std::map<UID, OrderLifecycle> saved_lifecycles;
+    std::set<UID> saved_tracked_orders;
+    std::vector<UID> saved_first_crossed_bid_ids;
+    std::vector<UID> saved_first_crossed_ask_ids;
+    bool lifecycles_saved = false;
+
     while (reader.next(file, rec)) {
         ++record_count;
 
@@ -1206,6 +1214,13 @@ static int cmd_first_crossed_root_cause(const std::string& path, const std::stri
 
                     // Check if tracked orders had valid ADD path
                     // We need a second pass for this — for now, mark as needing check
+
+                    // M10O: Save lifecycle state immediately to protect from NewSession clearing
+                    saved_lifecycles = lifecycles;
+                    saved_tracked_orders = tracked_orders;
+                    saved_first_crossed_bid_ids = first_crossed_bid_ids;
+                    saved_first_crossed_ask_ids = first_crossed_ask_ids;
+                    lifecycles_saved = true;
                 }
 
                 // Collect post-crossed events
@@ -1238,6 +1253,12 @@ static int cmd_first_crossed_root_cause(const std::string& path, const std::stri
     std::cout << "  best_bid: " << first_crossed_bb << std::endl;
     std::cout << "  best_ask: " << first_crossed_ba << std::endl;
 
+    // Use saved lifecycle state (protected from NewSession clearing)
+    auto& final_lifecycles = lifecycles_saved ? saved_lifecycles : lifecycles;
+    auto& final_tracked_orders = lifecycles_saved ? saved_tracked_orders : tracked_orders;
+    auto& final_bid_ids = lifecycles_saved ? saved_first_crossed_bid_ids : first_crossed_bid_ids;
+    auto& final_ask_ids = lifecycles_saved ? saved_first_crossed_ask_ids : first_crossed_ask_ids;
+
     // Second pass: check if best-level orders had prior ADD events
     file = open_qsh_file(path);
     if (!file.valid) {
@@ -1253,8 +1274,8 @@ static int cmd_first_crossed_root_cause(const std::string& path, const std::stri
         ++record_count;
         if (record_count >= first_crossed_record) break;
 
-        if (rec2.event == OLMsgType::Add && tracked_orders.count(rec2.order_id) > 0) {
-            auto& lc = lifecycles[rec2.order_id];
+        if (rec2.event == OLMsgType::Add && final_tracked_orders.count(rec2.order_id) > 0) {
+            auto& lc = final_lifecycles[rec2.order_id];
             if (!lc.had_valid_add) {
                 lc.had_valid_add = true;
                 lc.add_price = rec2.price;
@@ -1279,6 +1300,58 @@ static int cmd_first_crossed_root_cause(const std::string& path, const std::stri
             csv << first_crossed_record << "\n";
             csv.close();
             std::cout << "Wrote root cause to " << csv_path << std::endl;
+        }
+    }
+
+    // M10O: Write first_crossed_event_window_audit.csv (ring buffer context around first crossing)
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_event_window_audit.csv" : out_dir + "/first_crossed_event_window_audit.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,tx_index,event_type,order_id,side,price,qty,amount_rest,flags_hex,repl_act,is_before_crossing\n";
+            for (const auto& ce : ring) {
+                csv << ce.record_index << "," << ce.ts << "," << ce.tx_index << ","
+                    << ol_msg_type_name(ce.event_type) << "," << ce.order_id << ","
+                    << side_name(ce.side) << "," << ce.price << "," << ce.amount << ","
+                    << ce.amount_rest << ",0x" << std::hex << ce.flags << std::dec << ","
+                    << ce.repl_act << ",true\n";
+            }
+            for (const auto& ce : post_crossed_events) {
+                csv << ce.record_index << "," << ce.ts << "," << ce.tx_index << ","
+                    << ol_msg_type_name(ce.event_type) << "," << ce.order_id << ","
+                    << side_name(ce.side) << "," << ce.price << "," << ce.amount << ","
+                    << ce.amount_rest << ",0x" << std::hex << ce.flags << std::dec << ","
+                    << ce.repl_act << ",false\n";
+            }
+            csv.close();
+            std::cout << "Wrote event window audit (" << (ring.size() + post_crossed_events.size())
+                      << " events) to " << csv_path << std::endl;
+        }
+    }
+
+    // M10O: Write first_crossed_snapshot_window_audit.csv (same data, snapshot-focused)
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_snapshot_window_audit.csv" : out_dir + "/first_crossed_snapshot_window_audit.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,tx_index,event_type,order_id,side,price,qty,amount_rest,flags_hex,repl_act\n";
+            // Write all context events
+            for (const auto& ce : ring) {
+                csv << ce.record_index << "," << ce.ts << "," << ce.tx_index << ","
+                    << ol_msg_type_name(ce.event_type) << "," << ce.order_id << ","
+                    << side_name(ce.side) << "," << ce.price << "," << ce.amount << ","
+                    << ce.amount_rest << ",0x" << std::hex << ce.flags << std::dec << ","
+                    << ce.repl_act << "\n";
+            }
+            for (const auto& ce : post_crossed_events) {
+                csv << ce.record_index << "," << ce.ts << "," << ce.tx_index << ","
+                    << ol_msg_type_name(ce.event_type) << "," << ce.order_id << ","
+                    << side_name(ce.side) << "," << ce.price << "," << ce.amount << ","
+                    << ce.amount_rest << ",0x" << std::hex << ce.flags << std::dec << ","
+                    << ce.repl_act << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote snapshot window audit to " << csv_path << std::endl;
         }
     }
 
@@ -1325,22 +1398,387 @@ static int cmd_first_crossed_root_cause(const std::string& path, const std::stri
         }
     }
 
+    // M10O: Third pass — produce detailed lifecycle CSVs for crossing orders
+    // Collect lifecycle events with full audit columns
+    struct LifecycleEvent {
+        int64_t record_index;
+        Timestamp ts;
+        int64_t tx_index;
+        UID order_id;
+        std::string event_type;
+        std::string side;
+        Price price;
+        Volume amount;
+        Volume amount_rest;
+        std::string flags_hex;
+        Volume repl_act;
+        bool is_snapshot;
+        bool is_new_session;
+        bool is_txend;
+        bool is_system;
+        bool is_non_system;
+        int64_t raw_data_offset;
+        int raw_entry_flags;
+        std::string raw_order_flags_hex;
+        std::string raw_side_bits;
+        std::string raw_event_bits;
+        bool has_timestamp_field;
+        bool has_order_id_field;
+        bool has_price_field;
+        bool has_amount_field;
+        int64_t order_id_before_delta;
+        int64_t order_id_after_delta;
+        int64_t price_before_delta;
+        int64_t price_after_delta;
+        int64_t ts_before_delta;
+        int64_t ts_after_delta;
+        Volume amount_before;
+        Volume amount_after;
+        std::string order_id_path;
+        Price best_bid_before;
+        Price best_ask_before;
+        Price best_bid_after;
+        Price best_ask_after;
+        Volume active_qty_before;
+        Volume active_qty_after;
+    };
+
+    // Do a third pass for detailed lifecycle
+    file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    // Build set of tracked order IDs
+    std::set<UID> lifecycle_order_ids;
+    for (const auto& [id, _] : final_lifecycles) {
+        lifecycle_order_ids.insert(id);
+    }
+
+    std::vector<LifecycleEvent> bid_lifecycle_events;
+    std::vector<LifecycleEvent> ask_lifecycle_events;
+    std::vector<LifecycleEvent> combined_lifecycle_events;
+
+    // Separate bid and ask order IDs
+    std::set<UID> bid_order_set(final_bid_ids.begin(), final_bid_ids.end());
+    std::set<UID> ask_order_set(final_ask_ids.begin(), final_ask_ids.end());
+
+    OrdLogReader reader3;
+    OrderLogRecord rec3;
+    record_count = 0;
+    tx_counter = 0;
+    OrderBook lifecycle_book;
+
+    while (reader3.next_debug(file, rec3)) {
+        ++record_count;
+
+        if (has_flag(rec3.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        if (has_flag(rec3.order_flags, OLFlags::NewSession)) {
+            lifecycle_book.clear();
+            continue;
+        }
+
+        if (!is_system_record(rec3)) continue;
+
+        // Check if this order is one we're tracking
+        bool is_tracked = lifecycle_order_ids.count(rec3.order_id) > 0;
+
+        if (is_tracked) {
+            // Capture book state before apply
+            Price bb_before = lifecycle_book.best_bid();
+            Price ba_before = lifecycle_book.best_ask();
+            Volume active_qty_before = 0;
+            Side dummy_side;
+            Price dummy_price;
+            lifecycle_book.get_order_info(rec3.order_id, dummy_side, dummy_price, active_qty_before);
+
+            lifecycle_book.apply(rec3);
+
+            // Capture book state after apply
+            Price bb_after = lifecycle_book.best_bid();
+            Price ba_after = lifecycle_book.best_ask();
+            Volume active_qty_after = 0;
+            lifecycle_book.get_order_info(rec3.order_id, dummy_side, dummy_price, active_qty_after);
+
+            // Build lifecycle event
+            LifecycleEvent le;
+            le.record_index = record_count;
+            le.ts = rec3.timestamp;
+            le.tx_index = tx_counter;
+            le.order_id = rec3.order_id;
+            le.event_type = ol_msg_type_name(rec3.event);
+            le.side = side_name(rec3.side);
+            le.price = rec3.price;
+            le.amount = rec3.amount;
+            le.amount_rest = rec3.amount_rest;
+
+            // Flags
+            std::ostringstream flags_ss;
+            flags_ss << "0x" << std::hex << rec3.order_flags;
+            le.flags_hex = flags_ss.str();
+            le.repl_act = has_flag(rec3.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+            le.is_snapshot = has_flag(rec3.order_flags, OLFlags::Snapshot);
+            le.is_new_session = has_flag(rec3.order_flags, OLFlags::NewSession);
+            le.is_txend = has_flag(rec3.order_flags, OLFlags::TxEnd);
+            le.is_system = is_system_record(rec3);
+            le.is_non_system = has_flag(rec3.order_flags, OLFlags::NonSystem);
+
+            // Raw decoder audit fields
+            le.raw_data_offset = rec3.debug.raw_data_offset;
+            le.raw_entry_flags = static_cast<int>(rec3.debug.raw_entry_flags);
+            std::ostringstream raw_flags_ss;
+            raw_flags_ss << "0x" << std::hex << rec3.debug.raw_order_flags;
+            le.raw_order_flags_hex = raw_flags_ss.str();
+
+            uint16_t side_bits = rec3.order_flags & (OLFlags::Buy | OLFlags::Sell);
+            uint16_t event_bits = rec3.order_flags & (OLFlags::Add | OLFlags::Fill | OLFlags::Moved |
+                OLFlags::Canceled | OLFlags::CanceledGroup | OLFlags::CrossTrade);
+            std::ostringstream side_bits_ss;
+            side_bits_ss << "0x" << std::hex << side_bits;
+            le.raw_side_bits = side_bits_ss.str();
+            std::ostringstream event_bits_ss;
+            event_bits_ss << "0x" << std::hex << event_bits;
+            le.raw_event_bits = event_bits_ss.str();
+
+            le.has_timestamp_field = rec3.debug.has_timestamp_field;
+            le.has_order_id_field = rec3.debug.has_order_id_field;
+            le.has_price_field = rec3.debug.has_price_field;
+            le.has_amount_field = rec3.debug.has_amount_field;
+
+            // Delta fields
+            le.order_id_before_delta = rec3.debug.order_id_before_delta;
+            le.order_id_after_delta = rec3.debug.order_id_after_delta;
+            le.price_before_delta = rec3.debug.price_before_delta;
+            le.price_after_delta = rec3.debug.price_after_delta;
+            le.ts_before_delta = rec3.debug.ts_before_delta;
+            le.ts_after_delta = rec3.debug.ts_after_delta;
+            le.amount_before = rec3.debug.amount_before;
+            le.amount_after = rec3.debug.amount_after;
+            le.order_id_path = rec3.debug.is_add_order_id_path ? "growing" : "leb128";
+
+            // Book state
+            le.best_bid_before = bb_before;
+            le.best_ask_before = ba_before;
+            le.best_bid_after = bb_after;
+            le.best_ask_after = ba_after;
+            le.active_qty_before = active_qty_before;
+            le.active_qty_after = active_qty_after;
+
+            // Add to appropriate collections
+            if (bid_order_set.count(rec3.order_id) > 0) {
+                bid_lifecycle_events.push_back(le);
+            }
+            if (ask_order_set.count(rec3.order_id) > 0) {
+                ask_lifecycle_events.push_back(le);
+            }
+            combined_lifecycle_events.push_back(le);
+        } else {
+            lifecycle_book.apply(rec3);
+        }
+
+        // Stop after crossing record + some margin
+        if (record_count > first_crossed_record + 1000) break;
+    }
+
+    // Write bid order lifecycle CSV
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_bid_order_lifecycle.csv" : out_dir + "/first_crossed_bid_order_lifecycle.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+                << "flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system,"
+                << "raw_data_offset,raw_entry_flags,raw_order_flags_hex,raw_side_bits,raw_event_bits,"
+                << "has_timestamp_field,has_order_id_field,has_price_field,has_amount_field,"
+                << "order_id_before_delta,order_id_after_delta,order_id_delta,"
+                << "price_before_delta,price_after_delta,price_delta,"
+                << "ts_before_delta,ts_after_delta,"
+                << "amount_before,amount_after,order_id_path,"
+                << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+                << "active_qty_before,active_qty_after\n";
+            for (const auto& le : bid_lifecycle_events) {
+                csv << le.record_index << "," << le.ts << "," << le.tx_index << ","
+                    << le.order_id << "," << le.event_type << "," << le.side << ","
+                    << le.price << "," << le.amount << "," << le.amount_rest << ","
+                    << le.flags_hex << "," << le.repl_act << ","
+                    << (le.is_snapshot ? 1 : 0) << "," << (le.is_new_session ? 1 : 0) << ","
+                    << (le.is_txend ? 1 : 0) << "," << (le.is_system ? 1 : 0) << ","
+                    << (le.is_non_system ? 1 : 0) << ","
+                    << le.raw_data_offset << "," << le.raw_entry_flags << ","
+                    << le.raw_order_flags_hex << "," << le.raw_side_bits << "," << le.raw_event_bits << ","
+                    << (le.has_timestamp_field ? 1 : 0) << "," << (le.has_order_id_field ? 1 : 0) << ","
+                    << (le.has_price_field ? 1 : 0) << "," << (le.has_amount_field ? 1 : 0) << ","
+                    << le.order_id_before_delta << "," << le.order_id_after_delta << ","
+                    << (le.order_id_after_delta - le.order_id_before_delta) << ","
+                    << le.price_before_delta << "," << le.price_after_delta << ","
+                    << (le.price_after_delta - le.price_before_delta) << ","
+                    << le.ts_before_delta << "," << le.ts_after_delta << ","
+                    << le.amount_before << "," << le.amount_after << "," << le.order_id_path << ","
+                    << le.best_bid_before << "," << le.best_ask_before << ","
+                    << le.best_bid_after << "," << le.best_ask_after << ","
+                    << le.active_qty_before << "," << le.active_qty_after << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote bid order lifecycle (" << bid_lifecycle_events.size() << " events) to " << csv_path << std::endl;
+        }
+    }
+
+    // Write ask order lifecycle CSV
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_ask_order_lifecycle.csv" : out_dir + "/first_crossed_ask_order_lifecycle.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+                << "flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system,"
+                << "raw_data_offset,raw_entry_flags,raw_order_flags_hex,raw_side_bits,raw_event_bits,"
+                << "has_timestamp_field,has_order_id_field,has_price_field,has_amount_field,"
+                << "order_id_before_delta,order_id_after_delta,order_id_delta,"
+                << "price_before_delta,price_after_delta,price_delta,"
+                << "ts_before_delta,ts_after_delta,"
+                << "amount_before,amount_after,order_id_path,"
+                << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+                << "active_qty_before,active_qty_after\n";
+            for (const auto& le : ask_lifecycle_events) {
+                csv << le.record_index << "," << le.ts << "," << le.tx_index << ","
+                    << le.order_id << "," << le.event_type << "," << le.side << ","
+                    << le.price << "," << le.amount << "," << le.amount_rest << ","
+                    << le.flags_hex << "," << le.repl_act << ","
+                    << (le.is_snapshot ? 1 : 0) << "," << (le.is_new_session ? 1 : 0) << ","
+                    << (le.is_txend ? 1 : 0) << "," << (le.is_system ? 1 : 0) << ","
+                    << (le.is_non_system ? 1 : 0) << ","
+                    << le.raw_data_offset << "," << le.raw_entry_flags << ","
+                    << le.raw_order_flags_hex << "," << le.raw_side_bits << "," << le.raw_event_bits << ","
+                    << (le.has_timestamp_field ? 1 : 0) << "," << (le.has_order_id_field ? 1 : 0) << ","
+                    << (le.has_price_field ? 1 : 0) << "," << (le.has_amount_field ? 1 : 0) << ","
+                    << le.order_id_before_delta << "," << le.order_id_after_delta << ","
+                    << (le.order_id_after_delta - le.order_id_before_delta) << ","
+                    << le.price_before_delta << "," << le.price_after_delta << ","
+                    << (le.price_after_delta - le.price_before_delta) << ","
+                    << le.ts_before_delta << "," << le.ts_after_delta << ","
+                    << le.amount_before << "," << le.amount_after << "," << le.order_id_path << ","
+                    << le.best_bid_before << "," << le.best_ask_before << ","
+                    << le.best_bid_after << "," << le.best_ask_after << ","
+                    << le.active_qty_before << "," << le.active_qty_after << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote ask order lifecycle (" << ask_lifecycle_events.size() << " events) to " << csv_path << std::endl;
+        }
+    }
+
+    // Write combined lifecycle CSV
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_orders_lifecycle_combined.csv" : out_dir + "/first_crossed_orders_lifecycle_combined.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+                << "flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system,"
+                << "raw_data_offset,raw_entry_flags,raw_order_flags_hex,raw_side_bits,raw_event_bits,"
+                << "has_timestamp_field,has_order_id_field,has_price_field,has_amount_field,"
+                << "order_id_before_delta,order_id_after_delta,order_id_delta,"
+                << "price_before_delta,price_after_delta,price_delta,"
+                << "ts_before_delta,ts_after_delta,"
+                << "amount_before,amount_after,order_id_path,"
+                << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+                << "active_qty_before,active_qty_after\n";
+            for (const auto& le : combined_lifecycle_events) {
+                csv << le.record_index << "," << le.ts << "," << le.tx_index << ","
+                    << le.order_id << "," << le.event_type << "," << le.side << ","
+                    << le.price << "," << le.amount << "," << le.amount_rest << ","
+                    << le.flags_hex << "," << le.repl_act << ","
+                    << (le.is_snapshot ? 1 : 0) << "," << (le.is_new_session ? 1 : 0) << ","
+                    << (le.is_txend ? 1 : 0) << "," << (le.is_system ? 1 : 0) << ","
+                    << (le.is_non_system ? 1 : 0) << ","
+                    << le.raw_data_offset << "," << le.raw_entry_flags << ","
+                    << le.raw_order_flags_hex << "," << le.raw_side_bits << "," << le.raw_event_bits << ","
+                    << (le.has_timestamp_field ? 1 : 0) << "," << (le.has_order_id_field ? 1 : 0) << ","
+                    << (le.has_price_field ? 1 : 0) << "," << (le.has_amount_field ? 1 : 0) << ","
+                    << le.order_id_before_delta << "," << le.order_id_after_delta << ","
+                    << (le.order_id_after_delta - le.order_id_before_delta) << ","
+                    << le.price_before_delta << "," << le.price_after_delta << ","
+                    << (le.price_after_delta - le.price_before_delta) << ","
+                    << le.ts_before_delta << "," << le.ts_after_delta << ","
+                    << le.amount_before << "," << le.amount_after << "," << le.order_id_path << ","
+                    << le.best_bid_before << "," << le.best_ask_before << ","
+                    << le.best_bid_after << "," << le.best_ask_after << ","
+                    << le.active_qty_before << "," << le.active_qty_after << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote combined lifecycle (" << combined_lifecycle_events.size() << " events) to " << csv_path << std::endl;
+        }
+    }
+
+    // M10O: Write first_crossed_orders_raw_audit.csv (raw decoder state for crossing orders)
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_orders_raw_audit.csv" : out_dir + "/first_crossed_orders_raw_audit.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+                << "flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system,"
+                << "raw_data_offset,raw_entry_flags,raw_order_flags_hex,raw_side_bits,raw_event_bits,"
+                << "has_timestamp_field,has_order_id_field,has_price_field,has_amount_field,"
+                << "order_id_before_delta,order_id_after_delta,price_before_delta,price_after_delta,"
+                << "ts_before_delta,ts_after_delta,amount_before,amount_after,order_id_path\n";
+            for (const auto& le : combined_lifecycle_events) {
+                csv << le.record_index << "," << le.ts << "," << le.tx_index << ","
+                    << le.order_id << "," << le.event_type << "," << le.side << ","
+                    << le.price << "," << le.amount << "," << le.amount_rest << ","
+                    << le.flags_hex << "," << le.repl_act << ","
+                    << (le.is_snapshot ? 1 : 0) << "," << (le.is_new_session ? 1 : 0) << ","
+                    << (le.is_txend ? 1 : 0) << "," << (le.is_system ? 1 : 0) << ","
+                    << (le.is_non_system ? 1 : 0) << ","
+                    << le.raw_data_offset << "," << le.raw_entry_flags << ","
+                    << le.raw_order_flags_hex << "," << le.raw_side_bits << "," << le.raw_event_bits << ","
+                    << (le.has_timestamp_field ? 1 : 0) << "," << (le.has_order_id_field ? 1 : 0) << ","
+                    << (le.has_price_field ? 1 : 0) << "," << (le.has_amount_field ? 1 : 0) << ","
+                    << le.order_id_before_delta << "," << le.order_id_after_delta << ","
+                    << le.price_before_delta << "," << le.price_after_delta << ","
+                    << le.ts_before_delta << "," << le.ts_after_delta << ","
+                    << le.amount_before << "," << le.amount_after << "," << le.order_id_path << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote raw audit (" << combined_lifecycle_events.size() << " events) to " << csv_path << std::endl;
+        }
+    }
+
     // Print summary
     std::cout << "\nFirst Crossed Root Cause Summary:" << std::endl;
     std::cout << "  First crossed record:     " << first_crossed_record << std::endl;
     std::cout << "  Best bid:                 " << first_crossed_bb << std::endl;
     std::cout << "  Best ask:                 " << first_crossed_ba << std::endl;
-    std::cout << "  Best bid order count:     " << first_crossed_bid_ids.size() << std::endl;
-    std::cout << "  Best ask order count:     " << first_crossed_ask_ids.size() << std::endl;
+    std::cout << "  Best bid order count:     " << final_bid_ids.size() << std::endl;
+    std::cout << "  Best ask order count:     " << final_ask_ids.size() << std::endl;
 
     int64_t valid_add_count = 0;
     int64_t no_add_count = 0;
-    for (const auto& [id, lc] : lifecycles) {
+    for (const auto& [id, lc] : final_lifecycles) {
         if (lc.had_valid_add) ++valid_add_count;
         else ++no_add_count;
     }
     std::cout << "  Orders with valid ADD:    " << valid_add_count << std::endl;
     std::cout << "  Orders without ADD:       " << no_add_count << std::endl;
+
+    // M10O: Print lifecycle summary
+    std::cout << "\nLifecycle trace summary:" << std::endl;
+    std::cout << "  Bid order lifecycle events: " << bid_lifecycle_events.size() << std::endl;
+    std::cout << "  Ask order lifecycle events: " << ask_lifecycle_events.size() << std::endl;
+    std::cout << "  Combined lifecycle events:  " << combined_lifecycle_events.size() << std::endl;
+
+    // M10O: Answer lifecycle questions
+    std::cout << "\nLifecycle questions:" << std::endl;
+    // Check if ADD was system or non-system
+    for (const auto& [id, lc] : final_lifecycles) {
+        std::cout << "  Order " << id << ":" << std::endl;
+        std::cout << "    Had valid ADD: " << (lc.had_valid_add ? "YES" : "NO") << std::endl;
+        if (lc.had_valid_add) {
+            std::cout << "    ADD at record: " << lc.add_record << std::endl;
+            std::cout << "    ADD price:     " << lc.add_price << std::endl;
+            std::cout << "    ADD amount:    " << lc.add_amount << std::endl;
+        }
+        std::cout << "    Event count:   " << lc.events.size() << std::endl;
+    }
 
     return 0;
 }
@@ -1556,6 +1994,9 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::vector<OrderLogRecord> tx_buffer;
     int64_t tx_grouped_crossed = 0;
 
+    // M10O: Track records in current transaction for crossing tx size
+    int64_t records_in_current_tx = 0;
+
     OrderLogRecord rec;
     while (reader.next(file, rec)) {
         ++record_count;
@@ -1599,6 +2040,7 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                 book.clear();
                 ++book.errors_ref().new_session_records_seen;
                 ++book.errors_ref().book_clears_due_to_new_session;
+                book.set_first_new_session_record_index(record_count);
                 if (max_records > 0 && record_count >= max_records) break;
                 continue;
             }
@@ -1610,6 +2052,11 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             // M10G: Track Snapshot records
             if (has_flag(rec.order_flags, OLFlags::Snapshot)) {
                 ++book.errors_ref().snapshot_records_seen;
+                // M10O: Count snapshot records before first crossing
+                if (book.first_crossing_event_record_index() == 0) {
+                    book.set_snapshot_records_before_first_crossing(
+                        book.snapshot_records_before_first_crossing() + 1);
+                }
                 if (snapshot_records_mode == SnapshotRecordsMode::Load) {
                     if (rec.event == OLMsgType::Add && is_system_record(rec)) {
                         ++book.errors_ref().snapshot_orders_loaded;
@@ -1671,6 +2118,14 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         ++l2_non_positive_spread;
                         ++tx_grouped_crossed;
                         book.set_first_crossed_book_record_index(record_count);
+                        // M10O: Track unambiguous crossing indices for tx-grouped mode
+                        book.set_first_crossing_event_record_index(record_count);
+                        book.set_first_crossing_snapshot_record_index(record_count);
+                        book.set_first_crossing_snapshot_index(snapshot_count);
+                        if (book.tx_index_at_first_crossing() == 0) {
+                            book.set_tx_index_at_first_crossing(tx_counter);
+                            book.set_records_in_first_crossing_tx(tx_result.records_processed);
+                        }
                     }
 
                     if (max_snapshots > 0 && snapshot_count >= max_snapshots) break;
@@ -1715,6 +2170,9 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             ++tx_counter;
             last_tx_index = tx_counter;
             transactions_seen = tx_counter;
+            records_in_current_tx = 0;
+        } else {
+            ++records_in_current_tx;
         }
 
         // NewSession clears the book
@@ -1722,6 +2180,7 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             book.clear();
             ++book.errors_ref().new_session_records_seen;
             ++book.errors_ref().book_clears_due_to_new_session;
+            book.set_first_new_session_record_index(record_count);
             if (max_records > 0 && record_count >= max_records) break;
             continue;
         }
@@ -1738,6 +2197,12 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         // M10G: Track Snapshot records
         if (has_flag(rec.order_flags, OLFlags::Snapshot)) {
             ++book.errors_ref().snapshot_records_seen;
+
+            // M10O: Count snapshot records before first crossing
+            if (book.first_crossing_event_record_index() == 0) {
+                book.set_snapshot_records_before_first_crossing(
+                    book.snapshot_records_before_first_crossing() + 1);
+            }
 
             // Experimental: handle snapshot records based on mode
             if (snapshot_records_mode == SnapshotRecordsMode::Load) {
@@ -1768,6 +2233,19 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         }
 
         book.apply(rec);
+
+        // M10O: Track first crossing event record index (the apply that first makes bb >= ba)
+        if (book.bid_depth() > 0 && book.ask_depth() > 0) {
+            Price bb_after = book.best_bid();
+            Price ba_after = book.best_ask();
+            if (bb_after > 0 && ba_after > 0 && bb_after >= ba_after) {
+                book.set_first_crossing_event_record_index(record_count);
+                if (book.tx_index_at_first_crossing() == 0) {
+                    book.set_tx_index_at_first_crossing(last_tx_index);
+                    book.set_records_in_first_crossing_tx(records_in_current_tx);
+                }
+            }
+        }
 
         // Check if this event caused a missing_order_id error
         if (book.errors().missing_order_id > missing_before) {
@@ -1901,6 +2379,9 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                 ++l2_non_positive_spread;
                 // M10G: Track first crossed book record index
                 book.set_first_crossed_book_record_index(record_count);
+                // M10O: Track unambiguous crossing indices
+                book.set_first_crossing_snapshot_record_index(record_count);
+                book.set_first_crossing_snapshot_index(snapshot_count);
                 if (max_diagnostics <= 0 || static_cast<int64_t>(diagnostics.size()) < max_diagnostics) {
                     L2DiagnosticEntry de;
                     de.timestamp = rec.timestamp;
@@ -2240,6 +2721,40 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     // M10G: Additional diagnostics
     std::cout << "first_missing_order_record_index: " << book.first_missing_order_record_index() << std::endl;
     std::cout << "first_crossed_book_record_index:  " << book.first_crossed_book_record_index() << std::endl;
+    // M10O: Unambiguous crossing index definitions
+    std::cout << "first_crossing_event_record_index:    " << book.first_crossing_event_record_index() << std::endl;
+    std::cout << "first_crossing_snapshot_record_index: " << book.first_crossing_snapshot_record_index() << std::endl;
+    std::cout << "first_crossing_snapshot_index:        " << book.first_crossing_snapshot_index() << std::endl;
+    // M10O: Session/snapshot state
+    std::cout << "first_new_session_record_index:       " << book.first_new_session_record_index() << std::endl;
+    std::cout << "first_valid_book_record_index:        " << book.first_valid_book_record_index() << std::endl;
+    std::cout << "snapshot_records_before_first_crossing: " << book.snapshot_records_before_first_crossing() << std::endl;
+    std::cout << "tx_index_at_first_crossing:           " << book.tx_index_at_first_crossing() << std::endl;
+    std::cout << "records_in_first_crossing_tx:         " << book.records_in_first_crossing_tx() << std::endl;
+    if (book.first_crossing_event_record_index() > 0 && book.first_new_session_record_index() > 0) {
+        std::cout << "records_between_new_session_and_first_crossing: " << (book.first_crossing_event_record_index() - book.first_new_session_record_index()) << std::endl;
+    }
+
+    // M10O: Session/snapshot state interpretation
+    std::cout << "\nSession/snapshot state at first crossing:" << std::endl;
+    if (book.first_crossing_event_record_index() == 0) {
+        std::cout << "  No crossing detected." << std::endl;
+    } else {
+        bool before_new_session = (book.first_new_session_record_index() == 0) ||
+                                  (book.first_crossing_event_record_index() < book.first_new_session_record_index());
+        bool after_new_session = !before_new_session && book.first_new_session_record_index() > 0;
+        bool inside_snapshot_init = book.snapshot_records_before_first_crossing() > 0 &&
+                                    book.first_crossing_event_record_index() <= book.first_valid_book_record_index();
+        bool before_continuous = book.first_valid_book_record_index() > 0 &&
+                                 book.first_crossing_event_record_index() <= book.first_valid_book_record_index();
+
+        std::cout << "  before_first_new_session:     " << (before_new_session ? "YES" : "NO") << std::endl;
+        std::cout << "  immediately_after_new_session: " << (after_new_session && (book.first_crossing_event_record_index() - book.first_new_session_record_index() < 50) ? "YES" : "NO") << std::endl;
+        std::cout << "  inside_snapshot_init:         " << (inside_snapshot_init ? "YES" : "NO") << std::endl;
+        std::cout << "  before_continuous_trading:    " << (before_continuous ? "YES" : "NO") << std::endl;
+        std::cout << "  inside_transaction_group:     " << (book.records_in_first_crossing_tx() > 1 ? "YES" : "NO") << std::endl;
+        std::cout << "  at_txend:                     " << (book.records_in_first_crossing_tx() == 1 ? "POSSIBLE" : "NO") << std::endl;
+    }
     std::cout << "add_records_seen:                 " << book.errors().add_records_seen << std::endl;
     std::cout << "add_records_applied:              " << book.errors().add_records_applied << std::endl;
     std::cout << "add_records_skipped:              " << book.errors().add_records_skipped << std::endl;
@@ -2295,6 +2810,15 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             summary_file << "  \"non_positive_spread_snapshots\": " << l2_non_positive_spread << ",\n";
             summary_file << "  \"first_missing_order_record_index\": " << book.first_missing_order_record_index() << ",\n";
             summary_file << "  \"first_crossed_book_record_index\": " << book.first_crossed_book_record_index() << ",\n";
+            summary_file << "  \"first_crossing_event_record_index\": " << book.first_crossing_event_record_index() << ",\n";
+            summary_file << "  \"first_crossing_snapshot_record_index\": " << book.first_crossing_snapshot_record_index() << ",\n";
+            summary_file << "  \"first_crossing_snapshot_index\": " << book.first_crossing_snapshot_index() << ",\n";
+            summary_file << "  \"first_new_session_record_index\": " << book.first_new_session_record_index() << ",\n";
+            summary_file << "  \"first_valid_book_record_index\": " << book.first_valid_book_record_index() << ",\n";
+            summary_file << "  \"snapshot_records_before_first_crossing\": " << book.snapshot_records_before_first_crossing() << ",\n";
+            summary_file << "  \"tx_index_at_first_crossing\": " << book.tx_index_at_first_crossing() << ",\n";
+            summary_file << "  \"records_in_first_crossing_tx\": " << book.records_in_first_crossing_tx() << ",\n";
+            summary_file << "  \"records_between_new_session_and_first_crossing\": " << (book.first_crossing_event_record_index() > 0 && book.first_new_session_record_index() > 0 ? book.first_crossing_event_record_index() - book.first_new_session_record_index() : 0) << ",\n";
             summary_file << "  \"l2_strategy_ready\": " << (has_invalid ? "false" : "true") << "\n";
             summary_file << "}\n";
             summary_file.close();

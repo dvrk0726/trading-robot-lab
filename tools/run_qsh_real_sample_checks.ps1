@@ -69,7 +69,7 @@ $ReportDirFull = (Resolve-Path $ReportDir).Path
 
 $ExePath = ".\build\qsh_ingest\Release\qsh_ingest.exe"
 
-# --- 4. Define four validation modes ---
+# --- 4. Define validation modes ---
 $modes = @(
     @{
         Name     = "per-record strict"
@@ -96,6 +96,34 @@ $modes = @(
             "--orphan-fill-mode", "reduce-same-price",
             "--out", "$ReportDirFull\l2_reduce_same_price.csv",
             "--summary-out", "$ReportDirFull\l2_reduce_same_price.summary.json")
+    },
+    @{
+        Name     = "per-record orphan-cancel-ignore"
+        CsvOut   = "$ReportDirFull\l2_orphan_cancel_ignore.csv"
+        Summary  = "$ReportDirFull\l2_orphan_cancel_ignore.summary.json"
+        Args     = @("l3-to-l2", $QshFullPath,
+            "--depth", "5",
+            "--max-records", "100000",
+            "--max-snapshots", "10000",
+            "--snapshot-mode", "txend",
+            "--orphan-fill-mode", "strict",
+            "--orphan-cancel-mode", "ignore",
+            "--out", "$ReportDirFull\l2_orphan_cancel_ignore.csv",
+            "--summary-out", "$ReportDirFull\l2_orphan_cancel_ignore.summary.json")
+    },
+    @{
+        Name     = "per-record reduce+orphan-cancel-ignore"
+        CsvOut   = "$ReportDirFull\l2_reduce_orphan_cancel_ignore.csv"
+        Summary  = "$ReportDirFull\l2_reduce_orphan_cancel_ignore.summary.json"
+        Args     = @("l3-to-l2", $QshFullPath,
+            "--depth", "5",
+            "--max-records", "100000",
+            "--max-snapshots", "10000",
+            "--snapshot-mode", "txend",
+            "--orphan-fill-mode", "reduce-same-price",
+            "--orphan-cancel-mode", "ignore",
+            "--out", "$ReportDirFull\l2_reduce_orphan_cancel_ignore.csv",
+            "--summary-out", "$ReportDirFull\l2_reduce_orphan_cancel_ignore.summary.json")
     },
     @{
         Name     = "snapshot-records-mode load"
@@ -145,15 +173,15 @@ foreach ($mode in $modes) {
             missing_on_fill                 = $summary.missing_on_fill
             missing_on_cancel               = $summary.missing_on_cancel
             missing_on_remove               = $summary.missing_on_remove
+            orphan_cancel_mode              = $summary.orphan_cancel_mode
+            orphan_cancel_ignored           = $summary.orphan_cancel_ignored
+            orphan_remove_ignored           = $summary.orphan_remove_ignored
             orphan_fill_events              = $summary.orphan_fill_events
             orphan_fill_level_reductions    = $summary.orphan_fill_level_reductions
             crossed_book_snapshots          = $summary.crossed_book_snapshots
             non_positive_spread_snapshots   = $summary.non_positive_spread_snapshots
             first_missing_order_record_index = $summary.first_missing_order_record_index
             first_crossed_book_record_index = $summary.first_crossed_book_record_index
-            orphan_cancel_mode              = $summary.orphan_cancel_mode
-            orphan_cancel_ignored           = $summary.orphan_cancel_ignored
-            orphan_remove_ignored           = $summary.orphan_remove_ignored
             l2_strategy_ready               = $summary.l2_strategy_ready
         }
         Write-Host " OK" -ForegroundColor Green
@@ -165,6 +193,9 @@ foreach ($mode in $modes) {
             missing_on_fill                 = "?"
             missing_on_cancel               = "?"
             missing_on_remove               = "?"
+            orphan_cancel_mode              = "?"
+            orphan_cancel_ignored           = "?"
+            orphan_remove_ignored           = "?"
             orphan_fill_events              = "?"
             orphan_fill_level_reductions    = "?"
             crossed_book_snapshots          = "?"
@@ -182,13 +213,13 @@ Write-Host "=== Real-Sample Validation Results ===" -ForegroundColor Cyan
 Write-Host ""
 
 # Build markdown-compatible table
-$header = "| mode | missing_order_id | missing_on_fill | missing_on_cancel | missing_on_remove | orphan_fill_events | orphan_fill_level_reductions | crossed_book_snapshots | non_positive_spread_snapshots | first_missing_order_record_index | first_crossed_book_record_index | l2_strategy_ready |"
-$sep    = "|---|---|---|---|---|---|---|---|---|---|---|---|"
+$header = "| mode | missing_order_id | missing_on_fill | missing_on_cancel | missing_on_remove | orphan_cancel_mode | orphan_cancel_ignored | orphan_remove_ignored | orphan_fill_events | orphan_fill_level_reductions | crossed_book_snapshots | non_positive_spread_snapshots | first_missing_order_record_index | first_crossed_book_record_index | l2_strategy_ready |"
+$sep    = "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
 Write-Host $header
 Write-Host $sep
 
 foreach ($r in $results) {
-    $line = "| $($r.Mode) | $($r.missing_order_id) | $($r.missing_on_fill) | $($r.missing_on_cancel) | $($r.missing_on_remove) | $($r.orphan_fill_events) | $($r.orphan_fill_level_reductions) | $($r.crossed_book_snapshots) | $($r.non_positive_spread_snapshots) | $($r.first_missing_order_record_index) | $($r.first_crossed_book_record_index) | $($r.l2_strategy_ready) |"
+    $line = "| $($r.Mode) | $($r.missing_order_id) | $($r.missing_on_fill) | $($r.missing_on_cancel) | $($r.missing_on_remove) | $($r.orphan_cancel_mode) | $($r.orphan_cancel_ignored) | $($r.orphan_remove_ignored) | $($r.orphan_fill_events) | $($r.orphan_fill_level_reductions) | $($r.crossed_book_snapshots) | $($r.non_positive_spread_snapshots) | $($r.first_missing_order_record_index) | $($r.first_crossed_book_record_index) | $($r.l2_strategy_ready) |"
     Write-Host $line
 }
 

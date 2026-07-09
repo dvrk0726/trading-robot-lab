@@ -159,10 +159,18 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-fill-mode reduce-same-price --out l2_s
 # ignore: skip cancel/remove of unknown order without mutating book
 qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-cancel-mode ignore --out l2_snapshots.csv
 
+# Combine orphan fill and cancel modes (M10O)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-fill-mode reduce-same-price --orphan-cancel-mode ignore --out l2_snapshots.csv
+
 # Orphan cancel/remove audit (M10N)
 qsh-ingest orphan-cancel-audit <OrdLog.qsh> --out orphan_cancel_audit.csv --max-audits 200
 
-# First crossed-book root cause trace (M10N)
+# First crossed-book root cause trace (M10N, enhanced M10O)
+# Produces: first_crossed_root_cause.csv, first_crossed_best_orders.csv,
+#           first_crossed_lifecycle.csv, first_crossed_bid_order_lifecycle.csv,
+#           first_crossed_ask_order_lifecycle.csv, first_crossed_orders_lifecycle_combined.csv,
+#           first_crossed_event_window_audit.csv, first_crossed_snapshot_window_audit.csv,
+#           first_crossed_orders_raw_audit.csv
 qsh-ingest first-crossed-root-cause <OrdLog.qsh> --out-dir data/reports/qsh --context 40
 
 # Experimental: book update mode (M10K)
@@ -191,6 +199,40 @@ WARNING: exported L2 contains invalid best bid / best ask state.
 This L2 output is not strategy-ready until reconstruction diagnostics are clean.
 ```
 
+## Summary JSON Output
+
+The `--summary-out <file.json>` option writes a machine-readable summary with these fields:
+
+- `book_update_mode`: per-record or tx-grouped
+- `snapshot_mode`: event or txend
+- `snapshot_records_mode`: ignore, load, or marker
+- `fill_semantics`: delta or rest
+- `orphan_fill_mode`: strict, ignore, reduce-same-price, or transaction-rest
+- `orphan_cancel_mode`: strict or ignore
+- `orphan_cancel_ignored`: count of ignored orphan cancels
+- `orphan_remove_ignored`: count of ignored orphan removes
+- `records_processed`: total records processed
+- `transactions_seen`: total transactions seen
+- `snapshots_written`: total L2 snapshots emitted
+- `missing_order_id`: count of missing order ID errors
+- `missing_on_fill`, `missing_on_cancel`, `missing_on_remove`, `missing_on_move`: breakdown by event type
+- `orphan_fill_events`: count of orphan fill events
+- `orphan_fill_level_reductions`: count of reduce-same-price level reductions
+- `crossed_book_snapshots`: count of crossed book snapshots
+- `non_positive_spread_snapshots`: count of non-positive spread snapshots
+- `first_missing_order_record_index`: record index of first missing order ID error
+- `first_crossed_book_record_index`: record index of first crossed book snapshot (legacy)
+- `first_crossing_event_record_index`: the OrdLog record whose application first makes best_bid >= best_ask
+- `first_crossing_snapshot_record_index`: the OrdLog record index where the first crossed L2 snapshot is emitted
+- `first_crossing_snapshot_index`: the snapshot number (1-based) that first contains crossed book
+- `first_new_session_record_index`: record index of first NewSession event
+- `first_valid_book_record_index`: record index of first valid book state (has bid and ask)
+- `snapshot_records_before_first_crossing`: count of snapshot records before first crossing
+- `tx_index_at_first_crossing`: transaction index at first crossing
+- `records_in_first_crossing_tx`: records in the transaction where first crossing occurs
+- `records_between_new_session_and_first_crossing`: difference between first crossing and first NewSession
+- `l2_strategy_ready`: true if no invalid snapshots found
+
 ## Real-Sample Validation
 
 Run all validation modes against the local QSH sample:
@@ -202,15 +244,23 @@ Run all validation modes against the local QSH sample:
 Options:
 
 ```powershell
-.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe
+.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe
 ```
 
 The script:
 - Builds qsh_ingest and runs tests (unless `-SkipBuild`)
-- Runs four `l3-to-l2` modes with `--summary-out`
+- Runs six `l3-to-l2` modes with `--summary-out`:
+  1. per-record strict
+  2. per-record reduce-same-price
+  3. per-record orphan-cancel-ignore
+  4. per-record reduce+orphan-cancel-ignore
+  5. snapshot-records-mode load
+  6. tx-grouped
 - Prints a compact comparison table
 - Reports L2 strategy-ready status
 - Optionally probes `missing_on_cancel` orders
+- Optionally runs orphan cancel/remove audit
+- Optionally runs first crossed-book root cause trace
 
 Raw QSH must stay under `data/raw/qsh/...`. Generated reports stay under `data/reports/qsh/...`. Both are ignored by Git.
 

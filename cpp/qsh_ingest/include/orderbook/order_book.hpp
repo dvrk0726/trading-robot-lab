@@ -219,6 +219,37 @@ public:
         if (errors_.first_valid_book_record_index == 0) errors_.first_valid_book_record_index = idx;
     }
 
+    // M10O: Unambiguous crossing index accessors
+    int64_t first_crossing_event_record_index() const { return first_crossing_event_record_index_; }
+    void set_first_crossing_event_record_index(int64_t idx) {
+        if (first_crossing_event_record_index_ == 0) first_crossing_event_record_index_ = idx;
+    }
+
+    int64_t first_crossing_snapshot_record_index() const { return first_crossing_snapshot_record_index_; }
+    void set_first_crossing_snapshot_record_index(int64_t idx) {
+        if (first_crossing_snapshot_record_index_ == 0) first_crossing_snapshot_record_index_ = idx;
+    }
+
+    int64_t first_crossing_snapshot_index() const { return first_crossing_snapshot_index_; }
+    void set_first_crossing_snapshot_index(int64_t idx) {
+        if (first_crossing_snapshot_index_ == 0) first_crossing_snapshot_index_ = idx;
+    }
+
+    // M10O: Session/snapshot state accessors
+    int64_t first_new_session_record_index() const { return first_new_session_record_index_; }
+    void set_first_new_session_record_index(int64_t idx) {
+        if (first_new_session_record_index_ == 0) first_new_session_record_index_ = idx;
+    }
+
+    int64_t snapshot_records_before_first_crossing() const { return snapshot_records_before_first_crossing_; }
+    void set_snapshot_records_before_first_crossing(int64_t n) { snapshot_records_before_first_crossing_ = n; }
+
+    int64_t tx_index_at_first_crossing() const { return tx_index_at_first_crossing_; }
+    void set_tx_index_at_first_crossing(int64_t idx) { tx_index_at_first_crossing_ = idx; }
+
+    int64_t records_in_first_crossing_tx() const { return records_in_first_crossing_tx_; }
+    void set_records_in_first_crossing_tx(int64_t n) { records_in_first_crossing_tx_ = n; }
+
 private:
     // Levels stored as price -> (volume, order_count), sorted.
     // Bid: descending by price (highest first).
@@ -254,6 +285,17 @@ private:
     // M10G: Timing diagnostics
     int64_t first_missing_order_record_index_ = 0;
     int64_t first_crossed_book_record_index_ = 0;
+
+    // M10O: Unambiguous crossing index fields
+    int64_t first_crossing_event_record_index_ = 0;    // record whose apply() first makes bb >= ba
+    int64_t first_crossing_snapshot_record_index_ = 0;  // record index where first crossed snapshot is emitted
+    int64_t first_crossing_snapshot_index_ = 0;          // snapshot number (1-based) that is first crossed
+
+    // M10O: Session/snapshot state tracking
+    int64_t first_new_session_record_index_ = 0;
+    int64_t snapshot_records_before_first_crossing_ = 0;
+    int64_t tx_index_at_first_crossing_ = 0;
+    int64_t records_in_first_crossing_tx_ = 0;
 };
 
 }  // namespace qsh

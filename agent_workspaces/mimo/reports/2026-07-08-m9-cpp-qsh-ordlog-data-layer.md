@@ -2050,3 +2050,127 @@ orphan_remove_ignored: count of remove events skipped in ignore mode
 3. Consider whether the crossed-book state is acceptable for MOEX RTS-3.21 at session start
 4. If crossing is normal at session start, add a "skip-initial-crossed" mode that ignores crossed snapshots before the first valid spread
 5. The `l2_strategy_ready` remains NO until crossed diagnostics are clean or crossing is documented as expected behavior
+
+---
+
+## M10O First Crossed Order Lifecycle and Session State Audit
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### Build/Test Result
+
+```
+Build: OK (MSVC 2022 + vcpkg/zlib, Release clean)
+Tests: 15/15 passed (100%)
+```
+
+### Real-Sample Validation Table
+
+| mode | missing_order_id | missing_on_fill | missing_on_cancel | missing_on_remove | orphan_cancel_mode | orphan_cancel_ignored | orphan_remove_ignored | orphan_fill_events | orphan_fill_level_reductions | crossed_book_snapshots | non_positive_spread_snapshots | first_missing_order_record_index | first_crossed_book_record_index | l2_strategy_ready |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| per-record strict | 319 | 148 | 170 | 1 | strict | 0 | 0 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| per-record reduce-same-price | 171 | 0 | 170 | 1 | strict | 0 | 0 | 148 | 148 | 7884 | 7884 | 1966 | 2242 | NO |
+| per-record orphan-cancel-ignore | 148 | 148 | 0 | 0 | ignore | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| per-record reduce+orphan-cancel-ignore | 0 | 0 | 0 | 0 | ignore | 170 | 1 | 148 | 148 | 7884 | 7884 | 0 | 2242 | NO |
+| snapshot-records-mode load | 319 | 148 | 170 | 1 | strict | 0 | 0 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| tx-grouped | 319 | 148 | 170 | 1 | strict | 0 | 0 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+
+### Record Index vs Snapshot Index Clarification
+
+The 2136 vs 2210 discrepancy is now resolved with unambiguous definitions:
+
+| Field | Value | Definition |
+|---|---|---|
+| `first_crossing_event_record_index` | **2136** | The OrdLog record whose application first makes `best_bid >= best_ask` |
+| `first_crossing_snapshot_record_index` | **2210** | The OrdLog record index where the first crossed L2 snapshot is emitted |
+| `first_crossing_snapshot_index` | **2111** | The snapshot number (1-based) that first contains crossed book |
+
+The 74-record gap (2210 - 2136) exists because txend mode waits for TxEnd boundary before emitting the snapshot. The crossing event happens at record 2136, but the snapshot is only emitted at the next TxEnd boundary (record 2210).
+
+### Lifecycle Summary
+
+#### bid_order=1925033994466246392 (BUY, price=14100, qty=111)
+
+- **Had valid ADD: NO**
+- **2 lifecycle events** in the detailed trace
+- This order was NEVER added via an ADD record in the OrdLog stream
+- It exists in the active book at the time of first crossing but has no ADD origin
+- Possible origin: Snapshot record initialization or cross-session carry-over
+
+#### ask_order=1925033994522131746 (SELL, price=14062, qty=30)
+
+- **Had valid ADD: YES**
+- ADD at record 1957, price=14062, amount=30
+- **1 lifecycle event** in the detailed trace
+- This order was properly added and exists in the book
+
+### Raw Decoder Audit Summary
+
+- `first_crossed_event_window_audit.csv` — 80 events (40 before, 40 after first crossing)
+- `first_crossed_snapshot_window_audit.csv` — events around first exported crossed snapshot
+- `first_crossed_orders_raw_audit.csv` — 3 raw decoder events for crossing orders
+
+### Session/Snapshot/Transaction State Summary
+
+| Field | Value |
+|---|---|
+| `new_session_records_seen` | 1 |
+| `first_new_session_record_index` | 1 |
+| `first_valid_book_record_index` | 27 |
+| `first_crossing_event_record_index` | 2136 |
+| `first_crossing_snapshot_record_index` | 2210 |
+| `records_between_new_session_and_first_crossing` | 2135 |
+| `snapshot_records_before_first_crossing` | 1964 |
+| `tx_index_at_first_crossing` | 2135 |
+| `records_in_first_crossing_tx` | 1 |
+
+Session state at first crossing:
+```
+before_first_new_session:     NO
+immediately_after_new_session: NO
+inside_snapshot_init:         NO
+before_continuous_trading:    NO
+inside_transaction_group:     NO
+at_txend:                     POSSIBLE
+```
+
+The first crossing happens well after NewSession (2135 records later), after 1964 snapshot records have been processed, in a single-record transaction at a TxEnd boundary.
+
+### qsh-rs Comparison
+
+```
+qsh-rs comparison skipped: not available locally
+```
+
+### Root Cause Analysis
+
+The crossed book is caused by **bid_order=1925033994466246392** existing in the active book at price 14100 without ever having been added via an ADD record. This order:
+
+1. Was never added via ADD (no valid ADD found in the entire file)
+2. Is at a higher price (14100) than the best ask (14062), creating the crossed state
+3. Likely originated from a Snapshot record during book initialization
+
+The 1964 snapshot records before the first crossing suggest the book was initialized from snapshot data. The bid order at 14100 may have been loaded from a snapshot but its ADD event was never recorded in the OrdLog stream.
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `include/orderbook/order_book.hpp` | Added `first_crossing_event_record_index_`, `first_crossing_snapshot_record_index_`, `first_crossing_snapshot_index_`, `first_new_session_record_index_`, `snapshot_records_before_first_crossing_`, `tx_index_at_first_crossing_`, `records_in_first_crossing_tx_` members and accessors |
+| `src/main.cpp` | Added new index tracking in l3-to-l2 (both per-record and tx-grouped modes), session/snapshot state interpretation output, enhanced first-crossed-root-cause with detailed lifecycle CSVs (bid/ask/combined), raw decoder audit CSVs (event window, snapshot window, orders), summary JSON with new fields, lifecycle state save/restore to protect from NewSession clearing |
+| `tools/run_qsh_real_sample_checks.ps1` | Added orphan-cancel-ignore and reduce+orphan-cancel-ignore modes, updated table columns |
+| `cpp/qsh_ingest/README.md` | Added summary JSON field documentation, updated validation script docs, added combined mode example |
+
+### L2 Strategy-Ready Status
+
+**NO.** Crossed snapshots remain at 7890 (strict) / 7884 (reduce-same-price). The root cause is that a bid order at 14100 exists in the book without an ADD record, likely from snapshot initialization.
+
+### Next Recommended Task
+
+1. Investigate snapshot record handling — the bid order at 14100 likely came from a Snapshot record during book initialization
+2. Test `--snapshot-records-mode load` to see if loading snapshot records as ADD events resolves the missing order
+3. If snapshot loading doesn't help, investigate whether the order is from a cross-session carry-over
+4. Consider adding a "skip-initial-crossed" mode that ignores crossed snapshots during session initialization
+5. The `l2_strategy_ready` remains NO until crossed diagnostics are clean or crossing is documented as expected behavior
