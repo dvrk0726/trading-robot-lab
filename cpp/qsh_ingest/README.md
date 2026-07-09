@@ -73,6 +73,12 @@ qsh-ingest quality <file.qsh>
 # Export normalized metadata/events
 qsh-ingest convert <file.qsh> --out <dir>
 
+# Export decoded OrdLog records to CSV (diagnostic dump)
+qsh-ingest dump-records <OrdLog.qsh> --dump-records-out <file.csv> [--dump-records-from N] [--dump-records-to N]
+
+# Analyze first missing order backward (root cause investigation)
+qsh-ingest check-missing-order <OrdLog.qsh>
+
 # Reconstruct L2 snapshots from OrdLog
 qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 20 --out <file.csv>
 
@@ -127,6 +133,12 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 
   --trace-best-level-orders-out l2_best_orders.csv \
   --trace-missing-order-out l2_missing_orders.csv \
   --auto-trace-crossed-orders-out l2_auto_trace.csv
+
+# Experimental: snapshot records mode (M10H)
+# ignore: default behavior, snapshot records applied normally
+# load: treat snapshot records as actual order adds (experimental)
+# marker: treat snapshot records as markers only, skip apply (experimental)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --snapshot-records-mode load --out l2_snapshots.csv
 ```
 
 **L2 output is not strategy-ready until diagnostics are clean.**

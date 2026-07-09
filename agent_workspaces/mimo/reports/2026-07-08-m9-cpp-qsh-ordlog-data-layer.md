@@ -1071,3 +1071,184 @@ The M10G implementation adds comprehensive diagnostics to determine:
 6. Determine if missing orders are benign (already consumed) or problematic (missing ADD events)
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+---
+
+## M10H Snapshot Semantics and OrdLog Spec Check
+
+Date: 2026-07-09
+Task: M10H_SNAPSHOT_SEMANTICS_AND_ORDERLOG_SPEC_CHECK.md
+
+### Problem
+
+Need to determine why `missing_order_id` starts before the first crossed book and why L2 remains crossed. Investigate:
+1. Snapshot semantics — whether Snapshot records are actual order rows or markers
+2. First missing order backward check — whether prior ADD/Snapshot exists
+3. OrdLog spec interpretation — document current understanding
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `src/main.cpp` | Added `dump-records` command for diagnostic CSV export. Added `check-missing-order` command for backward analysis of first missing order. Added `--snapshot-records-mode ignore|load|marker` experimental flag to `l3-to-l2`. Added `SnapshotRecordsMode` enum. Added `snapshot_orders_loaded` counter output. |
+| `cpp/qsh_ingest/README.md` | Added documentation for new commands and experimental flag. |
+| `docs/qsh_data_source_notes.md` | Added M10H OrdLog specification notes section. |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_m10h_snapshot_semantics.cpp` | 7 synthetic tests for snapshot semantics |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 11
+```
+
+New test `test_m10h_snapshot_semantics` covers:
+- Snapshot mode default unchanged (snapshot records applied normally)
+- Snapshot orders loaded counter
+- First missing order has no prior ADD (scenario A)
+- First missing order has prior ADD (scenario B)
+- First missing order from snapshot (scenario C)
+- Snapshot record flags verification
+- Non-system snapshot record flags
+
+### New Commands
+
+#### dump-records
+
+Export decoded OrdLog records to CSV with full flag analysis:
+
+```powershell
+.\build\qsh_ingest\Release\qsh_ingest.exe dump-records <OrdLog.qsh> --dump-records-out records.csv --dump-records-from 1500 --dump-records-to 2250
+```
+
+CSV columns:
+```
+record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,
+flags,flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system
+```
+
+#### check-missing-order
+
+Analyze first missing order backward for prior ADD/Snapshot:
+
+```powershell
+.\build\qsh_ingest\Release\qsh_ingest.exe check-missing-order <OrdLog.qsh>
+```
+
+Output:
+```
+First missing order found:
+  order_id:       <id>
+  event_type:     <type>
+  side:           <side>
+  price:          <price>
+  amount:         <amount>
+  record_index:   <index>
+
+Backward search results:
+  prior_add_found:      YES/NO
+  prior_snapshot_found:  YES/NO
+
+Interpretation:
+  A/B/C conclusion
+```
+
+### New Experimental Flag
+
+#### --snapshot-records-mode
+
+```powershell
+# Default behavior (snapshot records applied normally)
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 <file> --snapshot-records-mode ignore
+
+# Treat snapshot records as actual order adds (experimental)
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 <file> --snapshot-records-mode load
+
+# Treat snapshot records as markers only, skip apply (experimental)
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 <file> --snapshot-records-mode marker
+```
+
+### QSH/OrdLog Spec Notes
+
+Current interpretation (documented in `docs/qsh_data_source_notes.md`):
+
+| Record Type | Interpretation | Certainty |
+|---|---|---|
+| **Snapshot** | Actual active order rows that initialize the book | Uncertain — experimental modes added |
+| **NewSession** | Clears book, marks session boundary | Confirmed |
+| **TxEnd** | Transaction boundary marker | Confirmed |
+| **repl_act** | Non-zero replacement action, skipped as non-system | Uncertain |
+| **system vs non-system** | System = !NonSystem && !NonZeroReplAct && side != Unknown | Confirmed |
+| **side flags** | Buy/Sell flags, both set = Unknown | Confirmed |
+
+### Hypothesis Conclusion
+
+The M10H implementation provides tools to determine:
+
+1. **dump-records** — Export decoded records in the critical range (1500-2250) covering first missing order (1651) and first crossed book (2210). This makes the next debugging step clear.
+
+2. **check-missing-order** — Backward analysis determines if the first missing order had a prior ADD or Snapshot:
+   - **Scenario A**: No prior ADD/Snapshot → decoder may miss records
+   - **Scenario B**: Prior ADD exists but not loaded → book init/lifecycle bug
+   - **Scenario C**: Prior Snapshot exists but not loaded → snapshot semantics wrong
+
+3. **--snapshot-records-mode** — Experimental flag to test different snapshot handling without changing default behavior.
+
+### What Remains Unresolved
+
+1. **Cannot run on real QSH** — No QSH file available on this system. The commands must be run by the owner.
+
+2. **7890 crossed snapshots persist** — Root cause depends on dump and backward check results.
+
+3. **319 missing_order_id events** — Need correlation with dump analysis.
+
+### Recommended Owner Commands
+
+```powershell
+# 1. Dump records in critical range
+.\build\qsh_ingest\Release\qsh_ingest.exe dump-records `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --dump-records-out .\data\reports\qsh\RTS-3.21\2021-01-05\ordlog_records_1500_2250.csv `
+  --dump-records-from 1500 --dump-records-to 2250
+
+# 2. Check first missing order backward
+.\build\qsh_ingest\Release\qsh_ingest.exe check-missing-order `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh
+
+# 3. Compare snapshot records modes
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend --snapshot-records-mode load `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend_snapshot_load.csv
+
+# 4. Full diagnostic with all traces
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend `
+  --diagnostics-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend_diagnostics.csv `
+  --trace-missing-order-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_missing_orders.csv `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend.csv
+```
+
+### Next Recommended Task
+
+1. Owner runs dump-records and check-missing-order on real QSH file
+2. Analyze dump for records 1500-2250 to understand event sequence
+3. Determine if first missing order has prior ADD/Snapshot
+4. Compare snapshot_records_mode results
+5. Based on results: fix decoder, fix book init, or document root cause
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**

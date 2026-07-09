@@ -22,6 +22,9 @@ using namespace qsh;
 // Snapshot emission mode.
 enum class SnapshotMode { Event, TxEnd };
 
+// Snapshot records handling mode (experimental).
+enum class SnapshotRecordsMode { Ignore, Load, Marker };
+
 // Ring buffer entry for first-crossed context trace.
 struct RingEntry {
     int64_t record_index = 0;
@@ -43,6 +46,8 @@ static void print_help() {
     std::cout << "  inspect <file.qsh>                    Read and display QSH header\n";
     std::cout << "  quality <file.qsh>                    Scan records and print counters\n";
     std::cout << "  convert <file.qsh> --out <dir>        Export normalized metadata\n";
+    std::cout << "  dump-records <OrdLog.qsh>             Export decoded OrdLog records to CSV\n";
+    std::cout << "  check-missing-order <OrdLog.qsh>      Analyze first missing order backward\n";
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
     std::cout << "                        [--out <file.csv>] [--diagnostics-out <file.csv>]\n";
     std::cout << "                        [--max-diagnostics N]\n";
@@ -211,6 +216,213 @@ static int cmd_quality(const std::string& path) {
     return 0;
 }
 
+static int cmd_dump_records(const std::string& path, const std::string& out_path,
+                            int64_t from_index, int64_t to_index) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: dump-records requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::ofstream csv(out_path);
+    if (!csv.is_open()) {
+        std::cerr << "Error: cannot open output file: " << out_path << std::endl;
+        return 1;
+    }
+
+    csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+        << "flags,flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system\n";
+
+    OrdLogReader reader;
+    int64_t record_count = 0;
+    int64_t tx_counter = 0;
+    int64_t written = 0;
+
+    reader.scan_all(file, [&](const OrderLogRecord& rec) {
+        ++record_count;
+
+        // Track TxEnd
+        if (has_flag(rec.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        // Apply range filter
+        if (record_count < from_index) return;
+        if (to_index > 0 && record_count > to_index) return;
+
+        bool is_snapshot = has_flag(rec.order_flags, OLFlags::Snapshot);
+        bool is_new_session = has_flag(rec.order_flags, OLFlags::NewSession);
+        bool is_txend = has_flag(rec.order_flags, OLFlags::TxEnd);
+        bool is_system = is_system_record(rec);
+        bool is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+        Volume repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+
+        csv << record_count << ","
+            << rec.timestamp << ","
+            << tx_counter << ","
+            << rec.order_id << ","
+            << ol_msg_type_name(rec.event) << ","
+            << side_name(rec.side) << ","
+            << rec.price << ","
+            << rec.amount << ","
+            << rec.amount_rest << ","
+            << rec.order_flags << ","
+            << "0x" << std::hex << rec.order_flags << std::dec << ","
+            << repl_act << ","
+            << (is_snapshot ? 1 : 0) << ","
+            << (is_new_session ? 1 : 0) << ","
+            << (is_txend ? 1 : 0) << ","
+            << (is_system ? 1 : 0) << ","
+            << (is_non_system ? 1 : 0) << "\n";
+
+        ++written;
+    });
+
+    csv.close();
+    std::cout << "Dumped " << written << " records (range " << from_index
+              << ".." << (to_index > 0 ? std::to_string(to_index) : "end")
+              << ") to " << out_path << std::endl;
+
+    return 0;
+}
+
+// Structure to hold first missing order analysis results
+struct FirstMissingOrderAnalysis {
+    UID order_id = 0;
+    OLMsgType event_type = OLMsgType::Unknown;
+    Side side = Side::Unknown;
+    Price price = 0;
+    Volume amount = 0;
+    int64_t first_occurrence_index = 0;
+    int64_t prior_add_index = 0;
+    OLMsgType prior_add_type = OLMsgType::Unknown;
+    bool prior_add_found = false;
+    bool prior_snapshot_found = false;
+    int64_t prior_snapshot_index = 0;
+};
+
+static int cmd_check_missing_order(const std::string& path) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: check-missing-order requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Analyzing first missing order backward..." << std::endl;
+
+    // First pass: find the first missing order using l3-to-l2 logic
+    OrderBook book;
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+    FirstMissingOrderAnalysis analysis;
+
+    // First pass: find first missing order
+    while (reader.next(file, rec)) {
+        ++record_count;
+
+        if (!is_system_record(rec)) continue;
+
+        if (has_flag(rec.order_flags, OLFlags::NewSession)) {
+            book.clear();
+            continue;
+        }
+
+        int64_t missing_before = book.errors().missing_order_id;
+        book.apply(rec);
+
+        if (book.errors().missing_order_id > missing_before && analysis.order_id == 0) {
+            analysis.order_id = rec.order_id;
+            analysis.event_type = rec.event;
+            analysis.side = rec.side;
+            analysis.price = rec.price;
+            analysis.amount = rec.amount;
+            analysis.first_occurrence_index = record_count;
+            break;
+        }
+    }
+
+    if (analysis.order_id == 0) {
+        std::cout << "No missing order found in the file." << std::endl;
+        return 0;
+    }
+
+    std::cout << "\nFirst missing order found:" << std::endl;
+    std::cout << "  order_id:       " << analysis.order_id << std::endl;
+    std::cout << "  event_type:     " << ol_msg_type_name(analysis.event_type) << std::endl;
+    std::cout << "  side:           " << side_name(analysis.side) << std::endl;
+    std::cout << "  price:          " << analysis.price << std::endl;
+    std::cout << "  amount:         " << analysis.amount << std::endl;
+    std::cout << "  record_index:   " << analysis.first_occurrence_index << std::endl;
+
+    // Second pass: search backward for prior ADD or Snapshot with same order_id
+    file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    OrdLogReader reader2;
+    OrderLogRecord rec2;
+    record_count = 0;
+
+    while (reader2.next(file, rec2)) {
+        ++record_count;
+
+        if (record_count >= analysis.first_occurrence_index) break;
+
+        if (rec2.order_id == analysis.order_id) {
+            if (rec2.event == OLMsgType::Add) {
+                analysis.prior_add_found = true;
+                analysis.prior_add_index = record_count;
+                analysis.prior_add_type = rec2.event;
+            }
+            if (has_flag(rec2.order_flags, OLFlags::Snapshot)) {
+                analysis.prior_snapshot_found = true;
+                analysis.prior_snapshot_index = record_count;
+            }
+        }
+    }
+
+    std::cout << "\nBackward search results:" << std::endl;
+    std::cout << "  prior_add_found:      " << (analysis.prior_add_found ? "YES" : "NO") << std::endl;
+    if (analysis.prior_add_found) {
+        std::cout << "  prior_add_index:      " << analysis.prior_add_index << std::endl;
+        std::cout << "  prior_add_type:       " << ol_msg_type_name(analysis.prior_add_type) << std::endl;
+    }
+    std::cout << "  prior_snapshot_found:  " << (analysis.prior_snapshot_found ? "YES" : "NO") << std::endl;
+    if (analysis.prior_snapshot_found) {
+        std::cout << "  prior_snapshot_index:  " << analysis.prior_snapshot_index << std::endl;
+    }
+
+    // Interpretation
+    std::cout << "\nInterpretation:" << std::endl;
+    if (!analysis.prior_add_found && !analysis.prior_snapshot_found) {
+        std::cout << "  A. No prior ADD or Snapshot found for order " << analysis.order_id << std::endl;
+        std::cout << "  -> Decoder may miss records or order was never added." << std::endl;
+    } else if (analysis.prior_add_found) {
+        std::cout << "  B. Prior ADD found but order was not loaded into book." << std::endl;
+        std::cout << "  -> Book init or lifecycle bug." << std::endl;
+    } else if (analysis.prior_snapshot_found) {
+        std::cout << "  C. Prior Snapshot found but order was not loaded from snapshot." << std::endl;
+        std::cout << "  -> Snapshot semantics may be wrong." << std::endl;
+    }
+
+    return 0;
+}
+
 static int cmd_convert(const std::string& path, const std::string& out_dir) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
@@ -266,7 +478,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         const std::string& best_level_orders_path,
                         const std::string& missing_order_path,
                         const std::string& auto_trace_crossed_path,
-                        bool fill_delta_mode) {
+                        bool fill_delta_mode,
+                        SnapshotRecordsMode snapshot_records_mode = SnapshotRecordsMode::Ignore) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -466,6 +679,19 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         // M10G: Track Snapshot records
         if (has_flag(rec.order_flags, OLFlags::Snapshot)) {
             ++book.errors_ref().snapshot_records_seen;
+
+            // Experimental: handle snapshot records based on mode
+            if (snapshot_records_mode == SnapshotRecordsMode::Load) {
+                // Treat snapshot records as actual order adds
+                if (rec.event == OLMsgType::Add && is_system_record(rec)) {
+                    ++book.errors_ref().snapshot_orders_loaded;
+                }
+            } else if (snapshot_records_mode == SnapshotRecordsMode::Marker) {
+                // Treat snapshot records as markers only (skip apply)
+                if (max_records > 0 && record_count >= max_records) break;
+                continue;
+            }
+            // Ignore mode: default behavior (apply as normal)
         }
 
         // M10G: Track first valid book record (has bid and ask)
@@ -909,8 +1135,13 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     }
 
     // Final strategy-ready status
+    const char* snapshot_records_mode_name = "ignore";
+    if (snapshot_records_mode == SnapshotRecordsMode::Load) snapshot_records_mode_name = "load";
+    else if (snapshot_records_mode == SnapshotRecordsMode::Marker) snapshot_records_mode_name = "marker";
+
     std::cout << "\n=== L2 Strategy-Ready Status ===" << std::endl;
     std::cout << "snapshot_mode:                    " << mode_name << std::endl;
+    std::cout << "snapshot_records_mode:            " << snapshot_records_mode_name << std::endl;
     std::cout << "fill_semantics:                   " << fill_mode_name << std::endl;
     std::cout << "records_processed:                " << record_count << std::endl;
     std::cout << "transactions_seen:                " << transactions_seen << std::endl;
@@ -927,6 +1158,7 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::cout << "add_records_applied:              " << book.errors().add_records_applied << std::endl;
     std::cout << "add_records_skipped:              " << book.errors().add_records_skipped << std::endl;
     std::cout << "snapshot_records_seen:            " << book.errors().snapshot_records_seen << std::endl;
+    std::cout << "snapshot_orders_loaded:           " << book.errors().snapshot_orders_loaded << std::endl;
     std::cout << "new_session_records_seen:         " << book.errors().new_session_records_seen << std::endl;
     if (!trace_path.empty()) {
         std::cout << "trace_file:                       " << trace_path << std::endl;
@@ -998,6 +1230,36 @@ int main(int argc, char* argv[]) {
         return cmd_convert(file_path, out_dir);
     }
 
+    if (cmd == "dump-records") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest dump-records <OrdLog.qsh> --dump-records-out <file.csv>\n"
+                      << "  [--dump-records-from N] [--dump-records-to N]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_path = "ordlog_records.csv";
+        int64_t from_index = 1;
+        int64_t to_index = 0;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--dump-records-out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--dump-records-from") == 0 && i + 1 < argc) {
+                from_index = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--dump-records-to") == 0 && i + 1 < argc) {
+                to_index = std::atoll(argv[++i]);
+            }
+        }
+        return cmd_dump_records(file_path, out_path, from_index, to_index);
+    }
+
+    if (cmd == "check-missing-order") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest check-missing-order <OrdLog.qsh>" << std::endl;
+            return 1;
+        }
+        return cmd_check_missing_order(argv[2]);
+    }
+
     if (cmd == "l3-to-l2") {
         if (argc < 3) {
             std::cerr << "Usage: qsh-ingest l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N]\n"
@@ -1008,7 +1270,8 @@ int main(int argc, char* argv[]) {
                       << "  [--trace-best-level-orders-out <file.csv>]\n"
                       << "  [--trace-missing-order-out <file.csv>]\n"
                       << "  [--auto-trace-crossed-orders-out <file.csv>]\n"
-                      << "  [--fill-semantics delta|rest]" << std::endl;
+                      << "  [--fill-semantics delta|rest]\n"
+                      << "  [--snapshot-records-mode ignore|load|marker]" << std::endl;
             return 1;
         }
         std::string file_path = argv[2];
@@ -1021,6 +1284,7 @@ int main(int argc, char* argv[]) {
         std::string diag_path;
         std::string trace_path;
         SnapshotMode snap_mode = SnapshotMode::TxEnd;
+        SnapshotRecordsMode snapshot_records_mode = SnapshotRecordsMode::Ignore;
         std::vector<UID> trace_order_ids;
         std::string order_trace_path;
         int ring_buffer_size = 20;
@@ -1084,13 +1348,25 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Unknown fill semantics: " << sem << " (use delta or rest)" << std::endl;
                     return 1;
                 }
+            } else if (std::strcmp(argv[i], "--snapshot-records-mode") == 0 && i + 1 < argc) {
+                std::string mode_str = argv[++i];
+                if (mode_str == "ignore") {
+                    snapshot_records_mode = SnapshotRecordsMode::Ignore;
+                } else if (mode_str == "load") {
+                    snapshot_records_mode = SnapshotRecordsMode::Load;
+                } else if (mode_str == "marker") {
+                    snapshot_records_mode = SnapshotRecordsMode::Marker;
+                } else {
+                    std::cerr << "Unknown snapshot records mode: " << mode_str << " (use ignore, load, or marker)" << std::endl;
+                    return 1;
+                }
             }
         }
         return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path,
                             max_diagnostics, trace_path, max_trace_events, snap_mode,
                             trace_order_ids, order_trace_path, ring_buffer_size,
                             best_level_orders_path, missing_order_path, auto_trace_crossed_path,
-                            fill_delta_mode);
+                            fill_delta_mode, snapshot_records_mode);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

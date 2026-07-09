@@ -218,3 +218,85 @@ Expected scope:
 3. Should the first parser be pure Python, or should QSH be converted to TXT first for prototyping?
 4. What storage should be used after SQLite becomes too small: DuckDB, Parquet, or both?
 ```
+
+## M10H: OrdLog Specification Notes
+
+### Snapshot Records
+
+Current interpretation (M10H analysis):
+
+```text
+Snapshot records (OLFlags::Snapshot) represent the state of an order at a point in time.
+They carry OLFlags::Add flag and can be treated as order additions.
+Uncertain: whether they are "actual active order rows" or "markers only".
+Experimental modes added: ignore (default), load, marker.
+```
+
+### NewSession Records
+
+```text
+NewSession records (OLFlags::NewSession) mark the start of a new trading session.
+Current behavior: clear the order book completely.
+This is consistent with FORTS market data where session boundaries reset order state.
+```
+
+### TxEnd Records
+
+```text
+TxEnd records (OLFlags::TxEnd) mark transaction boundaries.
+Used for snapshot emission in txend mode (default).
+Each transaction may contain multiple order events that should be applied atomically.
+```
+
+### repl_act (NonZeroReplAct)
+
+```text
+NonZeroReplAct flag (OLFlags::NonZeroReplAct) indicates non-zero replacement action.
+Current interpretation: these records are skipped as non-system records.
+Uncertain: exact semantics in FORTS order log.
+May relate to order modifications or replacements.
+```
+
+### system vs non-system
+
+```text
+System records: !NonSystem && !NonZeroReplAct && side != Unknown
+Non-system records: NonSystem flag set, or NonZeroReplAct set, or Unknown side
+Current behavior: non-system records are skipped during L2 reconstruction.
+```
+
+### side flags
+
+```text
+Buy: OLFlags::Buy flag set
+Sell: OLFlags::Sell flag set
+Unknown: neither or both flags set (invalid state)
+```
+
+### Missing Order Investigation (M10G/M10H)
+
+Known counters from real sample:
+
+```text
+first_missing_order_record_index: 1651
+first_crossed_book_record_index: 2210
+missing_order_id starts BEFORE crossed book
+missing_order_id: 319
+```
+
+Possible root causes:
+
+```text
+A. Decoder may miss records (no prior ADD/Snapshot found)
+B. Book init/lifecycle bug (prior ADD/Snapshot exists but not loaded)
+C. Snapshot semantics wrong (experimental mode may prove)
+D. Root cause unknown, but decoded record dump makes next step clear
+```
+
+### Diagnostic Commands Added (M10H)
+
+```text
+dump-records: Export decoded OrdLog records to CSV with full flag analysis
+check-missing-order: Analyze first missing order backward for prior ADD/Snapshot
+--snapshot-records-mode: Experimental flag to test different snapshot handling
+```
