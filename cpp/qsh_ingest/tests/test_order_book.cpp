@@ -43,6 +43,19 @@ static OrderLogRecord make_cancel(UID id, Price price, Volume rest, Side side) {
     return rec;
 }
 
+static OrderLogRecord make_move(UID id, Price new_price, Volume amount_rest, Side side) {
+    OrderLogRecord rec;
+    rec.order_id = id;
+    rec.price = new_price;
+    rec.amount_rest = amount_rest;
+    rec.amount = amount_rest;
+    rec.side = side;
+    rec.event = OLMsgType::Moved;
+    rec.order_flags = OLFlags::Moved | (side == Side::Buy ? OLFlags::Buy : OLFlags::Sell);
+    rec.timestamp = 1003;
+    return rec;
+}
+
 static void test_add_orders() {
     OrderBook book;
     book.apply(make_add(1, 100, 10, Side::Buy));
@@ -160,6 +173,123 @@ static void test_empty_book() {
     std::cout << "  PASS: empty book" << std::endl;
 }
 
+// Test: move bid order to higher price
+static void test_move_bid_up() {
+    OrderBook book;
+    book.apply(make_add(1, 100, 10, Side::Buy));
+    book.apply(make_add(2, 102, 5, Side::Buy));
+    book.apply(make_add(3, 200, 8, Side::Sell));
+
+    assert(book.best_bid() == 102);
+
+    // Move order 1 from 100 to 105
+    book.apply(make_move(1, 105, 10, Side::Buy));
+
+    // Old level should be gone, new level at 105
+    assert(book.bid_depth() == 2);
+    assert(book.best_bid() == 105);
+    assert(book.best_ask() == 200);
+    assert(book.spread() == 95);
+    std::cout << "  PASS: move bid up" << std::endl;
+}
+
+// Test: move ask order to lower price
+static void test_move_ask_down() {
+    OrderBook book;
+    book.apply(make_add(1, 100, 10, Side::Buy));
+    book.apply(make_add(2, 200, 8, Side::Sell));
+    book.apply(make_add(3, 202, 3, Side::Sell));
+
+    assert(book.best_ask() == 200);
+
+    // Move order 2 from 200 to 195
+    book.apply(make_move(2, 195, 8, Side::Sell));
+
+    // Old level should be gone, new level at 195
+    assert(book.ask_depth() == 2);
+    assert(book.best_bid() == 100);
+    assert(book.best_ask() == 195);
+    assert(book.spread() == 95);
+    std::cout << "  PASS: move ask down" << std::endl;
+}
+
+// Test: move order across spread creates crossed book (bad input)
+static void test_move_creates_crossed() {
+    OrderBook book;
+    book.apply(make_add(1, 100, 10, Side::Buy));
+    book.apply(make_add(2, 200, 8, Side::Sell));
+
+    assert(!book.check_crossed());
+
+    // Move bid order to 210 (above ask) - simulates bad input
+    book.apply(make_move(1, 210, 10, Side::Buy));
+
+    // Book should now be crossed
+    assert(book.best_bid() == 210);
+    assert(book.best_ask() == 200);
+    assert(book.check_crossed());
+    std::cout << "  PASS: move creates crossed (bad input)" << std::endl;
+}
+
+// Test: move order with partial amount_rest
+static void test_move_partial_rest() {
+    OrderBook book;
+    book.apply(make_add(1, 100, 10, Side::Buy));
+    book.apply(make_add(2, 200, 8, Side::Sell));
+
+    // Move order 1 from 100 to 105 with only 6 remaining
+    book.apply(make_move(1, 105, 6, Side::Buy));
+
+    assert(book.bid_depth() == 1);
+    assert(book.best_bid() == 105);
+    auto snap = book.snapshot(1);
+    assert(snap[0].bid_qty == 6);
+    std::cout << "  PASS: move partial rest" << std::endl;
+}
+
+// Test: normal bid < ask state
+static void test_normal_bid_below_ask() {
+    OrderBook book;
+    book.apply(make_add(1, 100, 10, Side::Buy));
+    book.apply(make_add(2, 110, 5, Side::Buy));
+    book.apply(make_add(3, 200, 8, Side::Sell));
+    book.apply(make_add(4, 210, 3, Side::Sell));
+
+    assert(book.best_bid() == 110);
+    assert(book.best_ask() == 200);
+    assert(book.best_bid() < book.best_ask());
+    assert(!book.check_crossed());
+    assert(book.spread() == 90);
+    std::cout << "  PASS: normal bid below ask" << std::endl;
+}
+
+// Test: spread counter consistency
+static void test_spread_counter_consistency() {
+    OrderBook book;
+    book.apply(make_add(1, 100, 10, Side::Buy));
+    book.apply(make_add(2, 200, 8, Side::Sell));
+
+    // Normal spread > 0
+    assert(book.spread() > 0);
+    assert(!book.check_crossed());
+
+    // Touching book: spread == 0, crossed
+    book.clear();
+    book.apply(make_add(3, 150, 10, Side::Buy));
+    book.apply(make_add(4, 150, 8, Side::Sell));
+    assert(book.spread() == 0);
+    assert(book.check_crossed());
+
+    // Crossed book: spread < 0, crossed
+    book.clear();
+    book.apply(make_add(5, 200, 10, Side::Buy));
+    book.apply(make_add(6, 100, 8, Side::Sell));
+    assert(book.spread() == -100);
+    assert(book.check_crossed());
+
+    std::cout << "  PASS: spread counter consistency" << std::endl;
+}
+
 int main() {
     std::cout << "=== test_order_book ===" << std::endl;
     test_add_orders();
@@ -171,6 +301,12 @@ int main() {
     test_cancel_partial();
     test_clear();
     test_empty_book();
+    test_move_bid_up();
+    test_move_ask_down();
+    test_move_creates_crossed();
+    test_move_partial_rest();
+    test_normal_bid_below_ask();
+    test_spread_counter_consistency();
     std::cout << "\nAll order book tests passed." << std::endl;
     return 0;
 }

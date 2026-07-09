@@ -1,0 +1,46 @@
+{
+  "source_file_name": "RTS-3.21.2021-01-05.OrdLog.qsh",
+  "source_file_sha256": "e50d49745e4c058c560f82147978f7db59c82daf3d9452e506b417cecc29ea7f",
+  "stream_type": "OrderLog",
+  "instrument": "Plaza2:RTS-3.21::1502592:10",
+  "recording_time": "1609829990000ms (ticks=637454267900000000)",
+  "records_total": 5362594,
+  "records_valid": 5362594,
+  "records_rejected": 0,
+  "timestamp_min": 63745383177358,
+  "timestamp_max": 63745487628891,
+  "add_count": 2568449,
+  "fill_count": 587076,
+  "cancel_count": 1700849,
+  "remove_count": 0,
+  "new_session_count": 2,
+  "tx_end_count": 4268048,
+  "tx_count": 4268048,
+  "tx_max_size": 357,
+  "buy_count": 2853199,
+  "sell_count": 2509395,
+  "unknown_side_count": 0,
+  "non_system_count": 8,
+  "non_zero_repl_act_count": 0,
+  "snapshot_count": 1965,
+  "moved_count": 497113,
+  "cross_trade_count": 63,
+  "book_reconstruction_errors": {
+    "missing_order_id": 0,
+    "level_not_found": 0,
+    "amount_mismatch": 0,
+    "negative_level_volume": 0,
+    "crossed_book": 0,
+    "invalid_side": 0
+  },
+  "l2_export_diagnostics": {
+    "crossed_book_snapshots": 0,
+    "non_positive_spread_snapshots": 0,
+    "empty_bid_snapshots": 0,
+    "empty_ask_snapshots": 0
+  },
+  "warnings": [
+  ],
+  "errors": [
+  ]
+}

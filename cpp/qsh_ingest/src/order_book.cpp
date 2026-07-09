@@ -9,6 +9,8 @@ bool OrderBook::apply(const OrderLogRecord& rec) {
         add_order(rec);
     } else if (rec.event == OLMsgType::Fill) {
         fill_order(rec);
+    } else if (rec.event == OLMsgType::Moved) {
+        move_order(rec);
     } else if (rec.event == OLMsgType::Cancel) {
         cancel_order(rec);
     } else if (rec.event == OLMsgType::Remove) {
@@ -210,6 +212,61 @@ void OrderBook::remove_order(const OrderLogRecord& rec) {
     }
 
     orders_.erase(it);
+}
+
+void OrderBook::move_order(const OrderLogRecord& rec) {
+    auto it = orders_.find(rec.order_id);
+    if (it == orders_.end()) {
+        ++errors_.missing_order_id;
+        return;
+    }
+
+    auto& info = it->second;
+    Price old_price = info.price;
+    Volume old_amount = info.amount;
+
+    // Remove full amount from old price level
+    if (info.side == Side::Buy) {
+        auto lvl_it = bid_levels_.find(old_price);
+        if (lvl_it != bid_levels_.end()) {
+            lvl_it->second.first -= old_amount;
+            --lvl_it->second.second;
+            if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
+                bid_levels_.erase(lvl_it);
+            }
+        } else {
+            ++errors_.level_not_found;
+        }
+    } else {
+        auto lvl_it = ask_levels_.find(old_price);
+        if (lvl_it != ask_levels_.end()) {
+            lvl_it->second.first -= old_amount;
+            --lvl_it->second.second;
+            if (lvl_it->second.second <= 0 || lvl_it->second.first <= 0) {
+                ask_levels_.erase(lvl_it);
+            }
+        } else {
+            ++errors_.level_not_found;
+        }
+    }
+
+    // Add to new price level with amount_rest
+    Volume new_amount = rec.amount_rest > 0 ? rec.amount_rest : old_amount;
+    Price new_price = rec.price;
+
+    if (info.side == Side::Buy) {
+        auto& lvl = bid_levels_[new_price];
+        lvl.first += new_amount;
+        ++lvl.second;
+    } else {
+        auto& lvl = ask_levels_[new_price];
+        lvl.first += new_amount;
+        ++lvl.second;
+    }
+
+    // Update order tracking
+    info.price = new_price;
+    info.amount = new_amount;
 }
 
 std::vector<L2SnapshotRow> OrderBook::snapshot(int depth) const {

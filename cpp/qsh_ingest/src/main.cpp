@@ -9,6 +9,7 @@
 #include "quality/data_quality.hpp"
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -25,6 +26,7 @@ static void print_help() {
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
     std::cout << "                        [--out <file.csv>] [--diagnostics-out <file.csv>]\n";
     std::cout << "                        [--max-diagnostics N]\n";
+    std::cout << "                        [--trace-crossed-out <file.csv>] [--max-trace-events N]\n";
     std::cout << "                          L3->L2 reconstruction\n";
     std::cout << "\nOptions:\n";
     std::cout << "  --depth N              L2 depth (default: 20)\n";
@@ -33,6 +35,8 @@ static void print_help() {
     std::cout << "  --out <path>           Output file or directory\n";
     std::cout << "  --diagnostics-out <f>  Write L2 diagnostics CSV\n";
     std::cout << "  --max-diagnostics N    Max diagnostics entries (default: 100)\n";
+    std::cout << "  --trace-crossed-out <f> Write crossed-book trace CSV\n";
+    std::cout << "  --max-trace-events N   Max trace events (default: 100)\n";
     std::cout << "\nSafety:\n";
     std::cout << "  No broker connection. No live trading. Historical files only.\n";
 }
@@ -219,7 +223,8 @@ static int cmd_convert(const std::string& path, const std::string& out_dir) {
 }
 
 static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records, int64_t max_snapshots,
-                        const std::string& out_path, const std::string& diag_path, int64_t max_diagnostics) {
+                        const std::string& out_path, const std::string& diag_path, int64_t max_diagnostics,
+                        const std::string& trace_path, int64_t max_trace_events) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -241,15 +246,28 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     OrdLogReader reader;
     std::vector<L2SnapshotEntry> snapshots;
     std::vector<L2DiagnosticEntry> diagnostics;
+    std::vector<std::string> trace_lines;
     int64_t record_count = 0;
     int64_t system_count = 0;
     int64_t snapshot_count = 0;
+    int64_t moved_count = 0;
 
     // L2 diagnostics counters
     int64_t l2_crossed = 0;
     int64_t l2_non_positive_spread = 0;
     int64_t l2_empty_bid = 0;
     int64_t l2_empty_ask = 0;
+
+    // Last event tracking for trace
+    OLMsgType last_event_type = OLMsgType::Unknown;
+    UID last_order_id = 0;
+    Side last_side = Side::Unknown;
+    Price last_price = 0;
+    Volume last_qty = 0;
+    uint16_t last_flags = 0;
+    Volume last_repl_act = 0;
+    int64_t last_tx_index = 0;
+    int64_t tx_counter = 0;
 
     OrderLogRecord rec;
     while (reader.next(file, rec)) {
@@ -261,6 +279,15 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         }
         ++system_count;
 
+        // Track last event for trace
+        last_event_type = rec.event;
+        last_order_id = rec.order_id;
+        last_side = rec.side;
+        last_price = rec.price;
+        last_qty = rec.amount;
+        last_flags = rec.order_flags;
+        last_repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+
         // NewSession clears the book
         if (has_flag(rec.order_flags, OLFlags::NewSession)) {
             book.clear();
@@ -268,7 +295,17 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             continue;
         }
 
+        if (rec.event == OLMsgType::Moved) {
+            ++moved_count;
+        }
+
         book.apply(rec);
+
+        // Track TxEnd
+        if (is_tx_end(rec)) {
+            ++tx_counter;
+            last_tx_index = tx_counter;
+        }
 
         // Take snapshot on TxEnd
         if (is_tx_end(rec) && book.bid_depth() > 0 && book.ask_depth() > 0) {
@@ -284,7 +321,6 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             Price bb = book.best_bid();
             Price ba = book.best_ask();
             Price sp = book.spread();
-            bool has_diag = false;
 
             if (bb <= 0) {
                 ++l2_empty_bid;
@@ -301,7 +337,6 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                     de.records_processed = record_count;
                     diagnostics.push_back(de);
                 }
-                has_diag = true;
             }
             if (ba <= 0) {
                 ++l2_empty_ask;
@@ -318,10 +353,10 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                     de.records_processed = record_count;
                     diagnostics.push_back(de);
                 }
-                has_diag = true;
             }
             if (bb > 0 && ba > 0 && bb >= ba) {
                 ++l2_crossed;
+                ++l2_non_positive_spread;  // crossed implies non-positive spread
                 if (max_diagnostics <= 0 || static_cast<int64_t>(diagnostics.size()) < max_diagnostics) {
                     L2DiagnosticEntry de;
                     de.timestamp = rec.timestamp;
@@ -335,16 +370,24 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                     de.records_processed = record_count;
                     diagnostics.push_back(de);
                 }
-                has_diag = true;
+
+                // Write trace for crossed book
+                if (!trace_path.empty() && (max_trace_events <= 0 || static_cast<int64_t>(trace_lines.size()) < max_trace_events)) {
+                    std::ostringstream oss;
+                    oss << rec.timestamp << ","
+                        << snapshot_count << ","
+                        << record_count << ","
+                        << "CROSSED_BOOK,"
+                        << bb << "," << ba << "," << sp << ","
+                        << ol_msg_type_name(last_event_type) << ","
+                        << last_order_id << ","
+                        << side_name(last_side) << ","
+                        << last_price << "," << last_qty << ","
+                        << last_flags << "," << last_repl_act << ","
+                        << last_tx_index;
+                    trace_lines.push_back(oss.str());
+                }
             }
-            if (bb > 0 && ba > 0 && sp <= 0 && bb < ba) {
-                // non-positive spread but not crossed (touching: bb == ba already caught above)
-                // This case covers sp == 0 when bb == ba (already caught), so here sp < 0
-                // Actually if bb < ba and sp <= 0, that means sp == 0 only if bb == ba.
-                // So this branch is only for sp < 0 which can't happen if bb < ba.
-                // Keep as safety net.
-            }
-            (void)has_diag;
 
             if (max_snapshots > 0 && snapshot_count >= max_snapshots) break;
         }
@@ -352,10 +395,11 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         if (max_records > 0 && record_count >= max_records) break;
     }
 
-    std::cout << "Records processed: " << record_count << std::endl;
+    std::cout << "\nRecords processed: " << record_count << std::endl;
     std::cout << "System records:    " << system_count << std::endl;
     std::cout << "L2 snapshots:      " << snapshot_count << std::endl;
-    std::cout << "Book errors:" << std::endl;
+    std::cout << "Moved events:      " << moved_count << std::endl;
+    std::cout << "\nBook errors:" << std::endl;
     auto& errs = book.errors();
     std::cout << "  missing_order_id:      " << errs.missing_order_id << std::endl;
     std::cout << "  level_not_found:       " << errs.level_not_found << std::endl;
@@ -371,7 +415,9 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::cout << "  empty_bid_snapshots:            " << l2_empty_bid << std::endl;
     std::cout << "  empty_ask_snapshots:            " << l2_empty_ask << std::endl;
 
-    if (l2_crossed > 0 || l2_non_positive_spread > 0 || l2_empty_bid > 0 || l2_empty_ask > 0) {
+    bool has_invalid = (l2_crossed > 0 || l2_non_positive_spread > 0 || l2_empty_bid > 0 || l2_empty_ask > 0);
+
+    if (has_invalid) {
         std::cout << "\nWARNING: exported L2 contains invalid best bid / best ask state." << std::endl;
         std::cout << "This L2 output is not strategy-ready until reconstruction diagnostics are clean." << std::endl;
     }
@@ -384,6 +430,30 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         size_t diag_written = write_l2_diagnostics_csv(diag_path, diagnostics);
         std::cout << "Wrote " << diag_written << " diagnostics to " << diag_path << std::endl;
     }
+
+    // Write trace CSV if requested
+    if (!trace_path.empty()) {
+        std::ofstream trace_out(trace_path);
+        if (trace_out.is_open()) {
+            trace_out << "ts,snapshot_index,records_processed,reason,best_bid,best_ask,spread,"
+                      << "last_event_type,last_order_id,last_side,last_price,last_qty,"
+                      << "last_flags,last_repl_act,last_tx_index\n";
+            for (const auto& line : trace_lines) {
+                trace_out << line << "\n";
+            }
+            trace_out.close();
+            std::cout << "Wrote " << trace_lines.size() << " trace events to " << trace_path << std::endl;
+        }
+    }
+
+    // Final strategy-ready status
+    std::cout << "\n=== L2 Strategy-Ready Status ===" << std::endl;
+    std::cout << "l2_crossed_book_snapshots:        " << l2_crossed << std::endl;
+    std::cout << "l2_non_positive_spread_snapshots: " << l2_non_positive_spread << std::endl;
+    if (!trace_path.empty()) {
+        std::cout << "trace_file:                       " << trace_path << std::endl;
+    }
+    std::cout << "L2 strategy-ready:                " << (has_invalid ? "NO" : "YES") << std::endl;
 
     return 0;
 }
@@ -437,7 +507,7 @@ int main(int argc, char* argv[]) {
         if (argc < 3) {
             std::cerr << "Usage: qsh-ingest l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N]\n"
                       << "  [--max-snapshots N] [--out <file.csv>] [--diagnostics-out <file.csv>]\n"
-                      << "  [--max-diagnostics N]" << std::endl;
+                      << "  [--max-diagnostics N] [--trace-crossed-out <file.csv>] [--max-trace-events N]" << std::endl;
             return 1;
         }
         std::string file_path = argv[2];
@@ -445,8 +515,10 @@ int main(int argc, char* argv[]) {
         int64_t max_records = 0;
         int64_t max_snapshots = 0;
         int64_t max_diagnostics = 100;
+        int64_t max_trace_events = 100;
         std::string out_path = "l2_snapshots.csv";
         std::string diag_path;
+        std::string trace_path;
         for (int i = 3; i < argc - 1; ++i) {
             if (std::strcmp(argv[i], "--depth") == 0 && i + 1 < argc) {
                 depth = std::atoi(argv[i + 1]);
@@ -466,8 +538,14 @@ int main(int argc, char* argv[]) {
             if (std::strcmp(argv[i], "--max-diagnostics") == 0 && i + 1 < argc) {
                 max_diagnostics = std::atoll(argv[i + 1]);
             }
+            if (std::strcmp(argv[i], "--trace-crossed-out") == 0 && i + 1 < argc) {
+                trace_path = argv[i + 1];
+            }
+            if (std::strcmp(argv[i], "--max-trace-events") == 0 && i + 1 < argc) {
+                max_trace_events = std::atoll(argv[i + 1]);
+            }
         }
-        return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path, max_diagnostics);
+        return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path, max_diagnostics, trace_path, max_trace_events);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

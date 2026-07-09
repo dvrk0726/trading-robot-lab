@@ -26,6 +26,7 @@ struct DataQuality {
     int64_t fill_count = 0;
     int64_t cancel_count = 0;
     int64_t remove_count = 0;
+    int64_t moved_count = 0;
     int64_t new_session_count = 0;
     int64_t tx_end_count = 0;
     int64_t buy_count = 0;
@@ -34,7 +35,6 @@ struct DataQuality {
     int64_t non_system_count = 0;
     int64_t non_zero_repl_act_count = 0;
     int64_t snapshot_count = 0;
-    int64_t moved_count = 0;
     int64_t cross_trade_count = 0;
 
     // TxEnd grouping

@@ -91,6 +91,7 @@ private:
     void fill_order(const OrderLogRecord& rec);
     void cancel_order(const OrderLogRecord& rec);
     void remove_order(const OrderLogRecord& rec);
+    void move_order(const OrderLogRecord& rec);
     bool check_crossed() const;
 };
 

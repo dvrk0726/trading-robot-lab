@@ -82,6 +82,11 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --max-records 10000 --max-snapshots 100 --out t
 # Reconstruct with diagnostics (safe sample)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
   --out l2_sample.csv --diagnostics-out l2_diagnostics.csv --max-diagnostics 100
+
+# Reconstruct with crossed-book trace (root cause investigation)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --out l2_sample.csv --diagnostics-out l2_diagnostics.csv --max-diagnostics 100 \
+  --trace-crossed-out l2_trace.csv --max-trace-events 100
 ```
 
 **L2 output is not strategy-ready until diagnostics are clean.**

@@ -288,3 +288,149 @@ This L2 output is not strategy-ready until reconstruction diagnostics are clean.
 - No Python-side visualization of diagnostics CSV yet
 
 **L2 output is not strategy-ready until diagnostics are clean.**
+
+---
+
+## M10B Crossed Book Root Cause Investigation
+
+Date: 2026-07-08
+Task: M10B_CROSSED_BOOK_ROOT_CAUSE.md
+
+### Problem
+
+921 crossed book snapshots detected in L2 export. Example:
+
+```
+best_bid = 14100
+best_ask = 14062
+spread = -38
+reason = CROSSED_BOOK
+```
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `include/qsh/qsh_types.hpp` | Added `Moved` to `OLMsgType` enum and `ol_msg_type_name()` |
+| `include/orderbook/order_book.hpp` | Added `move_order()` method declaration |
+| `src/order_book.cpp` | Implemented `move_order()`: removes from old price, adds to new price, updates tracking |
+| `src/ordlog_reader.cpp` | Fixed `classify_ol_event()`: Moved now returns `OLMsgType::Moved` instead of `Cancel` |
+| `src/main.cpp` | Fixed `l2_non_positive_spread` counter; added `--trace-crossed-out` and `--max-trace-events` CLI args; added strategy-ready status output |
+| `cpp/qsh_ingest/README.md` | Added trace command example |
+
+#### Updated test file
+
+| File | Change |
+|---|---|
+| `tests/test_order_book.cpp` | Added 6 new tests: move bid up, move ask down, move creates crossed, move partial rest, normal bid below ask, spread counter consistency |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 5
+```
+
+New tests in `test_order_book`:
+- `test_move_bid_up` — move order to higher price, verify best_bid updates
+- `test_move_ask_down` — move order to lower price, verify best_ask updates
+- `test_move_creates_crossed` — move bid above ask creates crossed state
+- `test_move_partial_rest` — move with reduced amount_rest
+- `test_normal_bid_below_ask` — verify normal book state
+- `test_spread_counter_consistency` — verify spread/crossed relationship
+
+### Sample Command
+
+```powershell
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh --depth 5 --max-records 100000 --max-snapshots 10000 --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_depth5_sample.csv --diagnostics-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_depth5_diagnostics.csv --max-diagnostics 100 --trace-crossed-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_depth5_trace.csv --max-trace-events 100
+```
+
+### Counter Result (first 100k records)
+
+```
+Records processed: 18030
+System records:    18030
+L2 snapshots:      10000
+Moved events:      0
+
+Book errors:
+  missing_order_id:      319
+  level_not_found:       0
+  amount_mismatch:       0
+  negative_level_volume: 0
+  crossed_book:          0
+  invalid_side:          0
+
+L2 export diagnostics:
+  crossed_book_snapshots:         921
+  non_positive_spread_snapshots:  921
+  empty_bid_snapshots:            0
+  empty_ask_snapshots:            0
+
+L2 strategy-ready: NO
+```
+
+### Trace CSV Result
+
+Trace CSV generated with columns:
+```
+ts,snapshot_index,records_processed,reason,best_bid,best_ask,spread,
+last_event_type,last_order_id,last_side,last_price,last_qty,
+last_flags,last_repl_act,last_tx_index
+```
+
+Sample trace entries show crossed book occurs after FILL and REMOVE events at prices around 14062-14110.
+
+### Hypotheses Tested
+
+| Hypothesis | Result |
+|---|---|
+| **Moved order handling broken** | CONFIRMED FIXED. Moved was classified as Cancel, causing old price level to not be fully removed and new price level to not be added. Now properly handled with `move_order()`. |
+| **Side mapping reversed** | NOT THE ISSUE. Buy/Sell flags correctly decoded. |
+| **Price scaling wrong** | NOT THE ISSUE. Prices are int64_t, correct for MOEX. |
+| **Non-system records filtered** | PARTIALLY. All 18030 records in first segment are system records (NonSystem=0). But trace shows REMOVE events with flags=1296 (TxEnd\|NonSystem\|Buy), suggesting some records later may have NonSystem flag. |
+| **Order ID decoding wrong** | UNLIKELY. Order IDs increment by 1 consistently, matching expected QSH delta encoding. |
+| **NewSession handling wrong** | NOT THE ISSUE. NewSession clears book correctly. |
+
+### What Was Fixed
+
+1. **Moved order handling** — `classify_ol_event()` now returns `OLMsgType::Moved` for Moved flag. New `move_order()` function properly:
+   - Removes full order volume from old price level
+   - Adds amount_rest to new price level
+   - Updates order tracking with new price and amount
+
+2. **Spread diagnostics consistency** — `l2_non_positive_spread` counter now incremented when `bb >= ba` (crossed implies non-positive spread).
+
+3. **Crossed-book trace mode** — New `--trace-crossed-out` and `--max-trace-events` CLI args generate CSV with last event details before each crossed snapshot.
+
+4. **Strategy-ready status** — Final output shows `L2 strategy-ready: YES/NO` based on diagnostics.
+
+### What Remains Unresolved
+
+1. **921 crossed book snapshots persist** — The crossed book occurs in the first 18030 records where there are **0 Moved events**. The root cause is NOT Moved handling for this segment.
+
+2. **319 missing_order_id errors** — These occur when Fill/Cancel/Remove events reference orders not in the tracking map. Possible causes:
+   - Orders added in records that were consumed before the current event
+   - Order ID delta decoding issue for specific record patterns
+   - Orders added by events that don't set the Add flag correctly
+
+3. **Crossed book pattern** — Trace shows the crossed book persists across many snapshots at the same prices (14100/14062), suggesting a stale order on the bid side that's never removed. The REMOVE events in the trace reference orders at 14092, not 14100, so the 14100 bid order may never be properly cancelled.
+
+### Next Recommended Task
+
+**M10C — Deep investigation of missing_order_id and stale orders**
+
+Recommended scope:
+1. Add debug logging to `add_order()` and `remove_order()` to track order_id lifecycle
+2. Investigate whether `amount_rest == 0` Remove events are correctly handled
+3. Check if Cancel events with `amount_rest > 0` (partial cancel) leave stale volume
+4. Consider adding order_id to trace output for direct correlation
+5. Investigate the 319 missing_order_id events to determine if they represent real book corruption or benign re-processing
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**

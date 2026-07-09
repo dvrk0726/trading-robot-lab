@@ -120,9 +120,11 @@ OLMsgType classify_ol_event(const OrderLogRecord& rec) {
     if (has_flag(rec.order_flags, OLFlags::Fill)) {
         return OLMsgType::Fill;
     }
+    if (has_flag(rec.order_flags, OLFlags::Moved)) {
+        return OLMsgType::Moved;
+    }
     if (has_flag(rec.order_flags, OLFlags::Canceled) ||
-        has_flag(rec.order_flags, OLFlags::CanceledGroup) ||
-        has_flag(rec.order_flags, OLFlags::Moved)) {
+        has_flag(rec.order_flags, OLFlags::CanceledGroup)) {
         return OLMsgType::Cancel;
     }
     if (has_flag(rec.order_flags, OLFlags::CrossTrade) || rec.amount_rest == 0) {

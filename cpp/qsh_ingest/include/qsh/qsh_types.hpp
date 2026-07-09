@@ -117,6 +117,7 @@ enum class OLMsgType : uint8_t {
     Fill,
     Cancel,
     Remove,
+    Moved,
     Unknown
 };
 
@@ -126,6 +127,7 @@ inline const char* ol_msg_type_name(OLMsgType t) {
         case OLMsgType::Fill:    return "FILL";
         case OLMsgType::Cancel:  return "CANCEL";
         case OLMsgType::Remove:  return "REMOVE";
+        case OLMsgType::Moved:   return "MOVED";
         default:                 return "UNKNOWN";
     }
 }
