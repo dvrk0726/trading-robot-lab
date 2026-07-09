@@ -212,6 +212,15 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --non-system-mode ignore-book --out l2_snapshot
 # Combine counter and non-system ignore-book modes (M10V)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --counter-mode ignore-book --non-system-mode ignore-book --out l2_snapshots.csv
 
+# Experimental: quote mode (M10X)
+# include: default, Quote events mutate book normally
+# ignore-book: Quote events decoded/counted but do not mutate visible book
+# NOTE: ignore-book is experimental. Default should not be changed without owner approval.
+qsh-ingest l3-to-l2 <OrdLog.qsh> --quote-mode ignore-book --out l2_snapshots.csv
+
+# Combine counter, non-system, and quote ignore-book modes (M10X)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --counter-mode ignore-book --non-system-mode ignore-book --quote-mode ignore-book --out l2_snapshots.csv
+
 # NonSystem flag audit (M10V)
 # Counts all NonSystem-flagged (0x200) events and measures their book impact.
 # Reports: non_system_records, non_system_add/fill/cancel/remove/moved,
@@ -219,6 +228,14 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --counter-mode ignore-book --non-system-mode ig
 # first_non_system_record_index, first_non_system_add_record_index,
 # non_system_records_that_create_crossed_book, etc.
 qsh-ingest non-system-flag-audit <OrdLog.qsh> --out non_system_flag_audit.csv
+
+# Quote flag audit (M10X)
+# Counts all Quote-flagged (0x0080) events and measures their book impact.
+# Reports: quote_records, quote_add/fill/cancel/remove/moved,
+# quote_buy/sell, quote_counter/non_system/cross_trade/snapshot/txend,
+# first_quote_record_index, first_quote_add_record_index,
+# quote_records_that_create_crossed_book, etc.
+qsh-ingest quote-flag-audit <OrdLog.qsh> --out quote_flag_audit.csv
 
 # Remaining crossed audit (M10T)
 # Classifies remaining crossed snapshots after counter-ignore-book.
@@ -352,6 +369,21 @@ The summary JSON includes a `strategy_reject_reasons` object:
 
 Default should not be changed without owner approval.
 
+### Quote mode (M10X)
+
+`--quote-mode` controls whether Quote-flagged (0x0080) events mutate the visible order book.
+
+- `include` (default): Quote events mutate the book normally
+- `ignore-book`: Quote events are decoded and counted but do not mutate the visible book
+
+**How it differs from `--counter-mode` and `--non-system-mode`**: Counter mode handles Counter flag (0x100) events. NonSystem mode handles NonSystem flag (0x200) events. Quote mode handles Quote flag (0x0080) events. They are independent — a record can have multiple flags, and the precedence order is Counter > NonSystem > Quote (checked in that order).
+
+**Flag label correction**: `0x94` = `Add + Buy + Quote` (NOT `Add + Buy + TxEnd`). The official QSH v4 specification maps bit 7 (0x0080) to Quote and bit 10 (0x0400) to TxEnd/EndOfTransaction. Previous reports that labeled `0x94` as containing TxEnd were incorrect.
+
+**M10X purpose**: Investigate whether Quote-flagged records should mutate the normal visible L2 order book. Quote records may represent synthetic top-of-book quote updates rather than real L3 order mutations.
+
+Default should not be changed without owner approval.
+
 ## Summary JSON Output
 
 The `--summary-out <file.json>` option writes a machine-readable summary with these fields:
@@ -371,6 +403,23 @@ The `--summary-out <file.json>` option writes a machine-readable summary with th
 - `counter_cancel_ignored_for_book`: count of Counter CANCEL records skipped
 - `counter_remove_ignored_for_book`: count of Counter REMOVE records skipped
 - `counter_move_ignored_for_book`: count of Counter MOVE records skipped
+- `quote_mode`: include or ignore-book
+- `quote_records_seen`: count of Quote-flagged records
+- `quote_records_ignored_for_book`: count of Quote records skipped for book mutation
+- `quote_add`: count of Quote ADD records
+- `quote_fill`: count of Quote FILL records
+- `quote_cancel`: count of Quote CANCEL records
+- `quote_remove`: count of Quote REMOVE records
+- `quote_moved`: count of Quote MOVED records
+- `quote_counter`: count of Quote records also flagged Counter
+- `quote_non_system`: count of Quote records also flagged NonSystem
+- `quote_cross_trade`: count of Quote records also flagged CrossTrade
+- `quote_snapshot`: count of Quote records also flagged Snapshot
+- `quote_txend`: count of Quote records also flagged TxEnd
+- `quote_records_that_create_crossed_book`: count of Quote records that cause crossed book
+- `first_quote_record_index`: record index of first Quote event
+- `first_quote_add_record_index`: record index of first Quote ADD event
+- `first_quote_crossing_record_index`: record index of first Quote event that creates crossed book
 - `orphan_remove_ignored`: count of ignored orphan removes
 - `records_processed`: total records processed
 - `transactions_seen`: total transactions seen

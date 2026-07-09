@@ -72,6 +72,20 @@ inline const char* non_system_mode_name(NonSystemMode m) {
     }
 }
 
+// M10X: Quote event handling mode
+enum class QuoteMode {
+    Include,     // Default: Quote events mutate book normally
+    IgnoreBook   // Quote events decoded/counted but do not mutate visible book
+};
+
+inline const char* quote_mode_name(QuoteMode m) {
+    switch (m) {
+        case QuoteMode::Include:    return "include";
+        case QuoteMode::IgnoreBook: return "ignore-book";
+        default:                    return "unknown";
+    }
+}
+
 inline const char* orphan_fill_mode_name(OrphanFillMode m) {
     switch (m) {
         case OrphanFillMode::Strict:          return "strict";
@@ -201,6 +215,36 @@ struct BookErrors {
     int64_t non_system_fill_ignored_for_book = 0;
     int64_t non_system_cancel_ignored_for_book = 0;
     int64_t non_system_remove_ignored_for_book = 0;
+
+    // M10X: Quote flag tracking
+    int64_t quote_records_seen = 0;
+    int64_t quote_add = 0;
+    int64_t quote_fill = 0;
+    int64_t quote_cancel = 0;
+    int64_t quote_remove = 0;
+    int64_t quote_moved = 0;
+    int64_t quote_buy = 0;
+    int64_t quote_sell = 0;
+    int64_t quote_counter = 0;
+    int64_t quote_non_system = 0;
+    int64_t quote_cross_trade = 0;
+    int64_t quote_snapshot = 0;
+    int64_t quote_new_session = 0;
+    int64_t quote_txend = 0;
+    int64_t quote_fill_or_kill = 0;
+    int64_t quote_canceled = 0;
+    int64_t quote_canceled_group = 0;
+    int64_t quote_records_that_create_new_best_bid = 0;
+    int64_t quote_records_that_create_new_best_ask = 0;
+    int64_t quote_records_that_create_crossed_book = 0;
+    int64_t quote_records_inside_crossed_state = 0;
+    int64_t quote_records_that_uncross_book = 0;
+    int64_t quote_records_ignored_for_book = 0;
+    int64_t quote_add_ignored_for_book = 0;
+    int64_t quote_fill_ignored_for_book = 0;
+    int64_t quote_cancel_ignored_for_book = 0;
+    int64_t quote_remove_ignored_for_book = 0;
+    int64_t quote_moved_ignored_for_book = 0;
 };
 
 // L3 order book reconstruction from OrdLog events.
@@ -286,6 +330,9 @@ public:
     // M10V: Set non-system event handling mode.
     void set_non_system_mode(NonSystemMode mode) { non_system_mode_ = mode; }
 
+    // M10X: Set quote event handling mode.
+    void set_quote_mode(QuoteMode mode) { quote_mode_ = mode; }
+
     // M10G: Record index of first missing_order_id event (for timing diagnostics)
     int64_t first_missing_order_record_index() const { return first_missing_order_record_index_; }
     void set_first_missing_order_record_index(int64_t idx) {
@@ -336,6 +383,22 @@ public:
         if (first_non_system_crossing_record_index_ == 0) first_non_system_crossing_record_index_ = idx;
     }
 
+    // M10X: Quote record index accessors
+    int64_t first_quote_record_index() const { return first_quote_record_index_; }
+    void set_first_quote_record_index(int64_t idx) {
+        if (first_quote_record_index_ == 0) first_quote_record_index_ = idx;
+    }
+
+    int64_t first_quote_add_record_index() const { return first_quote_add_record_index_; }
+    void set_first_quote_add_record_index(int64_t idx) {
+        if (first_quote_add_record_index_ == 0) first_quote_add_record_index_ = idx;
+    }
+
+    int64_t first_quote_crossing_record_index() const { return first_quote_crossing_record_index_; }
+    void set_first_quote_crossing_record_index(int64_t idx) {
+        if (first_quote_crossing_record_index_ == 0) first_quote_crossing_record_index_ = idx;
+    }
+
     // M10O: Session/snapshot state accessors
     int64_t first_new_session_record_index() const { return first_new_session_record_index_; }
     void set_first_new_session_record_index(int64_t idx) {
@@ -377,6 +440,7 @@ private:
     OrphanCancelMode orphan_cancel_mode_ = OrphanCancelMode::Strict;  // M10N: orphan cancel/remove handling mode
     CounterMode counter_mode_ = CounterMode::Include;  // M10S: counter event handling mode
     NonSystemMode non_system_mode_ = NonSystemMode::Include;  // M10V: non-system event handling mode
+    QuoteMode quote_mode_ = QuoteMode::Include;  // M10X: quote event handling mode
 
     void add_order(const OrderLogRecord& rec);
     void fill_order(const OrderLogRecord& rec);
@@ -398,6 +462,11 @@ private:
     int64_t first_non_system_record_index_ = 0;
     int64_t first_non_system_add_record_index_ = 0;
     int64_t first_non_system_crossing_record_index_ = 0;
+
+    // M10X: Quote crossing tracking
+    int64_t first_quote_record_index_ = 0;
+    int64_t first_quote_add_record_index_ = 0;
+    int64_t first_quote_crossing_record_index_ = 0;
 
     // M10O: Session/snapshot state tracking
     int64_t first_new_session_record_index_ = 0;

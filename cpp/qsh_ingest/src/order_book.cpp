@@ -9,6 +9,7 @@ namespace qsh {
 bool OrderBook::apply(const OrderLogRecord& rec) {
     bool is_counter = has_flag(rec.order_flags, OLFlags::Counter);
     bool is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+    bool is_quote = has_flag(rec.order_flags, OLFlags::Quote);
 
     // M10S: Track all Counter records regardless of mode
     if (is_counter) {
@@ -46,6 +47,28 @@ bool OrderBook::apply(const OrderLogRecord& rec) {
         if (has_flag(rec.order_flags, OLFlags::TxEnd))       ++errors_.non_system_txend;
     }
 
+    // M10X: Track all Quote records regardless of mode
+    if (is_quote) {
+        ++errors_.quote_records_seen;
+        if (first_quote_record_index_ == 0) first_quote_record_index_ = 0;  // set externally
+        if (rec.event == OLMsgType::Add)    { ++errors_.quote_add; if (first_quote_add_record_index_ == 0) first_quote_add_record_index_ = 0; }
+        if (rec.event == OLMsgType::Fill)   ++errors_.quote_fill;
+        if (rec.event == OLMsgType::Cancel) ++errors_.quote_cancel;
+        if (rec.event == OLMsgType::Remove) ++errors_.quote_remove;
+        if (rec.event == OLMsgType::Moved)  ++errors_.quote_moved;
+        if (rec.side == Side::Buy)          ++errors_.quote_buy;
+        if (rec.side == Side::Sell)         ++errors_.quote_sell;
+        if (has_flag(rec.order_flags, OLFlags::Counter))      ++errors_.quote_counter;
+        if (has_flag(rec.order_flags, OLFlags::NonSystem))    ++errors_.quote_non_system;
+        if (has_flag(rec.order_flags, OLFlags::CrossTrade))   ++errors_.quote_cross_trade;
+        if (has_flag(rec.order_flags, OLFlags::Snapshot))     ++errors_.quote_snapshot;
+        if (has_flag(rec.order_flags, OLFlags::NewSession))   ++errors_.quote_new_session;
+        if (has_flag(rec.order_flags, OLFlags::TxEnd))        ++errors_.quote_txend;
+        if (has_flag(rec.order_flags, OLFlags::FillOrKill))   ++errors_.quote_fill_or_kill;
+        if (has_flag(rec.order_flags, OLFlags::Canceled))     ++errors_.quote_canceled;
+        if (has_flag(rec.order_flags, OLFlags::CanceledGroup))++errors_.quote_canceled_group;
+    }
+
     // M10S: In ignore-book mode, skip book mutation for Counter events
     if (is_counter && counter_mode_ == CounterMode::IgnoreBook) {
         ++errors_.counter_records_ignored_for_book;
@@ -69,7 +92,19 @@ bool OrderBook::apply(const OrderLogRecord& rec) {
         return true;
     }
 
-    // Original logic for Include mode or non-Counter/non-NonSystem events
+    // M10X: In ignore-book mode, skip book mutation for Quote events
+    if (is_quote && quote_mode_ == QuoteMode::IgnoreBook) {
+        ++errors_.quote_records_ignored_for_book;
+        if (rec.event == OLMsgType::Add)    ++errors_.quote_add_ignored_for_book;
+        if (rec.event == OLMsgType::Fill)   ++errors_.quote_fill_ignored_for_book;
+        if (rec.event == OLMsgType::Cancel) ++errors_.quote_cancel_ignored_for_book;
+        if (rec.event == OLMsgType::Remove) ++errors_.quote_remove_ignored_for_book;
+        if (rec.event == OLMsgType::Moved)  ++errors_.quote_moved_ignored_for_book;
+        last_ts_ = rec.timestamp;
+        return true;
+    }
+
+    // Original logic for Include mode or non-Counter/non-NonSystem/non-Quote events
     if (rec.event == OLMsgType::Add) {
         add_order(rec);
     } else if (rec.event == OLMsgType::Fill) {

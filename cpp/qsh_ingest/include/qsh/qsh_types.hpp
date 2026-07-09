@@ -108,6 +108,29 @@ inline bool has_flag(uint16_t flags, uint16_t flag) {
     return (flags & flag) != 0;
 }
 
+// M10X: Human-readable flag names for OrdLog order flags
+inline std::string ol_flag_names(uint16_t flags) {
+    std::string result;
+    if (flags & OLFlags::NonZeroReplAct) { if (!result.empty()) result += " + "; result += "NonZeroReplAct"; }
+    if (flags & OLFlags::NewSession)     { if (!result.empty()) result += " + "; result += "NewSession"; }
+    if (flags & OLFlags::Add)            { if (!result.empty()) result += " + "; result += "Add"; }
+    if (flags & OLFlags::Fill)           { if (!result.empty()) result += " + "; result += "Fill"; }
+    if (flags & OLFlags::Buy)            { if (!result.empty()) result += " + "; result += "Buy"; }
+    if (flags & OLFlags::Sell)           { if (!result.empty()) result += " + "; result += "Sell"; }
+    if (flags & OLFlags::Snapshot)       { if (!result.empty()) result += " + "; result += "Snapshot"; }
+    if (flags & OLFlags::Quote)          { if (!result.empty()) result += " + "; result += "Quote"; }
+    if (flags & OLFlags::Counter)        { if (!result.empty()) result += " + "; result += "Counter"; }
+    if (flags & OLFlags::NonSystem)      { if (!result.empty()) result += " + "; result += "NonSystem"; }
+    if (flags & OLFlags::TxEnd)          { if (!result.empty()) result += " + "; result += "TxEnd"; }
+    if (flags & OLFlags::FillOrKill)     { if (!result.empty()) result += " + "; result += "FillOrKill"; }
+    if (flags & OLFlags::Moved)          { if (!result.empty()) result += " + "; result += "Moved"; }
+    if (flags & OLFlags::Canceled)       { if (!result.empty()) result += " + "; result += "Canceled"; }
+    if (flags & OLFlags::CanceledGroup)  { if (!result.empty()) result += " + "; result += "CanceledGroup"; }
+    if (flags & OLFlags::CrossTrade)     { if (!result.empty()) result += " + "; result += "CrossTrade"; }
+    if (result.empty()) result = "none";
+    return result;
+}
+
 inline bool has_flag(uint8_t flags, uint8_t flag) {
     return (flags & flag) != 0;
 }

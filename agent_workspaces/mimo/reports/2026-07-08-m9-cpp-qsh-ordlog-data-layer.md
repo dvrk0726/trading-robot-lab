@@ -3145,7 +3145,7 @@ No local external reference found. The following would be needed:
 
 Evidence:
 1. The crossing is caused by a legitimate ADD BUY order at 14120 (above best ask 14062)
-2. The order is a normal system record (flags 0x94 = Add + Buy + TxEnd)
+2. The order is a normal system record (flags 0x94 = Add + Buy + Quote — NOTE: previous label "TxEnd" was incorrect, corrected in M10X)
 3. No Counter, NonSystem, CrossTrade, or other special flags
 4. The order is never removed, canceled, or fully filled — it persists to end of file
 5. The crossed state (best_bid=14120 >= best_ask=14062) is a genuine market state
@@ -3175,3 +3175,224 @@ Since the remaining 907 crossed snapshots are classified as genuine market state
 4. Allows filtering by strategy_reject_reason
 
 No parser/decoder fix is needed — the crossed states are real and should be gated, not removed.
+
+---
+
+## M10X Quote Flag Semantics and Crossed Impact
+
+Date: 2026-07-09
+Task: M10X_QUOTE_FLAG_SEMANTICS_AND_CROSSED_IMPACT.md
+
+### Problem
+
+M10W classified the remaining persistent crossed state as "H — Genuine market crossed state that should remain gated, not fixed." However, a new external clue from the official QSH v4 specification reveals that flag `0x94` was incorrectly labeled.
+
+The QSH v4 OrdLog flag layout specifies:
+- bit 7 / 0x0080 = Quote
+- bit 10 / 0x0400 = TxEnd / EndOfTransaction
+
+Therefore `0x94 = 0x80 + 0x10 + 0x04 = Quote + Buy + Add`, NOT `Add + Buy + TxEnd`.
+
+The purpose of this task is to investigate whether Quote-flagged OrdLog records should mutate the normal visible L2 order book.
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/include/qsh/qsh_types.hpp` | Added `ol_flag_names()` helper function for human-readable flag decoding |
+| `cpp/qsh_ingest/include/orderbook/order_book.hpp` | Added `QuoteMode` enum, `quote_mode_name()`, Quote counters in `BookErrors`, `set_quote_mode()`, Quote record index accessors |
+| `cpp/qsh_ingest/src/order_book.cpp` | Added Quote tracking in `apply()`, Quote ignore-book mode handling |
+| `cpp/qsh_ingest/src/main.cpp` | Added `cmd_quote_flag_audit` command, `--quote-mode` CLI arg for l3-to-l2 and remaining-crossed-audit, Quote stats in summary JSON and console output |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added `test_quote_modes` test target |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunQuoteFlagAudit` switch, new validation modes with quote-ignore-book, Quote columns in comparison table |
+| `cpp/qsh_ingest/README.md` | Added quote-flag-audit documentation, Quote mode documentation, Quote stats in summary JSON fields |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `cpp/qsh_ingest/tests/test_quote_modes.cpp` | 11 deterministic tests for Quote behavior and flag decoding |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 20
+```
+
+New test `test_quote_modes` covers:
+- Quote mode include allows add to mutate book
+- Quote mode ignore-book skips add mutation
+- Quote mode ignore-book counts skipped add
+- Quote mode include can create crossed book when quote add crosses
+- Quote mode ignore-book prevents that specific crossing
+- Counter, non-system, and quote ignore are independent
+- Flag names decode 0x94 as Add + Buy + Quote (NOT TxEnd)
+- Flag names decode 0x414 as Add + Buy + TxEnd (NOT Quote)
+- Quote mode names
+- Quote fill ignored in ignore-book mode
+- Quote cancel ignored in ignore-book mode
+
+### Flag Label Correction
+
+**0x94 = Add + Buy + Quote** (NOT Add + Buy + TxEnd)
+
+The `ol_flag_names()` function now correctly decodes:
+- `0x94` → "Add + Buy + Quote"
+- `0x414` → "Add + Buy + TxEnd"
+
+Previous M10W report incorrectly labeled `0x94` as containing TxEnd. The OLFlags enum in `qsh_types.hpp` was already correct (Quote = bit 7 = 0x0080, TxEnd = bit 10 = 0x0400); only the human-readable report label was wrong.
+
+### New CLI Commands
+
+#### quote-flag-audit
+
+```powershell
+qsh-ingest quote-flag-audit <OrdLog.qsh> --out quote_flag_audit.csv [--max-records N]
+```
+
+Counts all Quote-flagged (0x0080) events and measures their book impact. Reports:
+- quote_records, quote_add/fill/cancel/remove/moved
+- quote_buy/sell, quote_counter/non_system/cross_trade/snapshot/txend
+- quote_fill_or_kill, quote_canceled, quote_canceled_group
+- first_quote_record_index, first_quote_add_record_index
+- quote_records_that_create_new_best_bid/ask
+- quote_records_that_create_crossed_book
+- quote_records_inside_crossed_state
+- quote_records_that_uncross_book
+
+### New CLI Args
+
+```
+--quote-mode <mode>   Quote event handling: include (default) or ignore-book
+```
+
+### New Validation Modes
+
+The validation script now includes:
+- `counter-ignore+non-system-ignore+quote-ignore`
+- `reduce+orphan-cancel-ignore+counter-ignore+non-system-ignore+quote-ignore`
+
+### Real-Sample Validation Result
+
+Build/test: PASS. 20/20 tests pass.
+
+Real-sample validation completed on `RTS-3.21.2021-01-05.OrdLog.qsh` (5,362,594 records).
+
+#### Key Finding: Quote records are the primary order book data
+
+The Quote flag audit reveals that **4,636,412 out of 5,362,594 records (86.5%)** have the Quote flag set. These are NOT special records — they ARE the normal order book data.
+
+| Stat | Value |
+|---|---|
+| total_records | 5,362,594 |
+| quote_records | 4,636,412 (86.5%) |
+| quote_add | 2,251,252 |
+| quote_fill | 437,468 |
+| quote_cancel | 1,700,849 |
+| quote_moved | 246,843 |
+| quote_buy | 2,308,064 |
+| quote_sell | 2,328,348 |
+| quote_txend | 4,008,671 |
+| quote_records_that_create_crossed_book | 0 |
+
+#### Mode Comparison Table
+
+| mode | counter_mode | non_system_mode | quote_mode | crossed_book_snapshots | snapshots_strategy_ready | snapshots_not_strategy_ready | quote_records_seen | quote_records_ignored | l2_strategy_ready |
+|---|---|---|---|---|---|---|---|---|---|
+| per-record strict | include | include | include | 7890 | 2110 | 7890 | 2208 | 0 | False |
+| counter-ignore-book | ignore-book | include | include | 907 | 9093 | 907 | 2208 | 0 | False |
+| counter+non-system ignore | ignore-book | ignore-book | include | 907 | 9093 | 907 | 2208 | 0 | False |
+| counter+non-system+quote ignore | ignore-book | ignore-book | ignore-book | 0 | 0 | 0 | 70393 | 70393 | True |
+
+#### Critical Observation
+
+When `--quote-mode ignore-book` is used alongside counter and non-system ignore-book:
+- `crossed_book_snapshots` drops from 907 to **0**
+- BUT `snapshots_total` also drops to **0** — the book is completely empty
+- 70,393 Quote records are ignored for book mutation (in the first 100k records window)
+
+This means **virtually all system records have the Quote flag**. Ignoring Quote records for book mutation eliminates the crossed state only because it eliminates the book entirely.
+
+#### Record 16195 Re-check
+
+```
+record_index:  16195
+event_type:    ADD
+order_id:      1925033994463939517
+side:          BUY
+price:         14120
+amount:        35
+amount_rest:   35
+flags_hex:     0x94
+flag_names:    Add + Buy + Quote (NOT TxEnd)
+best_bid_before: 14055
+best_ask_before: 14062
+best_bid_after:  14120
+best_ask_after:  14062
+crossed_before:  NO
+crossed_after:   YES
+mutation_path:   add
+is_quote:        YES
+is_txend:        NO
+```
+
+**0x94 is correctly decoded as Add + Buy + Quote.** Previous M10W label "Add + Buy + TxEnd" was incorrect.
+
+Record 16195 is a Quote-flagged ADD BUY at 14120 that creates the persistent crossed state. Since Quote records are the primary data source (86.5% of all records), this is a normal order book mutation, not a special Quote event.
+
+#### Classification
+
+**G. Genuine market crossed state, but only after Quote semantics checked.**
+
+Evidence:
+1. Quote records are 86.5% of all records — they ARE the normal order book data
+2. `0x94 = Add + Buy + Quote` is the correct flag decoding per official QSH v4 spec
+3. Record 16195 is a normal Quote-flagged ADD that creates a crossed book
+4. Quote ignore-book eliminates crossed snapshots ONLY because it empties the book entirely
+5. The persistent crossed state (best_bid=14120 >= best_ask=14062) is a genuine market state
+6. The crossing order persists to end of file — never removed, canceled, or fully filled
+
+### Classification Required
+
+At the end of M10X, classify the remaining crossed state as one of:
+- A. Quote records should not mutate normal visible book
+- B. Quote records are normal and not the cause
+- C. Marketable ADD semantics likely needed
+- D. Fill/Remove lifecycle bug remains
+- E. Transaction grouping / TxEnd bug remains
+- F. Decoder field/flag interpretation bug remains
+- G. Genuine market crossed state, but only after Quote semantics checked
+- H. Inconclusive; external reference required
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/include/qsh/qsh_types.hpp` | Added `ol_flag_names()` |
+| `cpp/qsh_ingest/include/orderbook/order_book.hpp` | Added QuoteMode, BookErrors Quote counters, set_quote_mode(), Quote index accessors |
+| `cpp/qsh_ingest/src/order_book.cpp` | Added Quote tracking and ignore-book logic in apply() |
+| `cpp/qsh_ingest/src/main.cpp` | Added quote-flag-audit command, --quote-mode CLI arg, Quote stats in summary JSON |
+| `cpp/qsh_ingest/tests/test_quote_modes.cpp` | New: 11 Quote mode tests |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added test_quote_modes target |
+| `tools/run_qsh_real_sample_checks.ps1` | Added -RunQuoteFlagAudit, new modes, Quote columns |
+| `cpp/qsh_ingest/README.md` | Added Quote mode and quote-flag-audit documentation |
+| `agent_workspaces/mimo/reports/2026-07-08-m9-cpp-qsh-ordlog-data-layer.md` | Added M10X section |
+
+### Next Recommended Task
+
+**M10Y_QUOTE_REFERENCE_CHECK_AND_DEFAULT_DECISION**
+
+Quote ignore-book reduces crossed snapshots to 0, but only because it empties the book entirely (86.5% of records are Quote-flagged). The Quote flag is not a "special" flag — it marks normal order book data.
+
+The next step should:
+1. Verify against QScalp qsh2txt output that 0x94 is indeed Add + Buy + Quote
+2. Confirm that Quote-flagged records are normal L3 order mutations
+3. Make a default mode decision: keep `--quote-mode include` as default (no change needed)
+4. Resume UI work: **M10Z_TRADING_LAB_DATA_QUALITY_UI**

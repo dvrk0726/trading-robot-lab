@@ -125,6 +125,10 @@ add_executable(test_non_system_modes tests/test_non_system_modes.cpp)
 target_link_libraries(test_non_system_modes PRIVATE qsh_lib)
 add_test(NAME test_non_system_modes COMMAND test_non_system_modes)
 
+add_executable(test_quote_modes tests/test_quote_modes.cpp)
+target_link_libraries(test_quote_modes PRIVATE qsh_lib)
+add_test(NAME test_quote_modes COMMAND test_quote_modes)
+
 add_executable(test_persistent_crossed tests/test_persistent_crossed.cpp)
 target_link_libraries(test_persistent_crossed PRIVATE qsh_lib)
 add_test(NAME test_persistent_crossed COMMAND test_persistent_crossed)
