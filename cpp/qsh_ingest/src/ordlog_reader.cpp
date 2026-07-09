@@ -3,7 +3,7 @@
 
 namespace qsh {
 
-bool OrdLogReader::next(QshFile& file, OrderLogRecord& record) {
+bool OrdLogReader::next_impl(QshFile& file, OrderLogRecord& record, bool capture_debug) {
     if (file.eof()) return false;
 
     const uint8_t* data = file.data.data();
@@ -11,6 +11,15 @@ bool OrdLogReader::next(QshFile& file, OrderLogRecord& record) {
     size_t& offset = file.data_offset;
 
     try {
+        // Capture raw offset before reading
+        if (capture_debug) {
+            record.debug.raw_data_offset = offset;
+            record.debug.ts_before_delta = record.timestamp;
+            record.debug.order_id_before_delta = order_id_;
+            record.debug.price_before_delta = record.price;
+            record.debug.amount_before = record.amount;
+        }
+
         // frame_time_delta (growing integer)
         record.frame_time_delta = read_growing(data, size, offset);
 
@@ -19,6 +28,11 @@ bool OrdLogReader::next(QshFile& file, OrderLogRecord& record) {
 
         // order_flags (u16 LE)
         record.order_flags = read_u16_le(data, size, offset);
+
+        if (capture_debug) {
+            record.debug.raw_entry_flags = record.entry_flags;
+            record.debug.raw_order_flags = record.order_flags;
+        }
 
         // Reset per-record fields
         record.amount_rest = 0;
@@ -29,17 +43,21 @@ bool OrdLogReader::next(QshFile& file, OrderLogRecord& record) {
         // Read fields based on entry_flags
         if (has_flag(record.entry_flags, OLEntryFlags::DateTime)) {
             record.timestamp += read_growing(data, size, offset);
+            if (capture_debug) record.debug.has_timestamp_field = true;
         }
 
         if (has_flag(record.entry_flags, OLEntryFlags::OrderId)) {
+            if (capture_debug) record.debug.has_order_id_field = true;
             if (has_flag(record.order_flags, OLFlags::Add)) {
-                // Add: absolute increment to running order_id
+                // Add: growing integer increment to running order_id
                 order_id_ += read_growing(data, size, offset);
                 record.order_id = order_id_;
+                if (capture_debug) record.debug.is_add_order_id_path = true;
             } else {
-                // Not Add: delta from current order_id
+                // Not Add: signed LEB128 delta from current order_id
                 order_id_ += read_leb128(data, size, offset);
                 record.order_id = order_id_;
+                if (capture_debug) record.debug.is_add_order_id_path = false;
             }
         } else {
             record.order_id = order_id_;
@@ -47,10 +65,12 @@ bool OrdLogReader::next(QshFile& file, OrderLogRecord& record) {
 
         if (has_flag(record.entry_flags, OLEntryFlags::Price)) {
             record.price += read_leb128(data, size, offset);
+            if (capture_debug) record.debug.has_price_field = true;
         }
 
         if (has_flag(record.entry_flags, OLEntryFlags::Amount)) {
             record.amount = read_leb128(data, size, offset);
+            if (capture_debug) record.debug.has_amount_field = true;
         }
 
         // Fill-specific fields
@@ -96,11 +116,27 @@ bool OrdLogReader::next(QshFile& file, OrderLogRecord& record) {
         // Classify event type
         record.event = classify_ol_event(record);
 
+        // Capture post-decode debug state
+        if (capture_debug) {
+            record.debug.ts_after_delta = record.timestamp;
+            record.debug.order_id_after_delta = order_id_;
+            record.debug.price_after_delta = record.price;
+            record.debug.amount_after = record.amount;
+        }
+
         return true;
 
     } catch (const std::exception&) {
         return false;
     }
+}
+
+bool OrdLogReader::next(QshFile& file, OrderLogRecord& record) {
+    return next_impl(file, record, false);
+}
+
+bool OrdLogReader::next_debug(QshFile& file, OrderLogRecord& record) {
+    return next_impl(file, record, true);
 }
 
 size_t OrdLogReader::scan_all(QshFile& file, const std::function<void(const OrderLogRecord&)>& callback) {

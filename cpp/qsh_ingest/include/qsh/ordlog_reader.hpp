@@ -12,6 +12,10 @@ public:
     // Read the next OrderLogRecord. Returns false on EOF or error.
     bool next(QshFile& file, OrderLogRecord& record);
 
+    // Read the next OrderLogRecord with debug state captured.
+    // Populates record.debug with before/after delta values.
+    bool next_debug(QshFile& file, OrderLogRecord& record);
+
     // Scan all records, calling callback for each. Returns total count.
     size_t scan_all(QshFile& file, const std::function<void(const OrderLogRecord&)>& callback);
 
@@ -20,6 +24,9 @@ private:
     UID deal_id_ = 0;
     Price deal_price_ = 0;
     Volume oi_ = 0;
+
+    // Shared implementation for next() and next_debug().
+    bool next_impl(QshFile& file, OrderLogRecord& record, bool capture_debug);
 };
 
 // Classify an OrderLogRecord into an OLMsgType.

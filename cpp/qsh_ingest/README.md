@@ -74,7 +74,7 @@ qsh-ingest quality <file.qsh>
 qsh-ingest convert <file.qsh> --out <dir>
 
 # Export decoded OrdLog records to CSV (diagnostic dump)
-qsh-ingest dump-records <OrdLog.qsh> --dump-records-out <file.csv> [--dump-records-from N] [--dump-records-to N]
+qsh-ingest dump-records <OrdLog.qsh> --dump-records-out <file.csv> [--dump-records-from N] [--dump-records-to N] [--audit]
 
 # Analyze first missing order backward (root cause investigation)
 qsh-ingest check-missing-order <OrdLog.qsh>
@@ -139,6 +139,13 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 
 # load: treat snapshot records as actual order adds (experimental)
 # marker: treat snapshot records as markers only, skip apply (experimental)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --snapshot-records-mode load --out l2_snapshots.csv
+
+# Dump records with raw decoder state (M10I audit)
+# Adds columns: raw_data_offset, raw_entry_flags, raw_order_flags_hex,
+# raw_side_bits, raw_event_bits, order_id/price/ts before/after delta,
+# amount before/after, is_add_order_id_path
+qsh-ingest dump-records <OrdLog.qsh> --dump-records-out audit.csv \
+  --dump-records-from 1600 --dump-records-to 1670 --audit
 ```
 
 **L2 output is not strategy-ready until diagnostics are clean.**

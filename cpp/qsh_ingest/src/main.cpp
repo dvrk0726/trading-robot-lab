@@ -46,7 +46,7 @@ static void print_help() {
     std::cout << "  inspect <file.qsh>                    Read and display QSH header\n";
     std::cout << "  quality <file.qsh>                    Scan records and print counters\n";
     std::cout << "  convert <file.qsh> --out <dir>        Export normalized metadata\n";
-    std::cout << "  dump-records <OrdLog.qsh>             Export decoded OrdLog records to CSV\n";
+    std::cout << "  dump-records <OrdLog.qsh> [--audit]    Export decoded OrdLog records to CSV\n";
     std::cout << "  check-missing-order <OrdLog.qsh>      Analyze first missing order backward\n";
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
     std::cout << "                        [--out <file.csv>] [--diagnostics-out <file.csv>]\n";
@@ -78,6 +78,7 @@ static void print_help() {
     std::cout << "  --trace-missing-order-out <f>      Write missing order ID trace CSV\n";
     std::cout << "  --auto-trace-crossed-orders-out <f> Write auto-traced orders from first crossed snapshot\n";
     std::cout << "  --fill-semantics <mode>  Fill interpretation: delta (default) or rest\n";
+    std::cout << "  --audit                  Include raw decoder state in dump-records output\n";
     std::cout << "\nSafety:\n";
     std::cout << "  No broker connection. No live trading. Historical files only.\n";
 }
@@ -217,7 +218,7 @@ static int cmd_quality(const std::string& path) {
 }
 
 static int cmd_dump_records(const std::string& path, const std::string& out_path,
-                            int64_t from_index, int64_t to_index) {
+                            int64_t from_index, int64_t to_index, bool audit_mode) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -236,15 +237,29 @@ static int cmd_dump_records(const std::string& path, const std::string& out_path
         return 1;
     }
 
+    // Standard columns
     csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
-        << "flags,flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system\n";
+        << "flags,flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system";
+
+    // Audit columns (raw decoder state)
+    if (audit_mode) {
+        csv << ",raw_data_offset,raw_entry_flags,raw_order_flags_hex"
+            << ",raw_side_bits,raw_event_bits"
+            << ",has_timestamp_field,has_order_id_field,has_price_field,has_amount_field"
+            << ",order_id_before_delta,order_id_after_delta,order_id_delta"
+            << ",price_before_delta,price_after_delta,price_delta"
+            << ",ts_before_delta,ts_after_delta"
+            << ",amount_before,amount_after"
+            << ",is_add_order_id_path";
+    }
+    csv << "\n";
 
     OrdLogReader reader;
     int64_t record_count = 0;
     int64_t tx_counter = 0;
     int64_t written = 0;
 
-    reader.scan_all(file, [&](const OrderLogRecord& rec) {
+    auto process_rec = [&](const OrderLogRecord& rec) {
         ++record_count;
 
         // Track TxEnd
@@ -279,10 +294,50 @@ static int cmd_dump_records(const std::string& path, const std::string& out_path
             << (is_new_session ? 1 : 0) << ","
             << (is_txend ? 1 : 0) << ","
             << (is_system ? 1 : 0) << ","
-            << (is_non_system ? 1 : 0) << "\n";
+            << (is_non_system ? 1 : 0);
 
+        if (audit_mode) {
+            // Side bits: Buy=bit4, Sell=bit5
+            uint16_t side_bits = rec.order_flags & (OLFlags::Buy | OLFlags::Sell);
+            // Event bits: Add=bit2, Fill=bit3, Moved=bit12, Canceled=bit13, CanceledGroup=bit14, CrossTrade=bit15
+            uint16_t event_bits = rec.order_flags & (OLFlags::Add | OLFlags::Fill | OLFlags::Moved |
+                OLFlags::Canceled | OLFlags::CanceledGroup | OLFlags::CrossTrade);
+
+            csv << "," << rec.debug.raw_data_offset
+                << "," << static_cast<int>(rec.debug.raw_entry_flags)
+                << ",0x" << std::hex << rec.debug.raw_order_flags << std::dec
+                << ",0x" << std::hex << side_bits << std::dec
+                << ",0x" << std::hex << event_bits << std::dec
+                << "," << (rec.debug.has_timestamp_field ? 1 : 0)
+                << "," << (rec.debug.has_order_id_field ? 1 : 0)
+                << "," << (rec.debug.has_price_field ? 1 : 0)
+                << "," << (rec.debug.has_amount_field ? 1 : 0)
+                << "," << rec.debug.order_id_before_delta
+                << "," << rec.debug.order_id_after_delta
+                << "," << (rec.debug.order_id_after_delta - rec.debug.order_id_before_delta)
+                << "," << rec.debug.price_before_delta
+                << "," << rec.debug.price_after_delta
+                << "," << (rec.debug.price_after_delta - rec.debug.price_before_delta)
+                << "," << rec.debug.ts_before_delta
+                << "," << rec.debug.ts_after_delta
+                << "," << rec.debug.amount_before
+                << "," << rec.debug.amount_after
+                << "," << (rec.debug.is_add_order_id_path ? "growing" : "leb128");
+        }
+
+        csv << "\n";
         ++written;
-    });
+    };
+
+    if (audit_mode) {
+        // Use next_debug to capture decoder state
+        OrderLogRecord rec;
+        while (reader.next_debug(file, rec)) {
+            process_rec(rec);
+        }
+    } else {
+        reader.scan_all(file, process_rec);
+    }
 
     csv.close();
     std::cout << "Dumped " << written << " records (range " << from_index
@@ -1233,13 +1288,14 @@ int main(int argc, char* argv[]) {
     if (cmd == "dump-records") {
         if (argc < 3) {
             std::cerr << "Usage: qsh-ingest dump-records <OrdLog.qsh> --dump-records-out <file.csv>\n"
-                      << "  [--dump-records-from N] [--dump-records-to N]" << std::endl;
+                      << "  [--dump-records-from N] [--dump-records-to N] [--audit]" << std::endl;
             return 1;
         }
         std::string file_path = argv[2];
         std::string out_path = "ordlog_records.csv";
         int64_t from_index = 1;
         int64_t to_index = 0;
+        bool audit_mode = false;
         for (int i = 3; i < argc; ++i) {
             if (std::strcmp(argv[i], "--dump-records-out") == 0 && i + 1 < argc) {
                 out_path = argv[++i];
@@ -1247,9 +1303,11 @@ int main(int argc, char* argv[]) {
                 from_index = std::atoll(argv[++i]);
             } else if (std::strcmp(argv[i], "--dump-records-to") == 0 && i + 1 < argc) {
                 to_index = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--audit") == 0) {
+                audit_mode = true;
             }
         }
-        return cmd_dump_records(file_path, out_path, from_index, to_index);
+        return cmd_dump_records(file_path, out_path, from_index, to_index, audit_mode);
     }
 
     if (cmd == "check-missing-order") {

@@ -165,6 +165,27 @@ struct Header {
     std::string comment;
 };
 
+// Raw decoder state captured before/after delta application.
+// Used by dump-records --audit for debugging OrdLog decoding.
+struct OrdLogDecoderDebug {
+    size_t raw_data_offset = 0;       // byte offset in QSH data before reading this record
+    Timestamp ts_before_delta = 0;    // timestamp running value before += delta
+    Timestamp ts_after_delta = 0;     // timestamp running value after += delta
+    UID order_id_before_delta = 0;    // order_id_ before applying delta
+    UID order_id_after_delta = 0;     // order_id_ after applying delta
+    Price price_before_delta = 0;     // price running value before += delta
+    Price price_after_delta = 0;      // price running value after += delta
+    Volume amount_before = 0;         // amount before this record (from previous record)
+    Volume amount_after = 0;          // amount after this record
+    uint8_t raw_entry_flags = 0;      // entry_flags byte as read from stream
+    uint16_t raw_order_flags = 0;     // order_flags u16 as read from stream
+    bool has_order_id_field = false;  // whether OrderId entry flag was set
+    bool has_price_field = false;     // whether Price entry flag was set
+    bool has_amount_field = false;    // whether Amount entry flag was set
+    bool has_timestamp_field = false; // whether DateTime entry flag was set
+    bool is_add_order_id_path = false; // true = read_growing (Add), false = read_leb128 (non-Add)
+};
+
 struct OrderLogRecord {
     Timestamp frame_time_delta = 0;
     Timestamp timestamp = 0;
@@ -179,6 +200,7 @@ struct OrderLogRecord {
     uint8_t entry_flags = 0;
     Side side = Side::Unknown;
     OLMsgType event = OLMsgType::Unknown;
+    OrdLogDecoderDebug debug;  // populated when debug mode is active
 };
 
 struct QuoteLevel {

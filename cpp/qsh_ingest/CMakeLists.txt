@@ -96,3 +96,7 @@ add_test(NAME test_m10g_diagnostics COMMAND test_m10g_diagnostics)
 add_executable(test_m10h_snapshot_semantics tests/test_m10h_snapshot_semantics.cpp)
 target_link_libraries(test_m10h_snapshot_semantics PRIVATE qsh_lib)
 add_test(NAME test_m10h_snapshot_semantics COMMAND test_m10h_snapshot_semantics)
+
+add_executable(test_decoder_audit tests/test_decoder_audit.cpp)
+target_link_libraries(test_decoder_audit PRIVATE qsh_lib)
+add_test(NAME test_decoder_audit COMMAND test_decoder_audit)

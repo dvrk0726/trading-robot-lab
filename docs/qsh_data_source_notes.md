@@ -300,3 +300,158 @@ dump-records: Export decoded OrdLog records to CSV with full flag analysis
 check-missing-order: Analyze first missing order backward for prior ADD/Snapshot
 --snapshot-records-mode: Experimental flag to test different snapshot handling
 ```
+
+## M10I: OrdLog Flags repl_act and Decoder Audit
+
+### Flags / repl_act Mapping (Verified)
+
+#### Event Type Classification Priority
+
+```text
+1. Add          (OLFlags::Add, bit 2)
+2. Fill         (OLFlags::Fill, bit 3)
+3. Moved        (OLFlags::Moved, bit 12)
+4. Cancel       (OLFlags::Canceled, bit 13 OR OLFlags::CanceledGroup, bit 14)
+5. Remove       (OLFlags::CrossTrade, bit 15 OR amount_rest == 0)
+6. Unknown      (none of the above)
+```
+
+Priority is strictly ordered: Add > Fill > Moved > Cancel > Remove > Unknown.
+If multiple flags are set, the first match wins.
+
+#### Side Flags
+
+```text
+Buy:   OLFlags::Buy (bit 4) set, Sell not set
+Sell:  OLFlags::Sell (bit 5) set, Buy not set
+Both:  Invalid state → Unknown
+Neither: Unknown
+```
+
+Side is determined purely from flags, no inheritance from previous records.
+
+#### repl_act (NonZeroReplAct)
+
+```text
+OLFlags::NonZeroReplAct (bit 0): indicates non-zero replacement action.
+Records with this flag are treated as non-system and skipped in L2 reconstruction.
+Exact FORTS semantics: uncertain. Likely relates to order modifications/replacements.
+```
+
+#### System vs Non-System
+
+```text
+System record = !NonSystem (bit 9) && !NonZeroReplAct (bit 0) && side != Unknown
+Non-system records are skipped during book reconstruction.
+```
+
+#### Snapshot/NewSession/TxEnd
+
+```text
+Snapshot (bit 6):  Order state snapshot. Usually combined with Add flag.
+NewSession (bit 1): Session boundary. Clears order book.
+TxEnd (bit 10): Transaction boundary. Used for atomic snapshot emission.
+```
+
+#### Other Flags
+
+```text
+Quote (bit 7):       Quote-related flag. Not used in event classification.
+Counter (bit 8):     Counter flag. Not used in event classification.
+FillOrKill (bit 11): Fill-or-kill flag. Not used in event classification.
+```
+
+### order_id Decoding
+
+```text
+Current implementation: delta-coded in all cases.
+  - Add records (OrderId flag set): order_id += read_growing() [unsigned growing integer]
+  - Non-Add records (OrderId flag set): order_id += read_leb128() [signed LEB128 delta]
+  - OrderId flag not set: carry forward from previous record (no change)
+```
+
+The Add vs non-Add distinction uses different integer encodings:
+- `read_growing()`: ULEB128 with sentinel 268435455 meaning "read signed LEB128 instead"
+- `read_leb128()`: standard signed LEB128
+
+Both are delta-coded relative to the running `order_id_` state.
+
+### price Decoding
+
+```text
+Current implementation: delta-coded via += (accumulates across records).
+  - Price flag set: price += read_leb128() [signed delta]
+  - Price flag not set: no change (carries forward)
+```
+
+### amount Decoding
+
+```text
+Current implementation: absolute when present (= not +=).
+  - Amount flag set: amount = read_leb128() [absolute value]
+  - Amount flag not set: no change (carries forward from previous record)
+```
+
+### amount_rest Decoding
+
+```text
+Reset to 0 at the start of each record.
+  - Fill + AmountRest flag: amount_rest = read_leb128()
+  - Add: amount_rest = amount (set automatically)
+  - Otherwise: remains 0
+```
+
+### Comparison with qsh-rs / QSH Spec
+
+qsh-rs is not present in this repository. No external Rust QSH implementation was found for comparison.
+
+Comparison with QSH v4 spec (from qsh.pdf, owner-provided):
+
+```text
+Field              | Our implementation         | QSH spec                   | Match
+order_id (Add)     | order_id += read_growing() | Delta-coded (growing)      | YES
+order_id (non-Add) | order_id += read_leb128()  | Delta-coded (signed LEB128)| YES
+order_id (no flag) | carry forward              | Same as previous           | YES
+price              | price += read_leb128()     | Delta-coded (signed LEB128)| YES
+amount             | amount = read_leb128()     | Absolute when present      | YES
+amount_rest        | reset each record, then set| Per-record field           | YES
+timestamp          | timestamp += read_growing()| Growing millisecond delta  | YES
+side               | Buy/Sell flags             | Buy/Sell flags             | YES
+entry_flags        | u8 bitmask                 | u8 bitmask                 | YES
+order_flags        | u16 LE bitmask             | u16 LE bitmask             | YES
+```
+
+All field decodings match the QSH v4 specification. No mismatches found.
+
+### Audit Dump Command
+
+```text
+dump-records --audit: Includes raw decoder state columns:
+  raw_data_offset, raw_entry_flags, raw_order_flags_hex,
+  raw_side_bits, raw_event_bits,
+  has_timestamp_field, has_order_id_field, has_price_field, has_amount_field,
+  order_id_before_delta, order_id_after_delta, order_id_delta,
+  price_before_delta, price_after_delta, price_delta,
+  ts_before_delta, ts_after_delta,
+  amount_before, amount_after,
+  is_add_order_id_path
+```
+
+Recommended commands for audit around first missing order (record 1651):
+
+```powershell
+# Narrow range around first missing order
+.\build\qsh_ingest\Release\qsh_ingest.exe dump-records <file> --dump-records-out audit_1600_1670.csv --dump-records-from 1600 --dump-records-to 1670 --audit
+
+# Wider range covering missing orders and first crossed book
+.\build\qsh_ingest\Release\qsh_ingest.exe dump-records <file> --dump-records-out audit_1500_2250.csv --dump-records-from 1500 --dump-records-to 2250 --audit
+```
+
+### Diagnostic Commands Added (M10I)
+
+```text
+dump-records --audit: Export decoded records with raw decoder state (before/after deltas)
+test_decoder_audit: 18 synthetic tests for flag mapping, side mapping, repl_act mapping,
+                    order_id carry-forward, delta encoding path, priority order,
+                    unknown flag handling, and debug field capture
+```

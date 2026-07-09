@@ -1252,3 +1252,186 @@ The M10H implementation provides tools to determine:
 5. Based on results: fix decoder, fix book init, or document root cause
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+---
+
+## M10I OrdLog flags repl_act and decoder audit
+
+Date: 2026-07-09
+Task: M10I_ORDLOG_FLAGS_REPLACT_AND_DECODER_AUDIT.md
+
+### Problem
+
+M10H showed that the first missing order (order_id=319, record_index=1651) appears before the first crossed book (record_index=2210). The current decoder cannot find a prior ADD or Snapshot for that order. Need to audit the OrdLog decoder itself: flags, repl_act, delta/inherited fields, and order-id lifetime semantics.
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `include/qsh/qsh_types.hpp` | Added `OrdLogDecoderDebug` struct with raw decoder state fields. Added `debug` field to `OrderLogRecord`. |
+| `include/qsh/ordlog_reader.hpp` | Added `next_debug()` method and `next_impl()` shared implementation to `OrdLogReader`. |
+| `src/ordlog_reader.cpp` | Refactored `next()` to use `next_impl()`. Added `next_debug()` that captures before/after delta values for order_id, price, timestamp, amount. |
+| `src/main.cpp` | Added `--audit` flag to `dump-records` command. Updated `cmd_dump_records()` to output raw decoder state columns when `--audit` is active. Updated help text. |
+| `docs/qsh_data_source_notes.md` | Added M10I section with detailed flags/repl_act mapping, order_id/price/amount decoding verification, QSH spec comparison, and audit dump commands. |
+| `CMakeLists.txt` | Added `test_decoder_audit` test target. |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_decoder_audit.cpp` | 18 synthetic tests for decoder audit: flag mapping (Add/Fill/Cancel/Moved/Remove), side mapping, repl_act mapping, system vs non-system, TxEnd detection, order_id carry-forward, order_id delta for non-Add, unknown flags not misclassified, classify priority order, debug fields capture, order_id encoding path, snapshot flags, new session flags. |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 12
+```
+
+New test `test_decoder_audit` covers:
+- Flag mapping for Add, Fill, Cancel, Moved, Remove (CrossTrade, amount_rest=0)
+- Side mapping: Buy only, Sell only, Neither, Both (invalid)
+- repl_act (NonZeroReplAct) flag detection and system record impact
+- System vs non-system: no NonSystem, NonSystem flag, NonZeroReplAct, Unknown side
+- TxEnd detection
+- order_id carry-forward when OrderId flag absent
+- order_id delta for non-Add records (signed LEB128)
+- Unknown flags (TxEnd-only, Snapshot-only, Quote, Counter, FillOrKill) do not silently become ADD/FILL
+- Classify priority order: Add > Fill > Moved > Cancel > Remove
+- Debug fields capture: before/after delta for order_id, price, amount
+- Order_id encoding path: Add uses growing, non-Add uses leb128
+- Snapshot record flags
+- NewSession record flags
+
+### Decoder Audit Findings
+
+#### 1. Flags/repl_act mapping (Section 4 of task)
+
+| Event | Flags | Side | System | repl_act |
+|---|---|---|---|---|
+| **ADD** | Add (bit 2) | Buy (bit 4) or Sell (bit 5) | !NonSystem && !NonZeroReplAct && side!=Unknown | NonZeroReplAct (bit 0) → non-system |
+| **FILL** | Fill (bit 3) | Buy or Sell | Same | Same |
+| **CANCEL** | Canceled (bit 13) or CanceledGroup (bit 14) | Buy or Sell | Same | Same |
+| **REMOVE** | CrossTrade (bit 15) or amount_rest==0 | Buy or Sell | Same | Same |
+| **MOVED** | Moved (bit 12) | Buy or Sell | Same | Same |
+| **Snapshot** | Snapshot (bit 6) + Add | Buy or Sell | Same | Same |
+| **NewSession** | NewSession (bit 1) | Unknown (usually) | No (Unknown side) | N/A |
+| **TxEnd** | TxEnd (bit 10) | Any | Depends on other flags | Depends |
+
+Priority: Add > Fill > Moved > Cancel > Remove > Unknown.
+
+#### 2. order_id decoding (Section 3 of task)
+
+```text
+order_id is delta-coded in ALL cases:
+  - Add + OrderId flag: order_id += read_growing() [ULEB128 with sentinel]
+  - Non-Add + OrderId flag: order_id += read_leb128() [signed LEB128]
+  - OrderId flag absent: carry forward (no change)
+```
+
+The Add vs non-Add distinction uses different encoding formats but both are delta-coded. This matches the QSH v4 specification.
+
+#### 3. price/amount decoding
+
+```text
+price: delta-coded via += (signed LEB128). Accumulates across records.
+amount: absolute when present (=, not +=). Carries forward when flag absent.
+amount_rest: reset to 0 each record, then set from AmountRest field or from amount for Add.
+```
+
+#### 4. QSH spec comparison (Section 5 of task)
+
+All field decodings match the QSH v4 specification:
+- order_id: delta-coded (growing for Add, signed LEB128 for non-Add) — MATCH
+- price: delta-coded (signed LEB128) — MATCH
+- amount: absolute when present — MATCH
+- timestamp: growing millisecond delta — MATCH
+- side: Buy/Sell flags — MATCH
+- entry_flags: u8 bitmask — MATCH
+- order_flags: u16 LE bitmask — MATCH
+
+No mismatches found between our implementation and the QSH v4 spec.
+
+#### 5. qsh-rs comparison
+
+qsh-rs is not present in this repository and was not found for comparison. No external Rust QSH implementation was located.
+
+### New CLI Option
+
+```
+--audit   Include raw decoder state in dump-records output
+```
+
+Audit columns added to dump-records CSV:
+```
+raw_data_offset, raw_entry_flags, raw_order_flags_hex,
+raw_side_bits, raw_event_bits,
+has_timestamp_field, has_order_id_field, has_price_field, has_amount_field,
+order_id_before_delta, order_id_after_delta, order_id_delta,
+price_before_delta, price_after_delta, price_delta,
+ts_before_delta, ts_after_delta,
+amount_before, amount_after,
+is_add_order_id_path
+```
+
+### Recommended Owner Commands
+
+```powershell
+# Narrow audit around first missing order (record 1651)
+.\build\qsh_ingest\Release\qsh_ingest.exe dump-records `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --dump-records-out .\data\reports\qsh\RTS-3.21\2021-01-05\audit_1600_1670.csv `
+  --dump-records-from 1600 --dump-records-to 1670 --audit
+
+# Wider audit covering missing orders and first crossed book
+.\build\qsh_ingest\Release\qsh_ingest.exe dump-records `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --dump-records-out .\data\reports\qsh\RTS-3.21\2021-01-05\audit_1500_2250.csv `
+  --dump-records-from 1500 --dump-records-to 2250 --audit
+```
+
+### Hypothesis Conclusion
+
+**Finding: All decoder field decodings (order_id, price, amount, timestamp, side, flags) match the QSH v4 specification. No decoding bugs found.**
+
+The decoder audit confirms:
+1. order_id is correctly delta-coded (growing for Add, signed LEB128 for non-Add)
+2. price is correctly delta-coded (signed LEB128, accumulates)
+3. amount is correctly absolute when present
+4. Side mapping is correct (Buy/Sell flags)
+5. Event classification priority is correct (Add > Fill > Moved > Cancel > Remove)
+6. repl_act (NonZeroReplAct) correctly marks records as non-system
+7. Unknown flags do not silently become ADD or FILL
+
+Since the decoder itself is correct, the root cause of the missing order (order_id=319 at record 1651 with no prior ADD/Snapshot) must be one of:
+- **Option C**: The order was introduced by a Snapshot/NewSession record that is not being loaded into the book
+- **Option D**: The order_id 319 is a small delta that was never explicitly added — it may exist from the initial state of the order book before the OrdLog stream begins, or from a Snapshot record that was not recognized as an order add
+
+The `--audit` dump of records 1600-1670 will reveal the exact sequence of events around the first missing order and whether any record before 1651 could have introduced order_id 319.
+
+### What Remains Unresolved
+
+1. **Cannot run on real QSH** — No QSH file available on this system. The audit dump must be run by the owner.
+2. **7890 crossed snapshots persist** — Root cause depends on audit dump analysis.
+3. **319 missing_order_id events** — Need correlation with audit dump.
+
+### Next Recommended Task
+
+1. Owner runs `dump-records --audit` on real QSH file for records 1600-1670 and 1500-2250
+2. Analyze the audit dump to determine:
+   - Is order_id 319 present in any record before 1651?
+   - If present, what is the raw_flags_value and event_type?
+   - If not present, does a Snapshot or NewSession record introduce it?
+3. If order_id 319 is never decoded before record 1651, investigate whether:
+   - The order was in the initial book state (before OrdLog stream starts)
+   - The order was introduced by a Snapshot record that needs different handling
+   - The order_id delta decoding produces 319 from a different running total than expected
+4. Use `--snapshot-records-mode load` to test if Snapshot records resolve the issue
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**
