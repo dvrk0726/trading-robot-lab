@@ -58,6 +58,20 @@ inline const char* counter_mode_name(CounterMode m) {
     }
 }
 
+// M10V: NonSystem event handling mode
+enum class NonSystemMode {
+    Include,     // Default: NonSystem events mutate book normally
+    IgnoreBook   // NonSystem events decoded/counted but do not mutate visible book
+};
+
+inline const char* non_system_mode_name(NonSystemMode m) {
+    switch (m) {
+        case NonSystemMode::Include:    return "include";
+        case NonSystemMode::IgnoreBook: return "ignore-book";
+        default:                        return "unknown";
+    }
+}
+
 inline const char* orphan_fill_mode_name(OrphanFillMode m) {
     switch (m) {
         case OrphanFillMode::Strict:          return "strict";
@@ -161,6 +175,32 @@ struct BookErrors {
     int64_t counter_cancel_ignored_for_book = 0;
     int64_t counter_remove_ignored_for_book = 0;
     int64_t counter_move_ignored_for_book = 0;
+
+    // M10V: NonSystem flag tracking
+    int64_t non_system_records_seen = 0;
+    int64_t non_system_add = 0;
+    int64_t non_system_fill = 0;
+    int64_t non_system_cancel = 0;
+    int64_t non_system_remove = 0;
+    int64_t non_system_moved = 0;
+    int64_t non_system_buy = 0;
+    int64_t non_system_sell = 0;
+    int64_t non_system_counter = 0;
+    int64_t non_system_cross_trade = 0;
+    int64_t non_system_snapshot = 0;
+    int64_t non_system_new_session = 0;
+    int64_t non_system_txend = 0;
+    int64_t non_system_unknown_event = 0;
+    int64_t non_system_records_that_create_new_best_bid = 0;
+    int64_t non_system_records_that_create_new_best_ask = 0;
+    int64_t non_system_records_that_create_crossed_book = 0;
+    int64_t non_system_records_inside_crossed_state = 0;
+    int64_t non_system_records_that_uncross_book = 0;
+    int64_t non_system_records_ignored_for_book = 0;
+    int64_t non_system_add_ignored_for_book = 0;
+    int64_t non_system_fill_ignored_for_book = 0;
+    int64_t non_system_cancel_ignored_for_book = 0;
+    int64_t non_system_remove_ignored_for_book = 0;
 };
 
 // L3 order book reconstruction from OrdLog events.
@@ -243,6 +283,9 @@ public:
     // M10S: Set counter event handling mode.
     void set_counter_mode(CounterMode mode) { counter_mode_ = mode; }
 
+    // M10V: Set non-system event handling mode.
+    void set_non_system_mode(NonSystemMode mode) { non_system_mode_ = mode; }
+
     // M10G: Record index of first missing_order_id event (for timing diagnostics)
     int64_t first_missing_order_record_index() const { return first_missing_order_record_index_; }
     void set_first_missing_order_record_index(int64_t idx) {
@@ -275,6 +318,22 @@ public:
     int64_t first_crossing_snapshot_index() const { return first_crossing_snapshot_index_; }
     void set_first_crossing_snapshot_index(int64_t idx) {
         if (first_crossing_snapshot_index_ == 0) first_crossing_snapshot_index_ = idx;
+    }
+
+    // M10V: NonSystem record index accessors
+    int64_t first_non_system_record_index() const { return first_non_system_record_index_; }
+    void set_first_non_system_record_index(int64_t idx) {
+        if (first_non_system_record_index_ == 0) first_non_system_record_index_ = idx;
+    }
+
+    int64_t first_non_system_add_record_index() const { return first_non_system_add_record_index_; }
+    void set_first_non_system_add_record_index(int64_t idx) {
+        if (first_non_system_add_record_index_ == 0) first_non_system_add_record_index_ = idx;
+    }
+
+    int64_t first_non_system_crossing_record_index() const { return first_non_system_crossing_record_index_; }
+    void set_first_non_system_crossing_record_index(int64_t idx) {
+        if (first_non_system_crossing_record_index_ == 0) first_non_system_crossing_record_index_ = idx;
     }
 
     // M10O: Session/snapshot state accessors
@@ -317,6 +376,7 @@ private:
     OrphanFillMode orphan_fill_mode_ = OrphanFillMode::Strict;  // M10J: orphan fill handling mode
     OrphanCancelMode orphan_cancel_mode_ = OrphanCancelMode::Strict;  // M10N: orphan cancel/remove handling mode
     CounterMode counter_mode_ = CounterMode::Include;  // M10S: counter event handling mode
+    NonSystemMode non_system_mode_ = NonSystemMode::Include;  // M10V: non-system event handling mode
 
     void add_order(const OrderLogRecord& rec);
     void fill_order(const OrderLogRecord& rec);
@@ -333,6 +393,11 @@ private:
     int64_t first_crossing_event_record_index_ = 0;    // record whose apply() first makes bb >= ba
     int64_t first_crossing_snapshot_record_index_ = 0;  // record index where first crossed snapshot is emitted
     int64_t first_crossing_snapshot_index_ = 0;          // snapshot number (1-based) that is first crossed
+
+    // M10V: NonSystem crossing tracking
+    int64_t first_non_system_record_index_ = 0;
+    int64_t first_non_system_add_record_index_ = 0;
+    int64_t first_non_system_crossing_record_index_ = 0;
 
     // M10O: Session/snapshot state tracking
     int64_t first_new_session_record_index_ = 0;

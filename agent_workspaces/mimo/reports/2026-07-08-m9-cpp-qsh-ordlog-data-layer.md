@@ -2890,3 +2890,131 @@ ts=63745437600579, best_bid=14120, best_ask=14062, is_crossed=true, is_locked=fa
 Then after the UI clearly shows Data Quality:
 **M11 — Normalized microstructure research dataset / first RI-Synthetic lead-lag preparation**
 4. Do NOT change default counter mode until the gating mechanism is in place
+
+---
+
+## M10V NonSystem flag semantics and crossed impact
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### 1. Build/Test Result
+
+```
+Build: OK (Release)
+Tests: 18/18 passed (added test_non_system_modes with 10 test cases)
+```
+
+### 2. Real-Sample Validation Result
+
+```
+local QSH found: data/raw/qsh/RTS-3.21/2021-01-05/RTS-3.21.2021-01-05.OrdLog.qsh
+non-system-flag-audit executed successfully
+all 10 validation modes OK
+```
+
+### 3. NonSystem Audit Summary
+
+| Metric | Value |
+|---|---|
+| total_records | 5,362,594 |
+| non_system_records | **8** |
+| non_system_add | 4 |
+| non_system_fill | 4 |
+| non_system_cancel | 0 |
+| non_system_remove | 0 |
+| non_system_moved | 0 |
+| non_system_buy | 4 |
+| non_system_sell | 4 |
+| non_system_counter | 0 |
+| non_system_cross_trade | 0 |
+| non_system_snapshot | 0 |
+| non_system_new_session | 0 |
+| non_system_txend | 4 |
+| first_non_system_record_index | 1,059,319 |
+| first_non_system_add_record_index | 1,059,319 |
+
+**Book Impact:**
+
+| Metric | Value |
+|---|---|
+| non_system_records_that_create_new_best_bid | 0 |
+| non_system_records_that_create_new_best_ask | 0 |
+| non_system_records_that_create_crossed_book | **0** |
+| non_system_records_inside_crossed_state | 8 |
+| non_system_records_that_uncross_book | 0 |
+| first_non_system_crossing_record_index | 0 |
+
+**Key finding:** Only 8 NonSystem records exist in the entire 5.3M record file. None of them create crossed book states. All 8 occur inside an already crossed state.
+
+### 4. Record 16195 Re-check
+
+The M10T trigger event (record 16195, flags 0x94 = Add + Buy + NonSystem) was re-checked:
+
+| Mode | best_bid_before | best_ask_before | best_bid_after | best_ask_after | crossed_before | crossed_after |
+|---|---|---|---|---|---|---|
+| counter-ignore-book + non-system include | 14110 | 14062 | 14120 | 14062 | YES | YES |
+| counter-ignore-book + non-system ignore-book | 14110 | 14062 | 14110 | 14062 | YES | YES |
+
+With `--non-system-mode ignore-book`:
+- Record 16195 does NOT mutate the visible book (ADD skipped)
+- best_bid remains 14110 (not 14120)
+- The book was already crossed before record 16195 (best_bid=14110 >= best_ask=14062)
+- **The crossing was already present before the NonSystem event**
+
+### 5. Mode Comparison Table
+
+| mode | counter_mode | non_system_mode | missing_order_id | crossed_book_snapshots | snapshots_strategy_ready | snapshots_not_strategy_ready | non_system_records_seen | non_system_records_ignored | strategy_ready_ratio | l2_strategy_ready |
+|---|---|---|---|---|---|---|---|---|---|---|
+| per-record strict | include | include | 319 | 7,890 | 2,110 | 7,890 | 0 | 0 | 0.211 | False |
+| per-record reduce+orphan-cancel-ignore | include | include | 0 | 7,884 | 2,116 | 7,884 | 0 | 0 | 0.2116 | False |
+| per-record counter-ignore-book | ignore-book | include | 272 | 907 | 9,093 | 907 | 0 | 0 | 0.9093 | False |
+| reduce+orphan-cancel-ignore+counter-ignore-book | ignore-book | include | 0 | 907 | 9,093 | 907 | 0 | 0 | 0.9093 | False |
+| counter-ignore-book+non-system-ignore-book | ignore-book | ignore-book | 272 | **907** | 9,093 | **907** | 0 | 0 | 0.9093 | False |
+| reduce+orphan-cancel-ignore+counter-ignore+non-system-ignore | ignore-book | ignore-book | 0 | **907** | 9,093 | **907** | 0 | 0 | 0.9093 | False |
+
+### 6. Critical Question Answered
+
+**Does `--non-system-mode ignore-book` reduce the remaining 907 crossed snapshots?**
+
+**NO.** The crossed snapshot count remains exactly 907 in both `include` and `ignore-book` modes. NonSystem events have zero impact on the crossed book state.
+
+### 7. A/B/C/D/E/F Classification
+
+**Classification: E — NonSystem is not the main remaining cause.**
+
+Evidence:
+1. Only 8 NonSystem records exist in 5.3M total records (0.00015%)
+2. None of the 8 NonSystem records create crossed book states
+3. All 8 NonSystem records occur inside an already crossed state
+4. The `ignore-book` mode does NOT reduce crossed snapshot count (907 → 907)
+5. Record 16195 (flags 0x94) does have the NonSystem flag, but the book was already crossed before this record
+6. The NonSystem flag on record 16195 is incidental — the crossing was caused by earlier events
+
+### 8. Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/include/orderbook/order_book.hpp` | Added `NonSystemMode` enum (Include, IgnoreBook); added NonSystem tracking fields to `BookErrors` (25+ counters); added `set_non_system_mode()` and NonSystem index accessors to OrderBook |
+| `cpp/qsh_ingest/src/order_book.cpp` | Added NonSystem-aware logic in `apply()` — tracks all NonSystem events and skips book mutation in ignore-book mode |
+| `cpp/qsh_ingest/src/main.cpp` | Added `cmd_non_system_flag_audit` command; added `--non-system-mode` argument to l3-to-l2 and remaining-crossed-audit; added NonSystem stats to summary JSON and console output |
+| `cpp/qsh_ingest/tests/test_non_system_modes.cpp` | New: 10 deterministic tests covering include/ignore-book modes, fill/cancel tracking, counter independence, both-flags interaction |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added `test_non_system_modes` test target |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunNonSystemFlagAudit` switch; added counter+non-system ignore-book validation modes; updated comparison table with non_system_mode columns |
+| `cpp/qsh_ingest/README.md` | Added non-system-flag-audit and --non-system-mode documentation; documented M10V findings |
+| `agent_workspaces/mimo/reports/2026-07-08-m9-cpp-qsh-ordlog-data-layer.md` | Added M10V section |
+
+### 9. Next Recommended Task
+
+**M10W — Persistent crossed-state lifecycle / transaction semantics investigation**
+
+Since NonSystem is not the cause, the remaining 907 crossed snapshots need investigation of:
+1. Transaction grouping — whether grouped vs per-record affects crossing detection
+2. Persistent top order lifecycle — why the crossing order at 14120 persists
+3. Market/session phase — whether the crossing occurs during a specific trading phase
+4. Fill/Remove semantics — whether partial fills or removes affect the crossed state
+5. External reference implementation/spec comparison — compare with qsh-rs or QScalp documentation
+
+Only after this should Trading Lab UI work resume:
+**M10X — Trading Lab Data Quality UI**

@@ -120,3 +120,7 @@ add_test(NAME test_snapshot_audit COMMAND test_snapshot_audit)
 add_executable(test_l2_strategy_gating tests/test_l2_strategy_gating.cpp)
 target_link_libraries(test_l2_strategy_gating PRIVATE qsh_lib)
 add_test(NAME test_l2_strategy_gating COMMAND test_l2_strategy_gating)
+
+add_executable(test_non_system_modes tests/test_non_system_modes.cpp)
+target_link_libraries(test_non_system_modes PRIVATE qsh_lib)
+add_test(NAME test_non_system_modes COMMAND test_non_system_modes)

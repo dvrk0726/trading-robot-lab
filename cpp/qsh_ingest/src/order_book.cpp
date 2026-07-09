@@ -8,6 +8,7 @@ namespace qsh {
 
 bool OrderBook::apply(const OrderLogRecord& rec) {
     bool is_counter = has_flag(rec.order_flags, OLFlags::Counter);
+    bool is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
 
     // M10S: Track all Counter records regardless of mode
     if (is_counter) {
@@ -26,6 +27,25 @@ bool OrderBook::apply(const OrderLogRecord& rec) {
         if (has_flag(rec.order_flags, OLFlags::CrossTrade))   ++errors_.counter_cross_trade;
     }
 
+    // M10V: Track all NonSystem records regardless of mode
+    if (is_non_system) {
+        ++errors_.non_system_records_seen;
+        if (first_non_system_record_index_ == 0) first_non_system_record_index_ = 0;  // set externally
+        if (rec.event == OLMsgType::Add)    ++errors_.non_system_add;
+        if (rec.event == OLMsgType::Fill)   ++errors_.non_system_fill;
+        if (rec.event == OLMsgType::Cancel) ++errors_.non_system_cancel;
+        if (rec.event == OLMsgType::Remove) ++errors_.non_system_remove;
+        if (rec.event == OLMsgType::Moved)  ++errors_.non_system_moved;
+        if (rec.event == OLMsgType::Unknown) ++errors_.non_system_unknown_event;
+        if (rec.side == Side::Buy)          ++errors_.non_system_buy;
+        if (rec.side == Side::Sell)         ++errors_.non_system_sell;
+        if (has_flag(rec.order_flags, OLFlags::Counter))     ++errors_.non_system_counter;
+        if (has_flag(rec.order_flags, OLFlags::CrossTrade))  ++errors_.non_system_cross_trade;
+        if (has_flag(rec.order_flags, OLFlags::Snapshot))    ++errors_.non_system_snapshot;
+        if (has_flag(rec.order_flags, OLFlags::NewSession))  ++errors_.non_system_new_session;
+        if (has_flag(rec.order_flags, OLFlags::TxEnd))       ++errors_.non_system_txend;
+    }
+
     // M10S: In ignore-book mode, skip book mutation for Counter events
     if (is_counter && counter_mode_ == CounterMode::IgnoreBook) {
         ++errors_.counter_records_ignored_for_book;
@@ -38,7 +58,18 @@ bool OrderBook::apply(const OrderLogRecord& rec) {
         return true;
     }
 
-    // Original logic for Include mode or non-Counter events
+    // M10V: In ignore-book mode, skip book mutation for NonSystem events
+    if (is_non_system && non_system_mode_ == NonSystemMode::IgnoreBook) {
+        ++errors_.non_system_records_ignored_for_book;
+        if (rec.event == OLMsgType::Add)    ++errors_.non_system_add_ignored_for_book;
+        if (rec.event == OLMsgType::Fill)   ++errors_.non_system_fill_ignored_for_book;
+        if (rec.event == OLMsgType::Cancel) ++errors_.non_system_cancel_ignored_for_book;
+        if (rec.event == OLMsgType::Remove) ++errors_.non_system_remove_ignored_for_book;
+        last_ts_ = rec.timestamp;
+        return true;
+    }
+
+    // Original logic for Include mode or non-Counter/non-NonSystem events
     if (rec.event == OLMsgType::Add) {
         add_order(rec);
     } else if (rec.event == OLMsgType::Fill) {

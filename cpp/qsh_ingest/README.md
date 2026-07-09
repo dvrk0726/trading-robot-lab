@@ -203,6 +203,23 @@ qsh-ingest counter-flag-audit <OrdLog.qsh> --out counter_flag_audit.csv
 # NOTE: ignore-book is experimental until remaining crossed snapshots are classified (M10T)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --counter-mode ignore-book --out l2_snapshots.csv
 
+# Experimental: non-system mode (M10V)
+# include: default, NonSystem events mutate book normally
+# ignore-book: NonSystem events decoded/counted but do not mutate visible book
+# NOTE: ignore-book is experimental. Default should not be changed without owner approval.
+qsh-ingest l3-to-l2 <OrdLog.qsh> --non-system-mode ignore-book --out l2_snapshots.csv
+
+# Combine counter and non-system ignore-book modes (M10V)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --counter-mode ignore-book --non-system-mode ignore-book --out l2_snapshots.csv
+
+# NonSystem flag audit (M10V)
+# Counts all NonSystem-flagged (0x200) events and measures their book impact.
+# Reports: non_system_records, non_system_add/fill/cancel/remove/moved,
+# non_system_buy/sell, non_system_counter/cross_trade/snapshot/new_session/txend,
+# first_non_system_record_index, first_non_system_add_record_index,
+# non_system_records_that_create_crossed_book, etc.
+qsh-ingest non-system-flag-audit <OrdLog.qsh> --out non_system_flag_audit.csv
+
 # Remaining crossed audit (M10T)
 # Classifies remaining crossed snapshots after counter-ignore-book.
 # Outputs CSV with full event flags, book state, and mutation path for each crossed event.
@@ -311,6 +328,19 @@ The summary JSON includes a `strategy_reject_reasons` object:
 ### Counter mode
 
 `--counter-mode` default remains `include`. The `ignore-book` mode is experimental and requires owner approval to change as default.
+
+### NonSystem mode (M10V)
+
+`--non-system-mode` controls whether NonSystem-flagged (0x200) events mutate the visible order book.
+
+- `include` (default): NonSystem events mutate the book normally
+- `ignore-book`: NonSystem events are decoded and counted but do not mutate the visible book
+
+**How it differs from `--counter-mode`**: Counter mode handles events with the Counter flag (0x100). NonSystem mode handles events with the NonSystem flag (0x200). They are independent — a record can have both flags, in which case Counter takes precedence (checked first).
+
+**M10V findings**: In the RTS-3.21 2021-01-05 sample, only 8 NonSystem records exist among 5.3M total records. None of them create crossed book states. The `ignore-book` mode does NOT reduce the remaining 907 crossed snapshots. NonSystem is not the main remaining cause of crossed book states.
+
+Default should not be changed without owner approval.
 
 ## Summary JSON Output
 

@@ -14,7 +14,8 @@ param(
     [switch]$RunCrossedPersistenceAudit,
     [switch]$RunCounterFlagAudit,
     [switch]$RunRemainingCrossedAudit,
-    [switch]$RunStrategyReadyExport
+    [switch]$RunStrategyReadyExport,
+    [switch]$RunNonSystemFlagAudit
 )
 
 $ErrorActionPreference = "Continue"
@@ -185,6 +186,37 @@ $modes = @(
             "--counter-mode", "ignore-book",
             "--out", "$ReportDirFull\l2_reduce_orphan_cancel_counter_ignore.csv",
             "--summary-out", "$ReportDirFull\l2_reduce_orphan_cancel_counter_ignore.summary.json")
+    },
+    @{
+        Name     = "counter-ignore-book+non-system-ignore-book"
+        CsvOut   = "$ReportDirFull\l2_counter_nonsystem_ignore_book.csv"
+        Summary  = "$ReportDirFull\l2_counter_nonsystem_ignore_book.summary.json"
+        Args     = @("l3-to-l2", $QshFullPath,
+            "--depth", "5",
+            "--max-records", "100000",
+            "--max-snapshots", "10000",
+            "--snapshot-mode", "txend",
+            "--orphan-fill-mode", "strict",
+            "--counter-mode", "ignore-book",
+            "--non-system-mode", "ignore-book",
+            "--out", "$ReportDirFull\l2_counter_nonsystem_ignore_book.csv",
+            "--summary-out", "$ReportDirFull\l2_counter_nonsystem_ignore_book.summary.json")
+    },
+    @{
+        Name     = "reduce+orphan-cancel-ignore+counter-ignore+non-system-ignore"
+        CsvOut   = "$ReportDirFull\l2_reduce_orphan_cancel_counter_nonsystem_ignore.csv"
+        Summary  = "$ReportDirFull\l2_reduce_orphan_cancel_counter_nonsystem_ignore.summary.json"
+        Args     = @("l3-to-l2", $QshFullPath,
+            "--depth", "5",
+            "--max-records", "100000",
+            "--max-snapshots", "10000",
+            "--snapshot-mode", "txend",
+            "--orphan-fill-mode", "reduce-same-price",
+            "--orphan-cancel-mode", "ignore",
+            "--counter-mode", "ignore-book",
+            "--non-system-mode", "ignore-book",
+            "--out", "$ReportDirFull\l2_reduce_orphan_cancel_counter_nonsystem_ignore.csv",
+            "--summary-out", "$ReportDirFull\l2_reduce_orphan_cancel_counter_nonsystem_ignore.summary.json")
     }
 )
 
@@ -220,6 +252,9 @@ foreach ($mode in $modes) {
             counter_mode                    = $summary.counter_mode
             counter_records_seen            = $summary.counter_records_seen
             counter_records_ignored_for_book = $summary.counter_records_ignored_for_book
+            non_system_mode                 = $summary.non_system_mode
+            non_system_records_seen         = $summary.non_system_records_seen
+            non_system_records_ignored_for_book = $summary.non_system_records_ignored_for_book
             l2_strategy_ready               = $summary.l2_strategy_ready
             # M10U: Strategy readiness fields
             snapshots_strategy_ready        = $summary.snapshots_strategy_ready
@@ -249,6 +284,9 @@ foreach ($mode in $modes) {
             counter_mode                    = "?"
             counter_records_seen            = "?"
             counter_records_ignored_for_book = "?"
+            non_system_mode                 = "?"
+            non_system_records_seen         = "?"
+            non_system_records_ignored_for_book = "?"
             l2_strategy_ready               = "?"
             snapshots_strategy_ready        = "?"
             snapshots_not_strategy_ready    = "?"
@@ -265,13 +303,13 @@ Write-Host "=== Real-Sample Validation Results ===" -ForegroundColor Cyan
 Write-Host ""
 
 # Build markdown-compatible table
-$header = "| mode | counter_mode | missing_order_id | crossed_book_snapshots | snapshots_strategy_ready | snapshots_not_strategy_ready | snapshots_crossed | snapshots_locked | strategy_ready_ratio | l2_strategy_ready |"
-$sep    = "|---|---|---|---|---|---|---|---|---|---|"
+$header = "| mode | counter_mode | non_system_mode | missing_order_id | crossed_book_snapshots | snapshots_strategy_ready | snapshots_not_strategy_ready | snapshots_crossed | non_system_records_seen | non_system_records_ignored | strategy_ready_ratio | l2_strategy_ready |"
+$sep    = "|---|---|---|---|---|---|---|---|---|---|---|---|"
 Write-Host $header
 Write-Host $sep
 
 foreach ($r in $results) {
-    $line = "| $($r.Mode) | $($r.counter_mode) | $($r.missing_order_id) | $($r.crossed_book_snapshots) | $($r.snapshots_strategy_ready) | $($r.snapshots_not_strategy_ready) | $($r.snapshots_crossed) | $($r.snapshots_locked) | $($r.strategy_ready_ratio) | $($r.l2_strategy_ready) |"
+    $line = "| $($r.Mode) | $($r.counter_mode) | $($r.non_system_mode) | $($r.missing_order_id) | $($r.crossed_book_snapshots) | $($r.snapshots_strategy_ready) | $($r.snapshots_not_strategy_ready) | $($r.snapshots_crossed) | $($r.non_system_records_seen) | $($r.non_system_records_ignored_for_book) | $($r.strategy_ready_ratio) | $($r.l2_strategy_ready) |"
     Write-Host $line
 }
 
@@ -394,6 +432,22 @@ if ($RunCounterFlagAudit) {
 } else {
     Write-Host ""
     Write-Host "Tip: run with -RunCounterFlagAudit for Counter flag (0x100) event audit." -ForegroundColor DarkGray
+}
+
+# --- 11d2. NonSystem-flag-audit (optional, M10V) ---
+if ($RunNonSystemFlagAudit) {
+    Write-Host ""
+    Write-Host "Running non-system-flag-audit..." -ForegroundColor Cyan
+    $nonSystemAuditOut = "$ReportDirFull\non_system_flag_audit.csv"
+    & $ExePath "non-system-flag-audit" $QshFullPath "--out" $nonSystemAuditOut 2>&1 | Write-Host
+    if (Test-Path $nonSystemAuditOut) {
+        Write-Host "NonSystem flag audit output: $nonSystemAuditOut" -ForegroundColor Green
+    } else {
+        Write-Host "NonSystem flag audit output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunNonSystemFlagAudit for NonSystem flag (0x200) event audit." -ForegroundColor DarkGray
 }
 
 # --- 11e. Remaining-crossed-audit (optional, M10T) ---

@@ -62,6 +62,8 @@ static void print_help() {
     std::cout << "                        Audit records in range with book state tracking\n";
     std::cout << "  counter-flag-audit <OrdLog.qsh> [--out <file.csv>] [--max-records N]\n";
     std::cout << "                        Audit Counter flag (0x100) records and book impact\n";
+    std::cout << "  non-system-flag-audit <OrdLog.qsh> [--out <file.csv>] [--max-records N]\n";
+    std::cout << "                        Audit NonSystem flag (0x200) records and book impact\n";
     std::cout << "  first-crossed-root-cause <OrdLog.qsh> [--out-dir <dir>] [--context N]\n";
     std::cout << "                        Trace the exact orders causing first crossed book\n";
     std::cout << "  crossed-persistence-audit <OrdLog.qsh> --from N [--max-records N] --out <file.csv>\n";
@@ -110,6 +112,8 @@ static void print_help() {
     std::cout << "                               or ignore (skip cancel/remove of unknown order)\n";
     std::cout << "  --counter-mode <mode>        Counter event handling: include (default),\n";
     std::cout << "                               or ignore-book (skip Counter events for book mutation)\n";
+    std::cout << "  --non-system-mode <mode>     NonSystem event handling: include (default),\n";
+    std::cout << "                               or ignore-book (skip NonSystem events for book mutation)\n";
     std::cout << "  --book-update-mode <mode>  Book update: per-record (default) or tx-grouped\n";
     std::cout << "  --audit                  Include raw decoder state in dump-records output\n";
     std::cout << "\nSafety:\n";
@@ -3033,10 +3037,242 @@ static int cmd_counter_flag_audit(const std::string& path, const std::string& ou
     return 0;
 }
 
+// M10V: NonSystem flag audit — count all NonSystem-flagged events and measure book impact
+static int cmd_non_system_flag_audit(const std::string& path, const std::string& out_path, int64_t max_records) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: non-system-flag-audit requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Running non-system flag audit..." << std::endl;
+
+    // Counters
+    int64_t total_records = 0;
+    int64_t non_system_records = 0;
+    int64_t non_system_add = 0;
+    int64_t non_system_fill = 0;
+    int64_t non_system_cancel = 0;
+    int64_t non_system_remove = 0;
+    int64_t non_system_moved = 0;
+    int64_t non_system_buy = 0;
+    int64_t non_system_sell = 0;
+    int64_t non_system_counter = 0;
+    int64_t non_system_cross_trade = 0;
+    int64_t non_system_snapshot = 0;
+    int64_t non_system_new_session = 0;
+    int64_t non_system_txend = 0;
+    int64_t non_system_unknown_event = 0;
+    int64_t first_non_system_record_index = 0;
+    int64_t first_non_system_add_record_index = 0;
+
+    // Book impact counters
+    int64_t non_system_records_that_create_new_best_bid = 0;
+    int64_t non_system_records_that_create_new_best_ask = 0;
+    int64_t non_system_records_that_create_crossed_book = 0;
+    int64_t non_system_records_inside_crossed_state = 0;
+    int64_t non_system_records_that_uncross_book = 0;
+    int64_t first_non_system_crossing_record_index = 0;
+
+    // CSV output
+    std::ofstream csv;
+    bool write_csv = !out_path.empty();
+    if (write_csv) {
+        csv.open(out_path);
+        if (!csv.is_open()) {
+            std::cerr << "Warning: cannot open output file: " << out_path << std::endl;
+            write_csv = false;
+        } else {
+            csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+                << "flags_hex,is_counter,is_non_system,is_cross_trade,is_moved,"
+                << "is_add,is_fill,is_cancel,is_remove,is_snapshot,is_new_session,is_txend,"
+                << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+                << "crossed_before,crossed_after,creates_new_best_bid,creates_new_best_ask,"
+                << "creates_crossed,inside_crossed,uncrosses,mutation_path\n";
+        }
+    }
+
+    OrderBook book;
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+    int64_t tx_counter = 0;
+    int64_t written = 0;
+
+    while (reader.next(file, rec)) {
+        ++record_count;
+        ++total_records;
+
+        if (has_flag(rec.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        bool is_ns = has_flag(rec.order_flags, OLFlags::NonSystem);
+
+        if (is_ns) {
+            ++non_system_records;
+            if (first_non_system_record_index == 0) first_non_system_record_index = record_count;
+
+            if (rec.event == OLMsgType::Add) {
+                ++non_system_add;
+                if (first_non_system_add_record_index == 0) first_non_system_add_record_index = record_count;
+            }
+            if (rec.event == OLMsgType::Fill)   ++non_system_fill;
+            if (rec.event == OLMsgType::Cancel) ++non_system_cancel;
+            if (rec.event == OLMsgType::Remove) ++non_system_remove;
+            if (rec.event == OLMsgType::Moved)  ++non_system_moved;
+            if (rec.event == OLMsgType::Unknown) ++non_system_unknown_event;
+            if (rec.side == Side::Buy)          ++non_system_buy;
+            if (rec.side == Side::Sell)         ++non_system_sell;
+            if (has_flag(rec.order_flags, OLFlags::Counter))     ++non_system_counter;
+            if (has_flag(rec.order_flags, OLFlags::CrossTrade))  ++non_system_cross_trade;
+            if (has_flag(rec.order_flags, OLFlags::Snapshot))    ++non_system_snapshot;
+            if (has_flag(rec.order_flags, OLFlags::NewSession))  ++non_system_new_session;
+            if (has_flag(rec.order_flags, OLFlags::TxEnd))       ++non_system_txend;
+
+            // Book impact measurement
+            Price best_bid_before = book.best_bid();
+            Price best_ask_before = book.best_ask();
+            bool crossed_before = (best_bid_before > 0 && best_ask_before > 0 && best_bid_before >= best_ask_before);
+
+            book.apply(rec);
+
+            Price best_bid_after = book.best_bid();
+            Price best_ask_after = book.best_ask();
+            bool crossed_after = (best_bid_after > 0 && best_ask_after > 0 && best_bid_after >= best_ask_after);
+
+            bool creates_new_best_bid = (best_bid_after != best_bid_before && best_bid_after > 0);
+            bool creates_new_best_ask = (best_ask_after != best_ask_before && best_ask_after > 0);
+            bool creates_crossed = (crossed_after && !crossed_before);
+            bool inside_crossed = crossed_before && crossed_after;
+            bool uncrosses = (!crossed_after && crossed_before);
+
+            if (creates_new_best_bid) ++non_system_records_that_create_new_best_bid;
+            if (creates_new_best_ask) ++non_system_records_that_create_new_best_ask;
+            if (creates_crossed) {
+                ++non_system_records_that_create_crossed_book;
+                if (first_non_system_crossing_record_index == 0) first_non_system_crossing_record_index = record_count;
+            }
+            if (inside_crossed) ++non_system_records_inside_crossed_state;
+            if (uncrosses)      ++non_system_records_that_uncross_book;
+
+            // Determine mutation path
+            std::string mutation_path;
+            if (rec.event == OLMsgType::Add) mutation_path = "add";
+            else if (rec.event == OLMsgType::Fill) mutation_path = "fill";
+            else if (rec.event == OLMsgType::Cancel) mutation_path = "cancel";
+            else if (rec.event == OLMsgType::Remove) mutation_path = "remove";
+            else if (rec.event == OLMsgType::Moved) mutation_path = "move";
+            else mutation_path = "other";
+
+            if (write_csv && (max_records <= 0 || written < max_records)) {
+                bool is_counter = has_flag(rec.order_flags, OLFlags::Counter);
+                bool is_cross_trade = has_flag(rec.order_flags, OLFlags::CrossTrade);
+                bool is_moved = has_flag(rec.order_flags, OLFlags::Moved);
+                bool is_snapshot = has_flag(rec.order_flags, OLFlags::Snapshot);
+                bool is_new_session = has_flag(rec.order_flags, OLFlags::NewSession);
+                bool is_txend = has_flag(rec.order_flags, OLFlags::TxEnd);
+
+                csv << record_count << ","
+                    << rec.timestamp << ","
+                    << tx_counter << ","
+                    << rec.order_id << ","
+                    << ol_msg_type_name(rec.event) << ","
+                    << side_name(rec.side) << ","
+                    << rec.price << ","
+                    << rec.amount << ","
+                    << rec.amount_rest << ","
+                    << "0x" << std::hex << rec.order_flags << std::dec << ","
+                    << (is_counter ? 1 : 0) << ","
+                    << 1 << ","
+                    << (is_cross_trade ? 1 : 0) << ","
+                    << (is_moved ? 1 : 0) << ","
+                    << (rec.event == OLMsgType::Add ? 1 : 0) << ","
+                    << (rec.event == OLMsgType::Fill ? 1 : 0) << ","
+                    << (rec.event == OLMsgType::Cancel ? 1 : 0) << ","
+                    << (rec.event == OLMsgType::Remove ? 1 : 0) << ","
+                    << (is_snapshot ? 1 : 0) << ","
+                    << (is_new_session ? 1 : 0) << ","
+                    << (is_txend ? 1 : 0) << ","
+                    << best_bid_before << ","
+                    << best_ask_before << ","
+                    << best_bid_after << ","
+                    << best_ask_after << ","
+                    << (crossed_before ? 1 : 0) << ","
+                    << (crossed_after ? 1 : 0) << ","
+                    << (creates_new_best_bid ? 1 : 0) << ","
+                    << (creates_new_best_ask ? 1 : 0) << ","
+                    << (creates_crossed ? 1 : 0) << ","
+                    << (inside_crossed ? 1 : 0) << ","
+                    << (uncrosses ? 1 : 0) << ","
+                    << mutation_path
+                    << "\n";
+                ++written;
+            }
+        } else {
+            // Still apply non-NonSystem events to maintain accurate book state
+            book.apply(rec);
+        }
+
+        if (max_records > 0 && record_count >= max_records) break;
+    }
+
+    if (write_csv) {
+        csv.close();
+        std::cout << "Wrote " << written << " non-system records to " << out_path << std::endl;
+    }
+
+    // Print summary
+    std::cout << "\n=== NonSystem Flag Audit Summary ===" << std::endl;
+    std::cout << "total_records:                                    " << total_records << std::endl;
+    std::cout << "non_system_records:                               " << non_system_records << std::endl;
+    std::cout << "non_system_add:                                   " << non_system_add << std::endl;
+    std::cout << "non_system_fill:                                  " << non_system_fill << std::endl;
+    std::cout << "non_system_cancel:                                " << non_system_cancel << std::endl;
+    std::cout << "non_system_remove:                                " << non_system_remove << std::endl;
+    std::cout << "non_system_moved:                                 " << non_system_moved << std::endl;
+    std::cout << "non_system_buy:                                   " << non_system_buy << std::endl;
+    std::cout << "non_system_sell:                                  " << non_system_sell << std::endl;
+    std::cout << "non_system_counter:                               " << non_system_counter << std::endl;
+    std::cout << "non_system_cross_trade:                           " << non_system_cross_trade << std::endl;
+    std::cout << "non_system_snapshot:                              " << non_system_snapshot << std::endl;
+    std::cout << "non_system_new_session:                           " << non_system_new_session << std::endl;
+    std::cout << "non_system_txend:                                 " << non_system_txend << std::endl;
+    std::cout << "non_system_unknown_event:                         " << non_system_unknown_event << std::endl;
+    std::cout << "first_non_system_record_index:                    " << first_non_system_record_index << std::endl;
+    std::cout << "first_non_system_add_record_index:                " << first_non_system_add_record_index << std::endl;
+
+    std::cout << "\n--- Book Impact ---" << std::endl;
+    std::cout << "non_system_records_that_create_new_best_bid:      " << non_system_records_that_create_new_best_bid << std::endl;
+    std::cout << "non_system_records_that_create_new_best_ask:      " << non_system_records_that_create_new_best_ask << std::endl;
+    std::cout << "non_system_records_that_create_crossed_book:      " << non_system_records_that_create_crossed_book << std::endl;
+    std::cout << "non_system_records_inside_crossed_state:          " << non_system_records_inside_crossed_state << std::endl;
+    std::cout << "non_system_records_that_uncross_book:             " << non_system_records_that_uncross_book << std::endl;
+    std::cout << "first_non_system_crossing_record_index:           " << first_non_system_crossing_record_index << std::endl;
+
+    // Final book state
+    Price final_bb = book.best_bid();
+    Price final_ba = book.best_ask();
+    bool final_crossed = (final_bb > 0 && final_ba > 0 && final_bb >= final_ba);
+    std::cout << "\n--- Final Book State ---" << std::endl;
+    std::cout << "best_bid:     " << final_bb << std::endl;
+    std::cout << "best_ask:     " << final_ba << std::endl;
+    std::cout << "crossed:      " << (final_crossed ? "YES" : "NO") << std::endl;
+
+    return 0;
+}
+
 // M10T: Remaining crossed audit — classify remaining crossed snapshots after counter-ignore-book
 static int cmd_remaining_crossed_audit(const std::string& path, const std::string& out_path,
                                         int64_t from_index, int64_t to_index, int context_size,
-                                        int64_t max_records) {
+                                        int64_t max_records,
+                                        NonSystemMode non_system_mode = NonSystemMode::Include) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -3086,6 +3322,7 @@ static int cmd_remaining_crossed_audit(const std::string& path, const std::strin
 
     OrderBook book;
     book.set_counter_mode(CounterMode::IgnoreBook);
+    book.set_non_system_mode(non_system_mode);
     OrdLogReader reader;
     OrderLogRecord rec;
     int64_t record_count = 0;
@@ -3307,7 +3544,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         BookUpdateMode book_update_mode = BookUpdateMode::PerRecord,
                         const std::string& summary_out_path = "",
                         OrphanCancelMode orphan_cancel_mode = OrphanCancelMode::Strict,
-                        CounterMode counter_mode = CounterMode::Include) {
+                        CounterMode counter_mode = CounterMode::Include,
+                        NonSystemMode non_system_mode = NonSystemMode::Include) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -3344,6 +3582,7 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     book.set_orphan_fill_mode(orphan_fill_mode);
     book.set_orphan_cancel_mode(orphan_cancel_mode);
     book.set_counter_mode(counter_mode);
+    book.set_non_system_mode(non_system_mode);
     OrdLogReader reader;
     std::vector<L2SnapshotEntry> snapshots;
     std::vector<L2DiagnosticEntry> diagnostics;
@@ -3696,6 +3935,14 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             ++moved_count;
         }
 
+        // M10V: Track first NonSystem record indices
+        if (has_flag(rec.order_flags, OLFlags::NonSystem)) {
+            book.set_first_non_system_record_index(record_count);
+            if (rec.event == OLMsgType::Add) {
+                book.set_first_non_system_add_record_index(record_count);
+            }
+        }
+
         // Track book state before apply for missing order trace and lifecycle trace
         Price best_bid_before = book.best_bid();
         Price best_ask_before = book.best_ask();
@@ -3750,6 +3997,10 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                 if (book.tx_index_at_first_crossing() == 0) {
                     book.set_tx_index_at_first_crossing(last_tx_index);
                     book.set_records_in_first_crossing_tx(records_in_current_tx);
+                }
+                // M10V: Track first NonSystem crossing
+                if (has_flag(rec.order_flags, OLFlags::NonSystem)) {
+                    book.set_first_non_system_crossing_record_index(record_count);
                 }
             }
         }
@@ -4252,6 +4503,9 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::cout << "counter_mode:                     " << counter_mode_name(counter_mode) << std::endl;
     std::cout << "counter_records_seen:             " << book.errors().counter_records_seen << std::endl;
     std::cout << "counter_records_ignored_for_book: " << book.errors().counter_records_ignored_for_book << std::endl;
+    std::cout << "non_system_mode:                  " << non_system_mode_name(non_system_mode) << std::endl;
+    std::cout << "non_system_records_seen:          " << book.errors().non_system_records_seen << std::endl;
+    std::cout << "non_system_records_ignored_for_book: " << book.errors().non_system_records_ignored_for_book << std::endl;
     std::cout << "records_processed:                " << record_count << std::endl;
     std::cout << "transactions_seen:                " << transactions_seen << std::endl;
     std::cout << "snapshots_written:                " << snapshot_count << std::endl;
@@ -4358,6 +4612,21 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             summary_file << "  \"counter_cancel_ignored_for_book\": " << book.errors().counter_cancel_ignored_for_book << ",\n";
             summary_file << "  \"counter_remove_ignored_for_book\": " << book.errors().counter_remove_ignored_for_book << ",\n";
             summary_file << "  \"counter_move_ignored_for_book\": " << book.errors().counter_move_ignored_for_book << ",\n";
+            // M10V: NonSystem stats
+            summary_file << "  \"non_system_mode\": \"" << non_system_mode_name(non_system_mode) << "\",\n";
+            summary_file << "  \"non_system_records_seen\": " << book.errors().non_system_records_seen << ",\n";
+            summary_file << "  \"non_system_records_ignored_for_book\": " << book.errors().non_system_records_ignored_for_book << ",\n";
+            summary_file << "  \"non_system_add\": " << book.errors().non_system_add << ",\n";
+            summary_file << "  \"non_system_fill\": " << book.errors().non_system_fill << ",\n";
+            summary_file << "  \"non_system_cancel\": " << book.errors().non_system_cancel << ",\n";
+            summary_file << "  \"non_system_remove\": " << book.errors().non_system_remove << ",\n";
+            summary_file << "  \"non_system_moved\": " << book.errors().non_system_moved << ",\n";
+            summary_file << "  \"non_system_cross_trade\": " << book.errors().non_system_cross_trade << ",\n";
+            summary_file << "  \"non_system_counter\": " << book.errors().non_system_counter << ",\n";
+            summary_file << "  \"non_system_records_that_create_crossed_book\": " << book.errors().non_system_records_that_create_crossed_book << ",\n";
+            summary_file << "  \"first_non_system_record_index\": " << book.first_non_system_record_index() << ",\n";
+            summary_file << "  \"first_non_system_add_record_index\": " << book.first_non_system_add_record_index() << ",\n";
+            summary_file << "  \"first_non_system_crossing_record_index\": " << book.first_non_system_crossing_record_index() << ",\n";
             summary_file << "  \"records_processed\": " << record_count << ",\n";
             summary_file << "  \"transactions_seen\": " << transactions_seen << ",\n";
             summary_file << "  \"snapshots_written\": " << snapshot_count << ",\n";
@@ -4568,6 +4837,24 @@ int main(int argc, char* argv[]) {
         return cmd_counter_flag_audit(file_path, out_path, max_records);
     }
 
+    if (cmd == "non-system-flag-audit") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest non-system-flag-audit <OrdLog.qsh> [--out <file.csv>] [--max-records N]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_path;
+        int64_t max_records = 0;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--max-records") == 0 && i + 1 < argc) {
+                max_records = std::atoll(argv[++i]);
+            }
+        }
+        return cmd_non_system_flag_audit(file_path, out_path, max_records);
+    }
+
     if (cmd == "crossing-window-audit") {
         if (argc < 3) {
             std::cerr << "Usage: qsh-ingest crossing-window-audit <OrdLog.qsh> --from N --to N --out <file.csv>\n"
@@ -4638,7 +4925,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "remaining-crossed-audit") {
         if (argc < 3) {
             std::cerr << "Usage: qsh-ingest remaining-crossed-audit <OrdLog.qsh> --counter-mode ignore-book\n"
-                      << "  [--out <file.csv>] [--from N] [--to N] [--context N] [--max-records N]" << std::endl;
+                      << "  [--non-system-mode include|ignore-book] [--out <file.csv>] [--from N] [--to N] [--context N] [--max-records N]" << std::endl;
             return 1;
         }
         std::string file_path = argv[2];
@@ -4647,6 +4934,7 @@ int main(int argc, char* argv[]) {
         int64_t to_index = 0;
         int context_size = 50;
         int64_t max_records = 0;
+        NonSystemMode non_system_mode = NonSystemMode::Include;
         for (int i = 3; i < argc; ++i) {
             if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
                 out_path = argv[++i];
@@ -4658,9 +4946,19 @@ int main(int argc, char* argv[]) {
                 context_size = std::atoi(argv[++i]);
             } else if (std::strcmp(argv[i], "--max-records") == 0 && i + 1 < argc) {
                 max_records = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--non-system-mode") == 0 && i + 1 < argc) {
+                std::string mode_str = argv[++i];
+                if (mode_str == "include") {
+                    non_system_mode = NonSystemMode::Include;
+                } else if (mode_str == "ignore-book") {
+                    non_system_mode = NonSystemMode::IgnoreBook;
+                } else {
+                    std::cerr << "Unknown non-system mode: " << mode_str << std::endl;
+                    return 1;
+                }
             }
         }
-        return cmd_remaining_crossed_audit(file_path, out_path, from_index, to_index, context_size, max_records);
+        return cmd_remaining_crossed_audit(file_path, out_path, from_index, to_index, context_size, max_records, non_system_mode);
     }
 
     if (cmd == "l3-to-l2") {
@@ -4701,6 +4999,7 @@ int main(int argc, char* argv[]) {
         OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict;
         OrphanCancelMode orphan_cancel_mode = OrphanCancelMode::Strict;
         CounterMode counter_mode = CounterMode::Include;
+        NonSystemMode non_system_mode = NonSystemMode::Include;
         BookUpdateMode book_update_mode = BookUpdateMode::PerRecord;
         std::string summary_out_path;
         for (int i = 3; i < argc; ++i) {
@@ -4805,6 +5104,16 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Unknown counter mode: " << mode_str << " (use include or ignore-book)" << std::endl;
                     return 1;
                 }
+            } else if (std::strcmp(argv[i], "--non-system-mode") == 0 && i + 1 < argc) {
+                std::string mode_str = argv[++i];
+                if (mode_str == "include") {
+                    non_system_mode = NonSystemMode::Include;
+                } else if (mode_str == "ignore-book") {
+                    non_system_mode = NonSystemMode::IgnoreBook;
+                } else {
+                    std::cerr << "Unknown non-system mode: " << mode_str << " (use include or ignore-book)" << std::endl;
+                    return 1;
+                }
             } else if (std::strcmp(argv[i], "--book-update-mode") == 0 && i + 1 < argc) {
                 std::string mode_str = argv[++i];
                 if (mode_str == "per-record") {
@@ -4824,7 +5133,8 @@ int main(int argc, char* argv[]) {
                             trace_order_ids, order_trace_path, ring_buffer_size,
                             best_level_orders_path, missing_order_path, auto_trace_crossed_path,
                             fill_delta_mode, snapshot_records_mode, orphan_fill_mode,
-                            book_update_mode, summary_out_path, orphan_cancel_mode, counter_mode);
+                            book_update_mode, summary_out_path, orphan_cancel_mode, counter_mode,
+                            non_system_mode);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;
