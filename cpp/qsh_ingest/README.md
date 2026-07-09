@@ -243,6 +243,75 @@ WARNING: exported L2 contains invalid best bid / best ask state.
 This L2 output is not strategy-ready until reconstruction diagnostics are clean.
 ```
 
+## Strategy Readiness (M10U)
+
+Each exported L2 snapshot is classified for strategy readiness. Crossed/locked/invalid snapshots are **not silently removed** — they are exported and clearly marked unsafe.
+
+### What strategy_ready means
+
+A snapshot is `strategy_ready=true` only when it is safe for strategy-level research:
+- `best_bid > 0` and `best_ask > 0` (both sides exist)
+- `best_bid < best_ask` (not crossed, not locked)
+- Requested `depth > 0`
+
+### Why crossed/locked rows are exported but marked unsafe
+
+The core principle: **do not hide bad or transitional market states.** Crossed and locked book states are real market events that may be valuable for analysis. They are exported with `strategy_ready=false` and a machine-readable `strategy_reject_reason` so downstream code can filter, count, or study them.
+
+### CSV columns added
+
+Every L2 CSV row now includes:
+
+| Column | Description |
+|--------|-------------|
+| `best_bid` | Best bid price |
+| `best_ask` | Best ask price |
+| `is_crossed` | `true` if `best_bid > best_ask` |
+| `is_locked` | `true` if `best_bid == best_ask` and both sides exist |
+| `strategy_ready` | `true` only if safe for strategy research |
+| `strategy_reject_reason` | Machine-readable reason: `ok`, `crossed_book`, `locked_book`, `missing_best_bid`, `missing_best_ask`, `empty_book`, `invalid_price`, `invalid_depth` |
+| `snapshot_index` | 1-based snapshot number |
+| `record_index` | OrdLog record index at snapshot time |
+| `tx_index` | Transaction index at snapshot time |
+
+### How to run l3-to-l2 with summary output
+
+```powershell
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --summary-out summary.json --out l2.csv
+```
+
+### How to inspect reason counts
+
+The summary JSON includes a `strategy_reject_reasons` object:
+
+```json
+{
+  "snapshots_total": 10000,
+  "snapshots_strategy_ready": 9093,
+  "snapshots_not_strategy_ready": 907,
+  "snapshots_crossed": 907,
+  "snapshots_locked": 0,
+  "l2_strategy_ready": false,
+  "strategy_ready_ratio": 0.9093,
+  "strategy_reject_reasons": {
+    "ok": 9093,
+    "crossed_book": 907,
+    "locked_book": 0,
+    "missing_best_bid": 0,
+    "missing_best_ask": 0,
+    "empty_book": 0,
+    "invalid_price": 0,
+    "invalid_depth": 0
+  }
+}
+```
+
+`l2_strategy_ready` is `true` only when `snapshots_not_strategy_ready == 0` and existing critical diagnostics are clean.
+
+### Counter mode
+
+`--counter-mode` default remains `include`. The `ignore-book` mode is experimental and requires owner approval to change as default.
+
 ## Summary JSON Output
 
 The `--summary-out <file.json>` option writes a machine-readable summary with these fields:
@@ -285,6 +354,21 @@ The `--summary-out <file.json>` option writes a machine-readable summary with th
 - `records_between_new_session_and_first_crossing`: difference between first crossing and first NewSession
 - `l2_strategy_ready`: true if no invalid snapshots found
 
+### M10U Strategy readiness fields
+
+- `snapshots_total`: total snapshots exported
+- `snapshots_strategy_ready`: count of snapshots where `strategy_ready=true`
+- `snapshots_not_strategy_ready`: count of snapshots where `strategy_ready=false`
+- `snapshots_crossed`: count of crossed book snapshots (`best_bid > best_ask`)
+- `snapshots_locked`: count of locked book snapshots (`best_bid == best_ask`)
+- `snapshots_missing_best_bid`: count with no bid levels
+- `snapshots_missing_best_ask`: count with no ask levels
+- `snapshots_empty_book`: count with neither side
+- `snapshots_invalid_price`: count with invalid price on a side
+- `snapshots_invalid_depth`: count with invalid depth
+- `strategy_ready_ratio`: `snapshots_strategy_ready / snapshots_total`
+- `strategy_reject_reasons`: object with counts per reason (`ok`, `crossed_book`, `locked_book`, `missing_best_bid`, `missing_best_ask`, `empty_book`, `invalid_price`, `invalid_depth`)
+
 ## Real-Sample Validation
 
 Run all validation modes against the local QSH sample:
@@ -296,7 +380,7 @@ Run all validation modes against the local QSH sample:
 Options:
 
 ```powershell
-.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit -RunCrossedPersistenceAudit -RunCounterFlagAudit -RunRemainingCrossedAudit
+.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit -RunCrossedPersistenceAudit -RunCounterFlagAudit -RunRemainingCrossedAudit -RunStrategyReadyExport
 ```
 
 The script:

@@ -13,7 +13,8 @@ param(
     [switch]$RunCrossingWindowAudit,
     [switch]$RunCrossedPersistenceAudit,
     [switch]$RunCounterFlagAudit,
-    [switch]$RunRemainingCrossedAudit
+    [switch]$RunRemainingCrossedAudit,
+    [switch]$RunStrategyReadyExport
 )
 
 $ErrorActionPreference = "Continue"
@@ -220,6 +221,12 @@ foreach ($mode in $modes) {
             counter_records_seen            = $summary.counter_records_seen
             counter_records_ignored_for_book = $summary.counter_records_ignored_for_book
             l2_strategy_ready               = $summary.l2_strategy_ready
+            # M10U: Strategy readiness fields
+            snapshots_strategy_ready        = $summary.snapshots_strategy_ready
+            snapshots_not_strategy_ready    = $summary.snapshots_not_strategy_ready
+            snapshots_crossed               = $summary.snapshots_crossed
+            snapshots_locked                = $summary.snapshots_locked
+            strategy_ready_ratio            = $summary.strategy_ready_ratio
         }
         Write-Host " OK" -ForegroundColor Green
     } else {
@@ -243,6 +250,11 @@ foreach ($mode in $modes) {
             counter_records_seen            = "?"
             counter_records_ignored_for_book = "?"
             l2_strategy_ready               = "?"
+            snapshots_strategy_ready        = "?"
+            snapshots_not_strategy_ready    = "?"
+            snapshots_crossed               = "?"
+            snapshots_locked                = "?"
+            strategy_ready_ratio            = "?"
         }
     }
 }
@@ -253,13 +265,13 @@ Write-Host "=== Real-Sample Validation Results ===" -ForegroundColor Cyan
 Write-Host ""
 
 # Build markdown-compatible table
-$header = "| mode | counter_mode | missing_order_id | crossed_book_snapshots | counter_records_seen | counter_records_ignored | first_crossed_book_record_index | l2_strategy_ready |"
-$sep    = "|---|---|---|---|---|---|---|---|"
+$header = "| mode | counter_mode | missing_order_id | crossed_book_snapshots | snapshots_strategy_ready | snapshots_not_strategy_ready | snapshots_crossed | snapshots_locked | strategy_ready_ratio | l2_strategy_ready |"
+$sep    = "|---|---|---|---|---|---|---|---|---|---|"
 Write-Host $header
 Write-Host $sep
 
 foreach ($r in $results) {
-    $line = "| $($r.Mode) | $($r.counter_mode) | $($r.missing_order_id) | $($r.crossed_book_snapshots) | $($r.counter_records_seen) | $($r.counter_records_ignored_for_book) | $($r.first_crossed_book_record_index) | $($r.l2_strategy_ready) |"
+    $line = "| $($r.Mode) | $($r.counter_mode) | $($r.missing_order_id) | $($r.crossed_book_snapshots) | $($r.snapshots_strategy_ready) | $($r.snapshots_not_strategy_ready) | $($r.snapshots_crossed) | $($r.snapshots_locked) | $($r.strategy_ready_ratio) | $($r.l2_strategy_ready) |"
     Write-Host $line
 }
 
@@ -398,6 +410,48 @@ if ($RunRemainingCrossedAudit) {
 } else {
     Write-Host ""
     Write-Host "Tip: run with -RunRemainingCrossedAudit for remaining crossed snapshot classification after counter-ignore-book." -ForegroundColor DarkGray
+}
+
+# --- 11f. Strategy-ready-export (optional, M10U) ---
+if ($RunStrategyReadyExport) {
+    Write-Host ""
+    Write-Host "Running strategy-ready export (counter-ignore-book, depth=5)..." -ForegroundColor Cyan
+    $strategyReadyOut = "$ReportDirFull\l2_strategy_ready_gated.csv"
+    $strategyReadySummary = "$ReportDirFull\l2_strategy_ready_gated.summary.json"
+    & $ExePath "l3-to-l2" $QshFullPath `
+        "--depth" "5" `
+        "--max-records" "100000" `
+        "--max-snapshots" "10000" `
+        "--snapshot-mode" "txend" `
+        "--counter-mode" "ignore-book" `
+        "--summary-out" $strategyReadySummary `
+        "--out" $strategyReadyOut 2>&1 | Write-Host
+    if (Test-Path $strategyReadySummary) {
+        $srSummary = Get-Content $strategyReadySummary -Raw | ConvertFrom-Json
+        Write-Host ""
+        Write-Host "=== Strategy Readiness Summary ===" -ForegroundColor Cyan
+        Write-Host "  snapshots_total:              $($srSummary.snapshots_total)"
+        Write-Host "  snapshots_strategy_ready:     $($srSummary.snapshots_strategy_ready)"
+        Write-Host "  snapshots_not_strategy_ready: $($srSummary.snapshots_not_strategy_ready)"
+        Write-Host "  snapshots_crossed:            $($srSummary.snapshots_crossed)"
+        Write-Host "  snapshots_locked:             $($srSummary.snapshots_locked)"
+        Write-Host "  strategy_ready_ratio:         $($srSummary.strategy_ready_ratio)"
+        Write-Host "  l2_strategy_ready:            $($srSummary.l2_strategy_ready)"
+        if ($srSummary.strategy_reject_reasons) {
+            Write-Host ""
+            Write-Host "  Reject reasons:" -ForegroundColor Cyan
+            $srSummary.strategy_reject_reasons.PSObject.Properties | ForEach-Object {
+                Write-Host "    $($_.Name): $($_.Value)"
+            }
+        }
+        Write-Host ""
+        Write-Host "Strategy-ready export output: $strategyReadyOut" -ForegroundColor Green
+    } else {
+        Write-Host "Strategy-ready export failed (no summary)." -ForegroundColor Red
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunStrategyReadyExport for strategy readiness gating with counter-ignore-book." -ForegroundColor DarkGray
 }
 
 # --- 12. Summary ---

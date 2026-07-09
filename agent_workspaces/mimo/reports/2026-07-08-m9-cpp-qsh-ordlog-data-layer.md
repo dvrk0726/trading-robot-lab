@@ -2753,4 +2753,140 @@ The remaining 907 crossed snapshots are classified as B (normal trading events).
 1. Implement a Data Quality gate that marks crossed snapshots as non-strategy-ready in the L2 output
 2. Add a `strategy_ready` column to the L2 CSV output
 3. Consider transaction-level book state for sweep detection
+
+---
+
+## M10U Strategy-ready L2 export and Data Quality gating
+
+Date: 2026-07-09
+Status: completed
+
+### 1. Build/Test Result
+
+- Build: **PASS** (MSVC Release, C++20, /W4 /WX)
+- Tests: **17/17 PASS** (including new `test_l2_strategy_gating` with 14 test cases)
+
+### 2. Real-Sample Validation Result
+
+Export with `--counter-mode ignore-book` (100k records, 10k snapshots, depth 5):
+
+| Metric | Value |
+|--------|-------|
+| snapshots_total | 10,000 |
+| snapshots_strategy_ready | 9,093 |
+| snapshots_not_strategy_ready | 907 |
+| snapshots_crossed | 907 |
+| snapshots_locked | 0 |
+| strategy_ready_ratio | 0.9093 |
+| l2_strategy_ready | false |
+
+All 907 non-strategy-ready snapshots have reason `crossed_book`. No locked, missing, or empty snapshots.
+
+### 3. New CSV Columns
+
+Every L2 CSV row now includes:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `best_bid` | int | Best bid price |
+| `best_ask` | int | Best ask price |
+| `is_crossed` | bool | `true` if `best_bid > best_ask` |
+| `is_locked` | bool | `true` if `best_bid == best_ask` and both sides exist |
+| `strategy_ready` | bool | `true` only if safe for strategy research |
+| `strategy_reject_reason` | string | Machine-readable: `ok`, `crossed_book`, `locked_book`, `missing_best_bid`, `missing_best_ask`, `empty_book`, `invalid_price`, `invalid_depth` |
+| `snapshot_index` | int | 1-based snapshot number |
+| `record_index` | int | OrdLog record index at snapshot time |
+| `tx_index` | int | Transaction index at snapshot time |
+
+### 4. New Summary JSON Fields
+
+```json
+{
+  "snapshots_total": 10000,
+  "snapshots_strategy_ready": 9093,
+  "snapshots_not_strategy_ready": 907,
+  "snapshots_crossed": 907,
+  "snapshots_locked": 0,
+  "snapshots_missing_best_bid": 0,
+  "snapshots_missing_best_ask": 0,
+  "snapshots_empty_book": 0,
+  "snapshots_invalid_price": 0,
+  "snapshots_invalid_depth": 0,
+  "l2_strategy_ready": false,
+  "strategy_ready_ratio": 0.9093,
+  "strategy_reject_reasons": {
+    "ok": 9093,
+    "crossed_book": 907,
+    "locked_book": 0,
+    "missing_best_bid": 0,
+    "missing_best_ask": 0,
+    "empty_book": 0,
+    "invalid_price": 0,
+    "invalid_depth": 0
+  }
+}
+```
+
+### 5. Strategy Readiness Rules
+
+```
+classify_l2_snapshot(best_bid, best_ask, bid_depth, ask_depth, depth):
+  if depth <= 0           -> InvalidDepth
+  if bid_depth==0 && ask_depth==0 -> EmptyBook
+  if bid_depth==0         -> MissingBestBid
+  if ask_depth==0         -> MissingBestAsk
+  if best_bid <= 0        -> InvalidPrice
+  if best_ask <= 0        -> InvalidPrice
+  if best_bid > best_ask  -> CrossedBook
+  if best_bid == best_ask -> LockedBook
+  otherwise               -> Ok
+```
+
+`strategy_ready = true` only when reason is `Ok`.
+
+`l2_strategy_ready = true` only when `snapshots_not_strategy_ready == 0` AND existing critical diagnostics are clean.
+
+### 6. Mode Comparison Table
+
+| Mode | counter_mode | crossed_book_snapshots | snapshots_strategy_ready | snapshots_not_strategy_ready | strategy_ready_ratio | l2_strategy_ready |
+|---|---|---|---|---|---|---|
+| per-record strict | include | 7,890 | 2,110 | 7,890 | 0.211 | false |
+| per-record reduce-same-price | include | 7,884 | 2,116 | 7,884 | 0.2116 | false |
+| per-record orphan-cancel-ignore | include | 7,890 | 2,110 | 7,890 | 0.211 | false |
+| per-record reduce+orphan-cancel-ignore | include | 7,884 | 2,116 | 7,884 | 0.2116 | false |
+| snapshot-records-mode load | include | 7,890 | 2,110 | 7,890 | 0.211 | false |
+| tx-grouped | include | 7,890 | 2,110 | 7,890 | 0.211 | false |
+| per-record counter-ignore-book | ignore-book | 907 | 9,093 | 907 | 0.9093 | false |
+| reduce+orphan-cancel-ignore+counter-ignore-book | ignore-book | 907 | 9,093 | 907 | 0.9093 | false |
+
+### 7. First Rows / Reason Examples
+
+Normal row (strategy-ready):
+```
+ts=63745383177422, best_bid=12917, best_ask=14500, is_crossed=false, is_locked=false, strategy_ready=true, strategy_reject_reason=ok
+```
+
+Crossed row (not strategy-ready):
+```
+ts=63745437600579, best_bid=14120, best_ask=14062, is_crossed=true, is_locked=false, strategy_ready=false, strategy_reject_reason=crossed_book
+```
+
+### 8. Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/include/orderbook/l2_snapshot.hpp` | Added `StrategyRejectReason` enum, `classify_l2_snapshot()` function, extended `L2SnapshotEntry` with strategy readiness fields |
+| `cpp/qsh_ingest/src/l2_snapshot.cpp` | Updated `l2_csv_header()` and `write_l2_csv()` with new columns |
+| `cpp/qsh_ingest/src/main.cpp` | Updated `cmd_l3_to_l2` to classify snapshots and write strategy readiness counts to summary JSON |
+| `cpp/qsh_ingest/tests/test_l2_strategy_gating.cpp` | New: 14 deterministic tests covering normal/crossed/locked/missing/empty/invalid cases |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added `test_l2_strategy_gating` test target |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunStrategyReadyExport` switch; updated table with strategy readiness columns |
+| `cpp/qsh_ingest/README.md` | Documented strategy readiness, new CSV columns, summary JSON fields, reject reasons |
+
+### 9. Next Recommended Task
+
+**M10V — Trading Lab Data Quality UI: load summary JSON and display strategy-ready status/reason counts**
+
+Then after the UI clearly shows Data Quality:
+**M11 — Normalized microstructure research dataset / first RI-Synthetic lead-lag preparation**
 4. Do NOT change default counter mode until the gating mechanism is in place

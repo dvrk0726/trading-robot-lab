@@ -37,6 +37,9 @@ std::string l2_csv_header(int depth) {
         oss << ",ask_price_" << i << ",ask_qty_" << i;
     }
     oss << ",mid,spread";
+    // M10U: Strategy readiness columns
+    oss << ",best_bid,best_ask,is_crossed,is_locked,strategy_ready,strategy_reject_reason";
+    oss << ",snapshot_index,record_index,tx_index";
     return oss.str();
 }
 
@@ -62,7 +65,17 @@ size_t write_l2_csv(const std::string& path, const std::vector<L2SnapshotEntry>&
                 out << ",0,0";
             }
         }
-        out << "," << snap.mid << "," << snap.spread << "\n";
+        out << "," << snap.mid << "," << snap.spread;
+        // M10U: Strategy readiness fields
+        out << "," << snap.best_bid << "," << snap.best_ask;
+        out << "," << (snap.is_crossed ? "true" : "false");
+        out << "," << (snap.is_locked ? "true" : "false");
+        out << "," << (snap.strategy_ready ? "true" : "false");
+        out << "," << strategy_reject_reason_name(snap.strategy_reject_reason);
+        out << "," << snap.snapshot_index;
+        out << "," << snap.record_index;
+        out << "," << snap.tx_index;
+        out << "\n";
     }
 
     return snapshots.size();

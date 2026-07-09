@@ -3361,6 +3361,16 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     int64_t l2_empty_bid = 0;
     int64_t l2_empty_ask = 0;
 
+    // M10U: Strategy readiness counters
+    int64_t l2_strategy_ready_count = 0;
+    int64_t l2_not_strategy_ready_count = 0;
+    int64_t l2_locked = 0;
+    int64_t l2_missing_best_bid = 0;
+    int64_t l2_missing_best_ask = 0;
+    int64_t l2_empty_book = 0;
+    int64_t l2_invalid_price = 0;
+    int64_t l2_invalid_depth = 0;
+
     // Last event tracking for trace
     OLMsgType last_event_type = OLMsgType::Unknown;
     UID last_order_id = 0;
@@ -3568,6 +3578,12 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                     entry.levels = book.snapshot(depth);
                     entry.mid = book.mid_price();
                     entry.spread = book.spread();
+                    // M10U: Populate strategy readiness fields
+                    entry.best_bid = book.best_bid();
+                    entry.best_ask = book.best_ask();
+                    entry.snapshot_index = static_cast<int>(snapshot_count + 1);
+                    entry.record_index = record_count;
+                    entry.tx_index = tx_counter;
                     snapshots.push_back(entry);
                     ++snapshot_count;
 
@@ -3590,6 +3606,32 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         if (book.tx_index_at_first_crossing() == 0) {
                             book.set_tx_index_at_first_crossing(tx_counter);
                             book.set_records_in_first_crossing_tx(tx_result.records_processed);
+                        }
+                    }
+
+                    // M10U: Classify strategy readiness for this snapshot
+                    auto reason = classify_l2_snapshot(bb, ba, book.bid_depth(), book.ask_depth(), depth);
+                    entry.is_crossed = (bb > 0 && ba > 0 && bb > ba);
+                    entry.is_locked = (bb > 0 && ba > 0 && bb == ba);
+                    entry.strategy_ready = (reason == StrategyRejectReason::Ok);
+                    entry.strategy_reject_reason = reason;
+                    // Update the just-pushed entry
+                    snapshots.back() = entry;
+
+                    // M10U: Count strategy readiness
+                    if (reason == StrategyRejectReason::Ok) {
+                        ++l2_strategy_ready_count;
+                    } else {
+                        ++l2_not_strategy_ready_count;
+                        switch (reason) {
+                            case StrategyRejectReason::CrossedBook:    /* already counted in l2_crossed */ break;
+                            case StrategyRejectReason::LockedBook:     ++l2_locked; break;
+                            case StrategyRejectReason::MissingBestBid: ++l2_missing_best_bid; break;
+                            case StrategyRejectReason::MissingBestAsk: ++l2_missing_best_ask; break;
+                            case StrategyRejectReason::EmptyBook:      ++l2_empty_book; break;
+                            case StrategyRejectReason::InvalidPrice:   ++l2_invalid_price; break;
+                            case StrategyRejectReason::InvalidDepth:   ++l2_invalid_depth; break;
+                            default: break;
                         }
                     }
 
@@ -3799,6 +3841,12 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             entry.levels = book.snapshot(depth);
             entry.mid = book.mid_price();
             entry.spread = book.spread();
+            // M10U: Populate strategy readiness fields
+            entry.best_bid = book.best_bid();
+            entry.best_ask = book.best_ask();
+            entry.snapshot_index = static_cast<int>(snapshot_count + 1);
+            entry.record_index = record_count;
+            entry.tx_index = last_tx_index;
             snapshots.push_back(entry);
             ++snapshot_count;
 
@@ -3964,6 +4012,32 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                     << rec.order_flags << ","
                     << last_repl_act;
                 crossed_context_lines.push_back(oss.str());
+            }
+
+            // M10U: Classify strategy readiness for this snapshot
+            {
+                auto reason = classify_l2_snapshot(bb, ba, book.bid_depth(), book.ask_depth(), depth);
+                auto& back = snapshots.back();
+                back.is_crossed = (bb > 0 && ba > 0 && bb > ba);
+                back.is_locked = (bb > 0 && ba > 0 && bb == ba);
+                back.strategy_ready = (reason == StrategyRejectReason::Ok);
+                back.strategy_reject_reason = reason;
+
+                if (reason == StrategyRejectReason::Ok) {
+                    ++l2_strategy_ready_count;
+                } else {
+                    ++l2_not_strategy_ready_count;
+                    switch (reason) {
+                        case StrategyRejectReason::CrossedBook:    /* already counted */ break;
+                        case StrategyRejectReason::LockedBook:     ++l2_locked; break;
+                        case StrategyRejectReason::MissingBestBid: ++l2_missing_best_bid; break;
+                        case StrategyRejectReason::MissingBestAsk: ++l2_missing_best_ask; break;
+                        case StrategyRejectReason::EmptyBook:      ++l2_empty_book; break;
+                        case StrategyRejectReason::InvalidPrice:   ++l2_invalid_price; break;
+                        case StrategyRejectReason::InvalidDepth:   ++l2_invalid_depth; break;
+                        default: break;
+                    }
+                }
             }
 
             if (max_snapshots > 0 && snapshot_count >= max_snapshots) break;
@@ -4250,6 +4324,18 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         }
     }
     std::cout << "L2 strategy-ready:                " << (has_invalid ? "NO" : "YES") << std::endl;
+    // M10U: Strategy readiness detail
+    std::cout << "\nStrategy readiness:" << std::endl;
+    std::cout << "  snapshots_total:              " << snapshot_count << std::endl;
+    std::cout << "  snapshots_strategy_ready:     " << l2_strategy_ready_count << std::endl;
+    std::cout << "  snapshots_not_strategy_ready: " << l2_not_strategy_ready_count << std::endl;
+    std::cout << "  snapshots_crossed:            " << l2_crossed << std::endl;
+    std::cout << "  snapshots_locked:             " << l2_locked << std::endl;
+    std::cout << "  snapshots_missing_best_bid:   " << l2_missing_best_bid << std::endl;
+    std::cout << "  snapshots_missing_best_ask:   " << l2_missing_best_ask << std::endl;
+    std::cout << "  snapshots_empty_book:         " << l2_empty_book << std::endl;
+    std::cout << "  snapshots_invalid_price:      " << l2_invalid_price << std::endl;
+    std::cout << "  snapshots_invalid_depth:      " << l2_invalid_depth << std::endl;
 
     // M10L: Write machine-readable summary if requested
     if (!summary_out_path.empty()) {
@@ -4295,7 +4381,32 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             summary_file << "  \"tx_index_at_first_crossing\": " << book.tx_index_at_first_crossing() << ",\n";
             summary_file << "  \"records_in_first_crossing_tx\": " << book.records_in_first_crossing_tx() << ",\n";
             summary_file << "  \"records_between_new_session_and_first_crossing\": " << (book.first_crossing_event_record_index() > 0 && book.first_new_session_record_index() > 0 ? book.first_crossing_event_record_index() - book.first_new_session_record_index() : 0) << ",\n";
-            summary_file << "  \"l2_strategy_ready\": " << (has_invalid ? "false" : "true") << "\n";
+            // M10U: Strategy readiness summary fields
+            summary_file << "  \"snapshots_total\": " << snapshot_count << ",\n";
+            summary_file << "  \"snapshots_strategy_ready\": " << l2_strategy_ready_count << ",\n";
+            summary_file << "  \"snapshots_not_strategy_ready\": " << l2_not_strategy_ready_count << ",\n";
+            summary_file << "  \"snapshots_crossed\": " << l2_crossed << ",\n";
+            summary_file << "  \"snapshots_locked\": " << l2_locked << ",\n";
+            summary_file << "  \"snapshots_missing_best_bid\": " << l2_missing_best_bid << ",\n";
+            summary_file << "  \"snapshots_missing_best_ask\": " << l2_missing_best_ask << ",\n";
+            summary_file << "  \"snapshots_empty_book\": " << l2_empty_book << ",\n";
+            summary_file << "  \"snapshots_invalid_price\": " << l2_invalid_price << ",\n";
+            summary_file << "  \"snapshots_invalid_depth\": " << l2_invalid_depth << ",\n";
+            bool all_strategy_ready = (l2_not_strategy_ready_count == 0) && !has_invalid;
+            summary_file << "  \"l2_strategy_ready\": " << (all_strategy_ready ? "true" : "false") << ",\n";
+            double ready_ratio = (snapshot_count > 0) ? static_cast<double>(l2_strategy_ready_count) / snapshot_count : 0.0;
+            summary_file << "  \"strategy_ready_ratio\": " << ready_ratio << ",\n";
+            // Strategy reject reasons breakdown
+            summary_file << "  \"strategy_reject_reasons\": {\n";
+            summary_file << "    \"ok\": " << l2_strategy_ready_count << ",\n";
+            summary_file << "    \"crossed_book\": " << l2_crossed << ",\n";
+            summary_file << "    \"locked_book\": " << l2_locked << ",\n";
+            summary_file << "    \"missing_best_bid\": " << l2_missing_best_bid << ",\n";
+            summary_file << "    \"missing_best_ask\": " << l2_missing_best_ask << ",\n";
+            summary_file << "    \"empty_book\": " << l2_empty_book << ",\n";
+            summary_file << "    \"invalid_price\": " << l2_invalid_price << ",\n";
+            summary_file << "    \"invalid_depth\": " << l2_invalid_depth << "\n";
+            summary_file << "  }\n";
             summary_file << "}\n";
             summary_file.close();
             std::cout << "Summary written to " << summary_out_path << std::endl;

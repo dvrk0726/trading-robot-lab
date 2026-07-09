@@ -116,3 +116,7 @@ add_test(NAME test_orphan_cancel_modes COMMAND test_orphan_cancel_modes)
 add_executable(test_snapshot_audit tests/test_snapshot_audit.cpp)
 target_link_libraries(test_snapshot_audit PRIVATE qsh_lib)
 add_test(NAME test_snapshot_audit COMMAND test_snapshot_audit)
+
+add_executable(test_l2_strategy_gating tests/test_l2_strategy_gating.cpp)
+target_link_libraries(test_l2_strategy_gating PRIVATE qsh_lib)
+add_test(NAME test_l2_strategy_gating COMMAND test_l2_strategy_gating)
