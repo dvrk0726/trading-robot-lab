@@ -6,10 +6,14 @@ Status: ready for implementation
 
 ## Run
 
+Owner only needs to start MiMo:
+
 ```powershell
 git pull
 mimo --model xiaomi/mimo-v2.5-pro --prompt "Выполни M10L_AUTOMATE_REAL_SAMPLE_VALIDATION_AND_DEEP_ORDLOG_SEMANTICS.md"
 ```
+
+MiMo must run build, tests, and real-sample validation by itself. The owner should not have to manually run the standard verification commands unless MiMo reports a failure or asks for help.
 
 If MiMo leaves local changes:
 
@@ -17,12 +21,25 @@ If MiMo leaves local changes:
 .\tools\mimo_save.ps1 "Automate real QSH sample validation"
 ```
 
-Verify:
+Owner final check after MiMo:
+
+```powershell
+git status --short
+git log --oneline -1
+```
+
+## MiMo mandatory local verification
+
+MiMo must run these commands itself before considering the task complete:
 
 ```powershell
 cmake --build build/qsh_ingest --config Release
 ctest --test-dir build/qsh_ingest -C Release --output-on-failure
 ```
+
+MiMo must paste the build/test result into the report.
+
+If build/test fails, MiMo must fix the issue or clearly report the failure and stop. Do not claim success without green tests.
 
 ## Mission
 
@@ -105,11 +122,12 @@ The script must:
 
 ```text
 1. Check whether the local QSH file exists.
-2. Build qsh_ingest if needed or print clear build instructions.
-3. Run a compact set of validation modes.
-4. Print a small comparison table to the console.
-5. Store generated outputs under data/reports/qsh/RTS-3.21/2021-01-05/ only.
-6. Never add generated files to Git.
+2. Build qsh_ingest or clearly fail with instructions.
+3. Run the standard CTest suite.
+4. Run a compact set of real-sample validation modes when QSH exists.
+5. Print a small comparison table to the console.
+6. Store generated outputs under data/reports/qsh/RTS-3.21/2021-01-05/ only.
+7. Never add generated files to Git.
 ```
 
 Default QSH path:
@@ -236,9 +254,9 @@ M10L automated real-sample validation and deep OrdLog semantics
 The report must include:
 
 ```text
-build/test result
+build/test result from MiMo's own run
 whether local QSH was found
-compact validation table
+compact validation table from MiMo's own run
 whether tx-grouped first_missing_order_record_index bug was fixed
 what missing_on_cancel probe shows
 next recommended task
