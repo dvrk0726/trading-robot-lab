@@ -87,6 +87,13 @@ public:
     // Get order count at best ask level.
     int best_ask_order_count() const;
 
+    // Query individual order state (for lifecycle trace).
+    // Returns true if order exists, false otherwise.
+    bool get_order_info(UID order_id, Side& out_side, Price& out_price, Volume& out_qty) const;
+
+    // Set fill semantics mode: "delta" (amount = filled qty) or "rest" (amount = original, fill = amount - amount_rest).
+    void set_fill_delta_mode(bool use_delta) { fill_delta_mode_ = use_delta; }
+
 private:
     // Levels stored as price -> (volume, order_count), sorted.
     // Bid: descending by price (highest first).
@@ -108,6 +115,7 @@ private:
 
     BookErrors errors_;
     Timestamp last_ts_ = 0;
+    bool fill_delta_mode_ = true;  // true: amount=delta (default), false: amount=original, fill=amount-amount_rest
 
     void add_order(const OrderLogRecord& rec);
     void fill_order(const OrderLogRecord& rec);

@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <set>
 #include <filesystem>
 #include <cstring>
 
@@ -47,11 +48,12 @@ static void print_help() {
     std::cout << "                        [--max-diagnostics N]\n";
     std::cout << "                        [--trace-crossed-out <file.csv>] [--max-trace-events N]\n";
     std::cout << "                        [--snapshot-mode event|txend]\n";
-    std::cout << "                        [--trace-order-id <id>] [--trace-order-out <file.csv>]\n";
+    std::cout << "                        [--trace-order-id <id>[,<id>...]] [--trace-order-out <file.csv>]\n";
     std::cout << "                        [--trace-crossed-context N]\n";
     std::cout << "                        [--trace-best-level-orders-out <file.csv>]\n";
     std::cout << "                        [--trace-missing-order-out <file.csv>]\n";
     std::cout << "                        [--auto-trace-crossed-orders-out <file.csv>]\n";
+    std::cout << "                        [--fill-semantics delta|rest]\n";
     std::cout << "                          L3->L2 reconstruction\n";
     std::cout << "\nOptions:\n";
     std::cout << "  --depth N              L2 depth (default: 20)\n";
@@ -64,12 +66,13 @@ static void print_help() {
     std::cout << "  --max-trace-events N   Max trace events (default: 100)\n";
     std::cout << "  --snapshot-mode <mode> Snapshot emission: event (after every record)\n";
     std::cout << "                        or txend (after TxEnd only, default)\n";
-    std::cout << "  --trace-order-id <id> Trace lifecycle of a specific order ID\n";
+    std::cout << "  --trace-order-id <id>[,<id>...] Trace lifecycle of order IDs (comma-separated)\n";
     std::cout << "  --trace-order-out <f> Write order lifecycle trace CSV\n";
     std::cout << "  --trace-crossed-context N  Ring buffer size for first-crossed context (default: 20)\n";
     std::cout << "  --trace-best-level-orders-out <f>  Write best-level orders CSV for crossed snapshots\n";
     std::cout << "  --trace-missing-order-out <f>      Write missing order ID trace CSV\n";
     std::cout << "  --auto-trace-crossed-orders-out <f> Write auto-traced orders from first crossed snapshot\n";
+    std::cout << "  --fill-semantics <mode>  Fill interpretation: delta (default) or rest\n";
     std::cout << "\nSafety:\n";
     std::cout << "  No broker connection. No live trading. Historical files only.\n";
 }
@@ -258,11 +261,12 @@ static int cmd_convert(const std::string& path, const std::string& out_dir) {
 static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records, int64_t max_snapshots,
                         const std::string& out_path, const std::string& diag_path, int64_t max_diagnostics,
                         const std::string& trace_path, int64_t max_trace_events,
-                        SnapshotMode snap_mode, UID trace_order_id, const std::string& order_trace_path,
+                        SnapshotMode snap_mode, const std::vector<UID>& trace_order_ids, const std::string& order_trace_path,
                         int ring_buffer_size,
                         const std::string& best_level_orders_path,
                         const std::string& missing_order_path,
-                        const std::string& auto_trace_crossed_path) {
+                        const std::string& auto_trace_crossed_path,
+                        bool fill_delta_mode) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -276,14 +280,24 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     }
 
     const char* mode_name = (snap_mode == SnapshotMode::Event) ? "event" : "txend";
+    const char* fill_mode_name = fill_delta_mode ? "delta" : "rest";
     std::cout << "Reconstructing L2 (depth=" << depth
-              << ", snapshot_mode=" << mode_name;
+              << ", snapshot_mode=" << mode_name
+              << ", fill_semantics=" << fill_mode_name;
     if (max_records > 0)  std::cout << ", max_records=" << max_records;
     if (max_snapshots > 0) std::cout << ", max_snapshots=" << max_snapshots;
-    if (trace_order_id > 0) std::cout << ", trace_order_id=" << trace_order_id;
+    if (!trace_order_ids.empty()) {
+        std::cout << ", trace_order_ids=[";
+        for (size_t i = 0; i < trace_order_ids.size(); ++i) {
+            if (i > 0) std::cout << ",";
+            std::cout << trace_order_ids[i];
+        }
+        std::cout << "]";
+    }
     std::cout << ") from OrdLog..." << std::endl;
 
     OrderBook book;
+    book.set_fill_delta_mode(fill_delta_mode);
     OrdLogReader reader;
     std::vector<L2SnapshotEntry> snapshots;
     std::vector<L2DiagnosticEntry> diagnostics;
@@ -317,15 +331,19 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     int64_t post_crossed_count = 0;
     std::vector<std::string> crossed_context_lines;
 
-    // Order lifecycle trace
+    // Order lifecycle trace (supports multiple order IDs)
     std::ofstream order_trace_file;
-    bool trace_order_active = (trace_order_id > 0);
+    std::set<UID> trace_order_set(trace_order_ids.begin(), trace_order_ids.end());
+    bool trace_order_active = !trace_order_set.empty();
     if (trace_order_active && !order_trace_path.empty()) {
         order_trace_file.open(order_trace_path);
         if (order_trace_file.is_open()) {
             order_trace_file << "ts,record_index,tx_index,event_type,order_id,side,price,qty,"
-                             << "amount_rest,flags,repl_act,book_best_bid_after,book_best_ask_after,"
-                             << "spread_after\n";
+                             << "amount_rest,flags,repl_act,"
+                             << "book_best_bid_before,book_best_ask_before,"
+                             << "book_best_bid_after,book_best_ask_after,"
+                             << "active_order_qty_before,active_order_qty_after,"
+                             << "active_order_price_before,active_order_price_after\n";
         }
     }
 
@@ -428,10 +446,19 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             ++moved_count;
         }
 
-        // Track book state before apply for missing order trace
+        // Track book state before apply for missing order trace and lifecycle trace
         Price best_bid_before = book.best_bid();
         Price best_ask_before = book.best_ask();
         int64_t missing_before = book.errors().missing_order_id;
+
+        // Track active order state before apply for traced orders
+        bool is_traced_order = trace_order_active && trace_order_set.count(rec.order_id) > 0;
+        Side traced_side_before = Side::Unknown;
+        Price traced_price_before = 0;
+        Volume traced_qty_before = 0;
+        if (is_traced_order) {
+            book.get_order_info(rec.order_id, traced_side_before, traced_price_before, traced_qty_before);
+        }
 
         book.apply(rec);
 
@@ -473,7 +500,13 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         }
 
         // Order lifecycle trace: write if this order matches
-        if (trace_order_active && rec.order_id == trace_order_id && order_trace_file.is_open()) {
+        if (is_traced_order && order_trace_file.is_open()) {
+            // Get active order state after apply
+            Side traced_side_after = Side::Unknown;
+            Price traced_price_after = 0;
+            Volume traced_qty_after = 0;
+            book.get_order_info(rec.order_id, traced_side_after, traced_price_after, traced_qty_after);
+
             order_trace_file << rec.timestamp << ","
                 << record_count << ","
                 << last_tx_index << ","
@@ -485,9 +518,14 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                 << rec.amount_rest << ","
                 << rec.order_flags << ","
                 << last_repl_act << ","
+                << best_bid_before << ","
+                << best_ask_before << ","
                 << book.best_bid() << ","
                 << book.best_ask() << ","
-                << book.spread() << "\n";
+                << traced_qty_before << ","
+                << traced_qty_after << ","
+                << traced_price_before << ","
+                << traced_price_after << "\n";
         }
 
         // Determine if we should emit a snapshot now
@@ -799,10 +837,13 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     // Final strategy-ready status
     std::cout << "\n=== L2 Strategy-Ready Status ===" << std::endl;
     std::cout << "snapshot_mode:                    " << mode_name << std::endl;
+    std::cout << "fill_semantics:                   " << fill_mode_name << std::endl;
     std::cout << "records_processed:                " << record_count << std::endl;
     std::cout << "transactions_seen:                " << transactions_seen << std::endl;
     std::cout << "snapshots_written:                " << snapshot_count << std::endl;
     std::cout << "missing_order_id:                 " << book.errors().missing_order_id << std::endl;
+    std::cout << "amount_mismatch:                  " << book.errors().amount_mismatch << std::endl;
+    std::cout << "negative_level_volume:            " << book.errors().negative_level_volume << std::endl;
     std::cout << "l2_crossed_book_snapshots:        " << l2_crossed << std::endl;
     std::cout << "l2_non_positive_spread_snapshots: " << l2_non_positive_spread << std::endl;
     if (!trace_path.empty()) {
@@ -880,11 +921,12 @@ int main(int argc, char* argv[]) {
             std::cerr << "Usage: qsh-ingest l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N]\n"
                       << "  [--max-snapshots N] [--out <file.csv>] [--diagnostics-out <file.csv>]\n"
                       << "  [--max-diagnostics N] [--trace-crossed-out <file.csv>] [--max-trace-events N]\n"
-                      << "  [--snapshot-mode event|txend] [--trace-order-id <id>] [--trace-order-out <file.csv>]\n"
+                      << "  [--snapshot-mode event|txend] [--trace-order-id <id>[,<id>...]] [--trace-order-out <file.csv>]\n"
                       << "  [--trace-crossed-context N]\n"
                       << "  [--trace-best-level-orders-out <file.csv>]\n"
                       << "  [--trace-missing-order-out <file.csv>]\n"
-                      << "  [--auto-trace-crossed-orders-out <file.csv>]" << std::endl;
+                      << "  [--auto-trace-crossed-orders-out <file.csv>]\n"
+                      << "  [--fill-semantics delta|rest]" << std::endl;
             return 1;
         }
         std::string file_path = argv[2];
@@ -897,39 +939,32 @@ int main(int argc, char* argv[]) {
         std::string diag_path;
         std::string trace_path;
         SnapshotMode snap_mode = SnapshotMode::TxEnd;
-        UID trace_order_id = 0;
+        std::vector<UID> trace_order_ids;
         std::string order_trace_path;
         int ring_buffer_size = 20;
         std::string best_level_orders_path;
         std::string missing_order_path;
         std::string auto_trace_crossed_path;
-        for (int i = 3; i < argc - 1; ++i) {
+        bool fill_delta_mode = true;
+        for (int i = 3; i < argc; ++i) {
             if (std::strcmp(argv[i], "--depth") == 0 && i + 1 < argc) {
-                depth = std::atoi(argv[i + 1]);
-            }
-            if (std::strcmp(argv[i], "--max-records") == 0 && i + 1 < argc) {
-                max_records = std::atoll(argv[i + 1]);
-            }
-            if (std::strcmp(argv[i], "--max-snapshots") == 0 && i + 1 < argc) {
-                max_snapshots = std::atoll(argv[i + 1]);
-            }
-            if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
-                out_path = argv[i + 1];
-            }
-            if (std::strcmp(argv[i], "--diagnostics-out") == 0 && i + 1 < argc) {
-                diag_path = argv[i + 1];
-            }
-            if (std::strcmp(argv[i], "--max-diagnostics") == 0 && i + 1 < argc) {
-                max_diagnostics = std::atoll(argv[i + 1]);
-            }
-            if (std::strcmp(argv[i], "--trace-crossed-out") == 0 && i + 1 < argc) {
-                trace_path = argv[i + 1];
-            }
-            if (std::strcmp(argv[i], "--max-trace-events") == 0 && i + 1 < argc) {
-                max_trace_events = std::atoll(argv[i + 1]);
-            }
-            if (std::strcmp(argv[i], "--snapshot-mode") == 0 && i + 1 < argc) {
-                std::string mode_str = argv[i + 1];
+                depth = std::atoi(argv[++i]);
+            } else if (std::strcmp(argv[i], "--max-records") == 0 && i + 1 < argc) {
+                max_records = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--max-snapshots") == 0 && i + 1 < argc) {
+                max_snapshots = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--diagnostics-out") == 0 && i + 1 < argc) {
+                diag_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--max-diagnostics") == 0 && i + 1 < argc) {
+                max_diagnostics = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--trace-crossed-out") == 0 && i + 1 < argc) {
+                trace_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--max-trace-events") == 0 && i + 1 < argc) {
+                max_trace_events = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--snapshot-mode") == 0 && i + 1 < argc) {
+                std::string mode_str = argv[++i];
                 if (mode_str == "event") {
                     snap_mode = SnapshotMode::Event;
                 } else if (mode_str == "txend") {
@@ -938,30 +973,42 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Unknown snapshot mode: " << mode_str << " (use event or txend)" << std::endl;
                     return 1;
                 }
-            }
-            if (std::strcmp(argv[i], "--trace-order-id") == 0 && i + 1 < argc) {
-                trace_order_id = std::atoll(argv[i + 1]);
-            }
-            if (std::strcmp(argv[i], "--trace-order-out") == 0 && i + 1 < argc) {
-                order_trace_path = argv[i + 1];
-            }
-            if (std::strcmp(argv[i], "--trace-crossed-context") == 0 && i + 1 < argc) {
-                ring_buffer_size = std::atoi(argv[i + 1]);
-            }
-            if (std::strcmp(argv[i], "--trace-best-level-orders-out") == 0 && i + 1 < argc) {
-                best_level_orders_path = argv[i + 1];
-            }
-            if (std::strcmp(argv[i], "--trace-missing-order-out") == 0 && i + 1 < argc) {
-                missing_order_path = argv[i + 1];
-            }
-            if (std::strcmp(argv[i], "--auto-trace-crossed-orders-out") == 0 && i + 1 < argc) {
-                auto_trace_crossed_path = argv[i + 1];
+            } else if (std::strcmp(argv[i], "--trace-order-id") == 0 && i + 1 < argc) {
+                // Parse comma-separated order IDs
+                std::string ids_str = argv[++i];
+                std::istringstream iss(ids_str);
+                std::string token;
+                while (std::getline(iss, token, ',')) {
+                    UID id = std::atoll(token.c_str());
+                    if (id > 0) trace_order_ids.push_back(id);
+                }
+            } else if (std::strcmp(argv[i], "--trace-order-out") == 0 && i + 1 < argc) {
+                order_trace_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--trace-crossed-context") == 0 && i + 1 < argc) {
+                ring_buffer_size = std::atoi(argv[++i]);
+            } else if (std::strcmp(argv[i], "--trace-best-level-orders-out") == 0 && i + 1 < argc) {
+                best_level_orders_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--trace-missing-order-out") == 0 && i + 1 < argc) {
+                missing_order_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--auto-trace-crossed-orders-out") == 0 && i + 1 < argc) {
+                auto_trace_crossed_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--fill-semantics") == 0 && i + 1 < argc) {
+                std::string sem = argv[++i];
+                if (sem == "delta") {
+                    fill_delta_mode = true;
+                } else if (sem == "rest") {
+                    fill_delta_mode = false;
+                } else {
+                    std::cerr << "Unknown fill semantics: " << sem << " (use delta or rest)" << std::endl;
+                    return 1;
+                }
             }
         }
         return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path,
                             max_diagnostics, trace_path, max_trace_events, snap_mode,
-                            trace_order_id, order_trace_path, ring_buffer_size,
-                            best_level_orders_path, missing_order_path, auto_trace_crossed_path);
+                            trace_order_ids, order_trace_path, ring_buffer_size,
+                            best_level_orders_path, missing_order_path, auto_trace_crossed_path,
+                            fill_delta_mode);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

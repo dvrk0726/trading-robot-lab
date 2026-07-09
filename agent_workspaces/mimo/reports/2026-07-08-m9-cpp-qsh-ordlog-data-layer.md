@@ -761,3 +761,166 @@ Expected: `crossed_book_snapshots: 921` (same as M10C txend). If it matches, the
 ### Next Recommended Task
 
 Continue investigating the remaining 921 crossed snapshots (M10C baseline). These are likely caused by stale orders / missing order lifecycle, not by tracing side effects. Use the best-level and missing-order traces to identify root cause.
+
+---
+
+## M10F Fill Cancel Remove amount_rest semantics
+
+Date: 2026-07-09
+Task: M10F_FILL_AMOUNT_REST_SEMANTICS.md
+
+### Problem
+
+Crossed-book snapshots persist in txend mode. The likely root cause is wrong lifecycle semantics for Fill, Cancel, Remove, Move, and `amount_rest` interpretation.
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `include/orderbook/order_book.hpp` | Added `get_order_info()` method for querying individual order state. Added `set_fill_delta_mode()` and `fill_delta_mode_` member for alternative fill semantics. |
+| `src/order_book.cpp` | Implemented `get_order_info()`. Updated `fill_order()` to support two fill modes: delta (amount=filled qty, default) and rest (amount=original qty, fill=amount-amount_rest). |
+| `src/main.cpp` | Added `--fill-semantics delta\|rest` CLI arg. Enhanced `--trace-order-id` to support comma-separated multiple IDs. Expanded lifecycle trace CSV to include before/after book state and active order qty/price. Added `amount_mismatch` and `negative_level_volume` to final output. Added `#include <set>`. |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added `test_fill_semantics` test target. |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_fill_semantics.cpp` | 13 synthetic tests for fill semantics (both delta and rest modes), cancel/remove/move semantics, missing order handling, and `get_order_info` |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 9
+```
+
+New test `test_fill_semantics` covers:
+- Partial fill in delta mode (amount=3, rest=7 → qty reduced by 3)
+- Partial fill in rest mode (amount=10, rest=7 → fill=10-7=3, qty reduced by 3)
+- Full fill removes order in delta mode (amount=10, rest=0)
+- Full fill removes order in rest mode (amount=10, rest=0)
+- Cancel partial semantics (amount_rest=4 → 4 remaining)
+- Cancel full semantics (amount_rest=0 → order removed)
+- Remove semantics (CrossTrade flag → order removed)
+- Move with amount_rest changes quantity
+- Move with amount_rest=0 keeps old amount
+- Missing order does not leave stale active volume
+- Multiple partial fills reduce order correctly
+- get_order_info returns false for unknown order
+- Fill mode preserved across operations
+
+### New CLI Args
+
+```
+--fill-semantics <mode>       Fill interpretation: delta (default) or rest
+--trace-order-id <id>[,<id>...]  Trace lifecycle of multiple order IDs (comma-separated)
+```
+
+### amount_rest Interpretation by Event Type
+
+| Event | `amount` meaning | `amount_rest` meaning | Current handler logic |
+|---|---|---|---|
+| **ADD** | Initial order quantity | = amount (set by reader) | `orders_[id] = {side, price, amount_rest}` |
+| **FILL** (delta mode) | Filled quantity (delta) | Remaining after fill | `fill_amount = rec.amount; info.amount -= fill_amount` |
+| **FILL** (rest mode) | Original order quantity | Remaining after fill | `fill_amount = rec.amount - rec.amount_rest` |
+| **CANCEL** | Not set (0) | Remaining after cancel | `diff = info.amount - rec.amount_rest; info.amount = rec.amount_rest` |
+| **REMOVE** | Not set (0) | 0 (or not set) | `orders_.erase(it); level -= info.amount` |
+| **MOVE** | Not set (uses amount_rest) | New quantity at new price | `new_amount = rec.amount_rest > 0 ? rec.amount_rest : old_amount` |
+
+### Lifecycle Trace Summary for Bid/Ask Order IDs
+
+The `--trace-order-id` now supports comma-separated IDs:
+```
+--trace-order-id 1925033994466246392,1925033994522131746 --trace-order-out lifecycle.csv
+```
+
+CSV columns expanded to:
+```
+ts,record_index,tx_index,event_type,order_id,side,price,qty,
+amount_rest,flags,repl_act,
+book_best_bid_before,book_best_ask_before,
+book_best_bid_after,book_best_ask_after,
+active_order_qty_before,active_order_qty_after,
+active_order_price_before,active_order_price_after
+```
+
+This allows direct observation of:
+- Book state before and after each event
+- Active order quantity before and after each event
+- Active order price before and after each event (detects moves)
+
+### Baseline vs Experimental Counters
+
+The `--fill-semantics` option allows comparing two interpretations on the same real sample:
+
+```
+# Delta mode (default): amount = filled quantity
+qsh_ingest l3-to-l2 <file> --fill-semantics delta --snapshot-mode txend --out delta.csv
+
+# Rest mode: amount = original quantity, fill = amount - amount_rest
+qsh_ingest l3-to-l2 <file> --fill-semantics rest --snapshot-mode txend --out rest.csv
+```
+
+Compare these counters between modes:
+- `crossed_book_snapshots`
+- `missing_order_id`
+- `amount_mismatch`
+- `negative_level_volume`
+
+### Root Cause Hypothesis
+
+**Semantic analysis shows the current delta-mode fill logic is internally consistent** with the test suite. However, the critical question is whether the real QSH data encodes `amount` as:
+- (A) The filled quantity (delta) — current assumption, or
+- (B) The original order quantity — requiring fill = amount - amount_rest
+
+The `--fill-semantics rest` mode provides the alternative interpretation. **Owner must run both modes on the real sample and compare crossed_book_snapshots** to determine which is correct.
+
+Additionally, **319 missing_order_id events** indicate orders referenced by Fill/Cancel/Remove/Move that are not in the active order map. These could be:
+1. Benign: orders already consumed by earlier events
+2. Problematic: orders whose ADD events were missed due to decoding issues
+
+The enhanced lifecycle trace (with before/after state) will help determine which case applies.
+
+### What Remains Unresolved
+
+1. **Owner must run both fill-semantics modes** on the real QSH file to determine correct interpretation
+2. **319 missing_order_id events** need correlation with crossed book state
+3. **7890 crossed snapshots** persist — root cause depends on fill semantics and missing order analysis
+4. **No real QSH file on this system** — experiments must be run by the owner
+
+### Recommended Owner Commands
+
+```powershell
+# Trace the two known crossed orders
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend `
+  --trace-order-id 1925033994466246392,1925033994522131746 `
+  --trace-order-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_lifecycle_trace.csv `
+  --trace-missing-order-out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_missing_orders.csv `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend_delta.csv
+
+# Compare fill semantics: delta vs rest
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend --fill-semantics rest `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend_rest.csv
+```
+
+### Next Recommended Task
+
+1. Owner runs both fill-semantics modes and compares `crossed_book_snapshots`
+2. If rest mode produces fewer crossed: the fill semantics were wrong → switch default to rest
+3. If delta mode is correct: investigate missing_order_id correlation with crossed state
+4. Analyze lifecycle trace for the two known crossed orders to identify stale order root cause
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**

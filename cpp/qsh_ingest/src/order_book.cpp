@@ -67,7 +67,22 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
     }
 
     auto& info = it->second;
-    Volume fill_amount = rec.amount;
+
+    // Two interpretations of fill semantics:
+    // delta mode (default): amount = filled quantity, amount_rest = remaining after fill
+    // rest mode:            amount = original order quantity, fill = amount - amount_rest
+    Volume fill_amount;
+    if (fill_delta_mode_) {
+        fill_amount = rec.amount;
+    } else {
+        // In rest mode: amount is the original quantity, amount_rest is what remains
+        // fill = original - rest = amount - amount_rest
+        fill_amount = rec.amount - rec.amount_rest;
+        if (fill_amount < 0) {
+            ++errors_.amount_mismatch;
+            return;
+        }
+    }
     bool fully_filled = (info.amount <= fill_amount);
 
     // Save side and price before potential erase (info becomes dangling after erase)
@@ -419,6 +434,15 @@ int OrderBook::best_bid_order_count() const {
 int OrderBook::best_ask_order_count() const {
     if (ask_levels_.empty()) return 0;
     return ask_levels_.begin()->second.second;
+}
+
+bool OrderBook::get_order_info(UID order_id, Side& out_side, Price& out_price, Volume& out_qty) const {
+    auto it = orders_.find(order_id);
+    if (it == orders_.end()) return false;
+    out_side = it->second.side;
+    out_price = it->second.price;
+    out_qty = it->second.amount;
+    return true;
 }
 
 }  // namespace qsh

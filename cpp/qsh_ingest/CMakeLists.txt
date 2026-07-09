@@ -84,3 +84,7 @@ add_test(NAME test_best_level_orders COMMAND test_best_level_orders)
 add_executable(test_tracing_side_effects tests/test_tracing_side_effects.cpp)
 target_link_libraries(test_tracing_side_effects PRIVATE qsh_lib)
 add_test(NAME test_tracing_side_effects COMMAND test_tracing_side_effects)
+
+add_executable(test_fill_semantics tests/test_fill_semantics.cpp)
+target_link_libraries(test_fill_semantics PRIVATE qsh_lib)
+add_test(NAME test_fill_semantics COMMAND test_fill_semantics)
