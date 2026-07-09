@@ -108,3 +108,7 @@ add_test(NAME test_orphan_fill_modes COMMAND test_orphan_fill_modes)
 add_executable(test_tx_grouped tests/test_tx_grouped.cpp)
 target_link_libraries(test_tx_grouped PRIVATE qsh_lib)
 add_test(NAME test_tx_grouped COMMAND test_tx_grouped)
+
+add_executable(test_orphan_cancel_modes tests/test_orphan_cancel_modes.cpp)
+target_link_libraries(test_orphan_cancel_modes PRIVATE qsh_lib)
+add_test(NAME test_orphan_cancel_modes COMMAND test_orphan_cancel_modes)

@@ -53,6 +53,10 @@ static void print_help() {
     std::cout << "  check-missing-order <OrdLog.qsh>      Analyze first missing order backward\n";
     std::cout << "  missing-cancel-probe <OrdLog.qsh> [--out <file.csv>] [--max-probes N]\n";
     std::cout << "                        Probe missing_on_cancel orders for prior occurrences\n";
+    std::cout << "  orphan-cancel-audit <OrdLog.qsh> [--out <file.csv>] [--max-audits N]\n";
+    std::cout << "                        Detailed audit of orphan cancel/remove records\n";
+    std::cout << "  first-crossed-root-cause <OrdLog.qsh> [--out-dir <dir>] [--context N]\n";
+    std::cout << "                        Trace the exact orders causing first crossed book\n";
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
     std::cout << "                        [--out <file.csv>] [--diagnostics-out <file.csv>]\n";
     std::cout << "                        [--max-diagnostics N]\n";
@@ -65,6 +69,7 @@ static void print_help() {
     std::cout << "                        [--auto-trace-crossed-orders-out <file.csv>]\n";
     std::cout << "                        [--fill-semantics delta|rest]\n";
     std::cout << "                        [--orphan-fill-mode strict|ignore|reduce-same-price|transaction-rest]\n";
+    std::cout << "                        [--orphan-cancel-mode strict|ignore]\n";
     std::cout << "                        [--book-update-mode per-record|tx-grouped]\n";
     std::cout << "                        [--summary-out <file.json>]\n";
     std::cout << "                          L3->L2 reconstruction\n";
@@ -88,6 +93,8 @@ static void print_help() {
     std::cout << "  --fill-semantics <mode>  Fill interpretation: delta (default) or rest\n";
     std::cout << "  --orphan-fill-mode <mode>  Orphan fill handling: strict (default), ignore,\n";
     std::cout << "                             reduce-same-price, or transaction-rest\n";
+    std::cout << "  --orphan-cancel-mode <mode>  Orphan cancel/remove handling: strict (default),\n";
+    std::cout << "                               or ignore (skip cancel/remove of unknown order)\n";
     std::cout << "  --book-update-mode <mode>  Book update: per-record (default) or tx-grouped\n";
     std::cout << "  --audit                  Include raw decoder state in dump-records output\n";
     std::cout << "\nSafety:\n";
@@ -705,6 +712,639 @@ static int cmd_missing_cancel_probe(const std::string& path, const std::string& 
     return 0;
 }
 
+// M10N: Orphan cancel/remove audit — detailed analysis of missing_on_cancel/remove records
+static int cmd_orphan_cancel_audit(const std::string& path, const std::string& out_path, int64_t max_audits) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: orphan-cancel-audit requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Running orphan cancel/remove audit..." << std::endl;
+
+    // First pass: collect orphan cancel/remove events
+    struct OrphanRecord {
+        int64_t record_index;
+        Timestamp ts;
+        int64_t tx_index;
+        UID order_id;
+        OLMsgType event_type;
+        Side side;
+        Price price;
+        Volume amount;
+        Volume amount_rest;
+        uint16_t flags;
+        Volume repl_act;
+        bool is_system;
+        bool is_non_system;
+        bool is_snapshot;
+        bool is_new_session;
+        bool is_txend;
+        bool has_order_id_field;
+        bool has_price_field;
+        bool has_amount_field;
+    };
+    std::vector<OrphanRecord> orphans;
+
+    OrderBook book;
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+    int64_t tx_counter = 0;
+
+    while (reader.next(file, rec)) {
+        ++record_count;
+
+        if (!is_system_record(rec)) continue;
+
+        if (has_flag(rec.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        if (has_flag(rec.order_flags, OLFlags::NewSession)) {
+            book.clear();
+            continue;
+        }
+
+        int64_t missing_before = book.errors().missing_order_id;
+        book.apply(rec);
+
+        if (book.errors().missing_order_id > missing_before) {
+            // Check if this is a cancel or remove
+            bool is_cancel = (rec.event == OLMsgType::Cancel);
+            bool is_remove = (rec.event == OLMsgType::Remove);
+            if (is_cancel || is_remove) {
+                OrphanRecord o;
+                o.record_index = record_count;
+                o.ts = rec.timestamp;
+                o.tx_index = tx_counter;
+                o.order_id = rec.order_id;
+                o.event_type = rec.event;
+                o.side = rec.side;
+                o.price = rec.price;
+                o.amount = rec.amount;
+                o.amount_rest = rec.amount_rest;
+                o.flags = rec.order_flags;
+                o.repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+                o.is_system = is_system_record(rec);
+                o.is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+                o.is_snapshot = has_flag(rec.order_flags, OLFlags::Snapshot);
+                o.is_new_session = has_flag(rec.order_flags, OLFlags::NewSession);
+                o.is_txend = has_flag(rec.order_flags, OLFlags::TxEnd);
+                o.has_order_id_field = has_flag(rec.entry_flags, OLEntryFlags::OrderId);
+                o.has_price_field = has_flag(rec.entry_flags, OLEntryFlags::Price);
+                o.has_amount_field = has_flag(rec.entry_flags, OLEntryFlags::Amount);
+                orphans.push_back(o);
+
+                if (max_audits > 0 && static_cast<int64_t>(orphans.size()) >= max_audits) {
+                    break;
+                }
+            }
+        }
+    }
+
+    if (orphans.empty()) {
+        std::cout << "No orphan cancel/remove events found." << std::endl;
+        return 0;
+    }
+
+    std::cout << "Found " << orphans.size() << " orphan cancel/remove events." << std::endl;
+
+    // Second pass: search for prior and next occurrences of each order_id
+    file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    // Build set of order_ids to search for
+    std::set<UID> probe_order_ids;
+    for (const auto& o : orphans) {
+        probe_order_ids.insert(o.order_id);
+    }
+
+    struct AuditResult {
+        OrphanRecord orphan;
+        bool prior_add_found = false;
+        int64_t prior_add_index = 0;
+        bool prior_snapshot_found = false;
+        int64_t prior_snapshot_index = 0;
+        bool prior_any_occurrence_found = false;
+        int64_t prior_any_index = 0;
+        bool next_any_occurrence_found = false;
+        int64_t next_any_index = 0;
+        bool near_new_session = false;
+    };
+    std::vector<AuditResult> results;
+    for (const auto& o : orphans) {
+        AuditResult r;
+        r.orphan = o;
+        results.push_back(r);
+    }
+
+    // Scan forward through file for prior and next occurrences
+    OrdLogReader reader2;
+    OrderLogRecord rec2;
+    record_count = 0;
+
+    // Track first occurrences before each orphan
+    std::map<UID, bool> found_add;
+    std::map<UID, int64_t> found_add_idx;
+    std::map<UID, bool> found_snap;
+    std::map<UID, int64_t> found_snap_idx;
+    std::map<UID, bool> found_any;
+    std::map<UID, int64_t> found_any_idx;
+
+    // Track the first orphan index per order_id
+    std::map<UID, int64_t> first_orphan_idx;
+    for (const auto& r : results) {
+        if (first_orphan_idx.find(r.orphan.order_id) == first_orphan_idx.end()) {
+            first_orphan_idx[r.orphan.order_id] = r.orphan.record_index;
+        }
+    }
+
+    while (reader2.next(file, rec2)) {
+        ++record_count;
+
+        // Stop after the last orphan we care about
+        int64_t max_orphan_idx = 0;
+        for (const auto& r : results) {
+            if (r.orphan.record_index > max_orphan_idx) max_orphan_idx = r.orphan.record_index;
+        }
+        if (record_count > max_orphan_idx + 1000) break;  // look 1000 records past last orphan
+
+        if (probe_order_ids.count(rec2.order_id) == 0) continue;
+
+        bool is_snap = has_flag(rec2.order_flags, OLFlags::Snapshot);
+        bool is_new_sess = has_flag(rec2.order_flags, OLFlags::NewSession);
+
+        // Track ADD occurrences (only before first orphan for that order)
+        if (rec2.event == OLMsgType::Add && !found_add.count(rec2.order_id)) {
+            auto foid_it = first_orphan_idx.find(rec2.order_id);
+            if (foid_it != first_orphan_idx.end() && record_count < foid_it->second) {
+                found_add[rec2.order_id] = true;
+                found_add_idx[rec2.order_id] = record_count;
+            }
+        }
+
+        // Track Snapshot occurrences (only before first orphan)
+        if (is_snap && !found_snap.count(rec2.order_id)) {
+            auto foid_it = first_orphan_idx.find(rec2.order_id);
+            if (foid_it != first_orphan_idx.end() && record_count < foid_it->second) {
+                found_snap[rec2.order_id] = true;
+                found_snap_idx[rec2.order_id] = record_count;
+            }
+        }
+
+        // Track any occurrence before first orphan
+        if (!found_any.count(rec2.order_id)) {
+            auto foid_it = first_orphan_idx.find(rec2.order_id);
+            if (foid_it != first_orphan_idx.end() && record_count < foid_it->second) {
+                found_any[rec2.order_id] = true;
+                found_any_idx[rec2.order_id] = record_count;
+            }
+        }
+
+        // Track next occurrence after orphan
+        for (auto& r : results) {
+            if (r.orphan.order_id == rec2.order_id && record_count > r.orphan.record_index && !r.next_any_occurrence_found) {
+                r.next_any_occurrence_found = true;
+                r.next_any_index = record_count;
+            }
+        }
+
+        // Track near NewSession (within 50 records of orphan)
+        if (is_new_sess) {
+            for (auto& r : results) {
+                if (std::abs(record_count - r.orphan.record_index) < 50) {
+                    r.near_new_session = true;
+                }
+            }
+        }
+    }
+
+    // Apply prior occurrence results
+    for (auto& r : results) {
+        UID oid = r.orphan.order_id;
+        if (found_add.count(oid)) {
+            r.prior_add_found = true;
+            r.prior_add_index = found_add_idx[oid];
+        }
+        if (found_snap.count(oid)) {
+            r.prior_snapshot_found = true;
+            r.prior_snapshot_index = found_snap_idx[oid];
+        }
+        if (found_any.count(oid)) {
+            r.prior_any_occurrence_found = true;
+            r.prior_any_index = found_any_idx[oid];
+        }
+    }
+
+    // Write results to CSV
+    if (!out_path.empty()) {
+        std::ofstream csv(out_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+                << "flags_hex,repl_act,is_system,is_non_system,is_snapshot,is_new_session,is_txend,"
+                << "has_order_id_field,has_price_field,has_amount_field,"
+                << "prior_add_found,prior_snapshot_found,prior_any_occurrence_found,"
+                << "next_any_occurrence_found,near_new_session\n";
+
+            for (const auto& r : results) {
+                csv << r.orphan.record_index << ","
+                    << r.orphan.ts << ","
+                    << r.orphan.tx_index << ","
+                    << r.orphan.order_id << ","
+                    << ol_msg_type_name(r.orphan.event_type) << ","
+                    << side_name(r.orphan.side) << ","
+                    << r.orphan.price << ","
+                    << r.orphan.amount << ","
+                    << r.orphan.amount_rest << ","
+                    << "0x" << std::hex << r.orphan.flags << std::dec << ","
+                    << r.orphan.repl_act << ","
+                    << (r.orphan.is_system ? 1 : 0) << ","
+                    << (r.orphan.is_non_system ? 1 : 0) << ","
+                    << (r.orphan.is_snapshot ? 1 : 0) << ","
+                    << (r.orphan.is_new_session ? 1 : 0) << ","
+                    << (r.orphan.is_txend ? 1 : 0) << ","
+                    << (r.orphan.has_order_id_field ? 1 : 0) << ","
+                    << (r.orphan.has_price_field ? 1 : 0) << ","
+                    << (r.orphan.has_amount_field ? 1 : 0) << ","
+                    << (r.prior_add_found ? 1 : 0) << ","
+                    << (r.prior_snapshot_found ? 1 : 0) << ","
+                    << (r.prior_any_occurrence_found ? 1 : 0) << ","
+                    << (r.next_any_occurrence_found ? 1 : 0) << ","
+                    << (r.near_new_session ? 1 : 0) << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote " << results.size() << " audit results to " << out_path << std::endl;
+        } else {
+            std::cerr << "Warning: cannot open output file: " << out_path << std::endl;
+        }
+    }
+
+    // Print summary
+    int64_t with_prior_add = 0;
+    int64_t with_prior_snap = 0;
+    int64_t with_any = 0;
+    int64_t with_next = 0;
+    int64_t near_ns = 0;
+    int64_t system_count = 0;
+    int64_t non_system_count = 0;
+    int64_t snapshot_count = 0;
+    int64_t cancel_count = 0;
+    int64_t remove_count = 0;
+
+    for (const auto& r : results) {
+        if (r.prior_add_found) ++with_prior_add;
+        if (r.prior_snapshot_found) ++with_prior_snap;
+        if (r.prior_any_occurrence_found) ++with_any;
+        if (r.next_any_occurrence_found) ++with_next;
+        if (r.near_new_session) ++near_ns;
+        if (r.orphan.is_system) ++system_count;
+        if (r.orphan.is_non_system) ++non_system_count;
+        if (r.orphan.is_snapshot) ++snapshot_count;
+        if (r.orphan.event_type == OLMsgType::Cancel) ++cancel_count;
+        if (r.orphan.event_type == OLMsgType::Remove) ++remove_count;
+    }
+
+    std::cout << "\nOrphan Cancel/Remove Audit Summary:" << std::endl;
+    std::cout << "  Total orphan cancel/remove: " << results.size() << std::endl;
+    std::cout << "  Cancel events:              " << cancel_count << std::endl;
+    std::cout << "  Remove events:              " << remove_count << std::endl;
+    std::cout << "  System records:             " << system_count << std::endl;
+    std::cout << "  Non-system records:         " << non_system_count << std::endl;
+    std::cout << "  Snapshot records:           " << snapshot_count << std::endl;
+    std::cout << "  With prior ADD:             " << with_prior_add << std::endl;
+    std::cout << "  With prior Snapshot:        " << with_prior_snap << std::endl;
+    std::cout << "  With any prior occurrence:  " << with_any << std::endl;
+    std::cout << "  With next occurrence:       " << with_next << std::endl;
+    std::cout << "  Near NewSession (±50):      " << near_ns << std::endl;
+
+    // Evidence-based conclusion
+    std::cout << "\nEvidence-based conclusion:" << std::endl;
+    if (with_any == 0 && with_next == 0) {
+        std::cout << "  A. Orphan cancel/remove is likely BENIGN — orders never appear anywhere" << std::endl;
+        std::cout << "     in the OrdLog stream. These are likely system-level or cross-session" << std::endl;
+        std::cout << "     orders whose cancel events can be safely ignored for active-book mutation." << std::endl;
+    } else if (with_any > 0) {
+        std::cout << "  B. Orphan cancel/remove indicates DECODER/SPEC MISMATCH — some orders" << std::endl;
+        std::cout << "     have prior occurrences but are not in the active book. Must stay an error." << std::endl;
+    } else {
+        std::cout << "  C. INCONCLUSIVE — keep strict behavior." << std::endl;
+    }
+
+    return 0;
+}
+
+// M10N: First crossed-book root cause diagnostics
+static int cmd_first_crossed_root_cause(const std::string& path, const std::string& out_dir, int context_events) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: first-crossed-root-cause requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Tracing first crossed-book root cause..." << std::endl;
+
+    // Ring buffer for context events before first crossed
+    struct ContextEvent {
+        int64_t record_index;
+        int64_t tx_index;
+        Timestamp ts;
+        OLMsgType event_type;
+        UID order_id;
+        Side side;
+        Price price;
+        Volume amount;
+        Volume amount_rest;
+        uint16_t flags;
+        Volume repl_act;
+    };
+    std::deque<ContextEvent> ring;
+
+    OrderBook book;
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+    int64_t tx_counter = 0;
+    bool first_crossed_found = false;
+    int64_t first_crossed_record = 0;
+    int64_t post_crossed_count = 0;
+    std::vector<ContextEvent> post_crossed_events;
+
+    // Best bid/ask orders at first crossed
+    Price first_crossed_bb = 0;
+    Price first_crossed_ba = 0;
+    std::vector<UID> first_crossed_bid_ids;
+    std::vector<UID> first_crossed_ask_ids;
+
+    // Captured order info at moment of first crossed detection
+    struct BestOrderInfo {
+        UID order_id = 0;
+        Side side = Side::Unknown;
+        Price price = 0;
+        Volume qty = 0;
+    };
+    std::vector<BestOrderInfo> captured_bid_orders;
+    std::vector<BestOrderInfo> captured_ask_orders;
+
+    // Lifecycle tracking for best-level orders
+    struct OrderLifecycle {
+        UID order_id = 0;
+        Side side = Side::Unknown;
+        Price add_price = 0;
+        Volume add_amount = 0;
+        int64_t add_record = 0;
+        Timestamp add_ts = 0;
+        bool had_valid_add = false;
+        std::vector<std::string> events;  // event descriptions
+    };
+    std::map<UID, OrderLifecycle> lifecycles;
+
+    // Collect lifecycle events for best-level orders
+    std::set<UID> tracked_orders;
+
+    while (reader.next(file, rec)) {
+        ++record_count;
+
+        if (has_flag(rec.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        if (has_flag(rec.order_flags, OLFlags::NewSession)) {
+            book.clear();
+            ring.clear();
+            tracked_orders.clear();
+            lifecycles.clear();
+            continue;
+        }
+
+        if (!is_system_record(rec)) continue;
+
+        // Track lifecycle of tracked orders
+        if (tracked_orders.count(rec.order_id) > 0) {
+            auto& lc = lifecycles[rec.order_id];
+            std::ostringstream ev;
+            ev << record_count << ":" << ol_msg_type_name(rec.event)
+               << " p=" << rec.price << " a=" << rec.amount << " r=" << rec.amount_rest;
+            lc.events.push_back(ev.str());
+        }
+
+        // Ring buffer: push current event
+        ContextEvent ce;
+        ce.record_index = record_count;
+        ce.tx_index = tx_counter;
+        ce.ts = rec.timestamp;
+        ce.event_type = rec.event;
+        ce.order_id = rec.order_id;
+        ce.side = rec.side;
+        ce.price = rec.price;
+        ce.amount = rec.amount;
+        ce.amount_rest = rec.amount_rest;
+        ce.flags = rec.order_flags;
+        ce.repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+        ring.push_back(ce);
+        while (static_cast<int>(ring.size()) > context_events) {
+            ring.pop_front();
+        }
+
+        book.apply(rec);
+
+        // Check for crossed book
+        if (book.bid_depth() > 0 && book.ask_depth() > 0) {
+            Price bb = book.best_bid();
+            Price ba = book.best_ask();
+            if (bb > 0 && ba > 0 && bb >= ba) {
+                if (!first_crossed_found) {
+                    first_crossed_found = true;
+                    first_crossed_record = record_count;
+                    first_crossed_bb = bb;
+                    first_crossed_ba = ba;
+                    first_crossed_bid_ids = book.best_bid_order_ids(20);
+                    first_crossed_ask_ids = book.best_ask_order_ids(20);
+
+                    // Capture order info at this moment (before loop continues)
+                    for (UID id : first_crossed_bid_ids) {
+                        BestOrderInfo info;
+                        info.order_id = id;
+                        book.get_order_info(id, info.side, info.price, info.qty);
+                        captured_bid_orders.push_back(info);
+                    }
+                    for (UID id : first_crossed_ask_ids) {
+                        BestOrderInfo info;
+                        info.order_id = id;
+                        book.get_order_info(id, info.side, info.price, info.qty);
+                        captured_ask_orders.push_back(info);
+                    }
+
+                    // Start tracking best-level orders
+                    for (UID id : first_crossed_bid_ids) {
+                        tracked_orders.insert(id);
+                        auto& lc = lifecycles[id];
+                        lc.order_id = id;
+                        lc.side = Side::Buy;
+                    }
+                    for (UID id : first_crossed_ask_ids) {
+                        tracked_orders.insert(id);
+                        auto& lc = lifecycles[id];
+                        lc.order_id = id;
+                        lc.side = Side::Sell;
+                    }
+
+                    // Check if tracked orders had valid ADD path
+                    // We need a second pass for this — for now, mark as needing check
+                }
+
+                // Collect post-crossed events
+                if (first_crossed_found && post_crossed_count < context_events) {
+                    ++post_crossed_count;
+                    post_crossed_events.push_back(ce);
+                }
+            }
+        }
+
+        // Track ADD events for lifecycles
+        if (rec.event == OLMsgType::Add && tracked_orders.count(rec.order_id) > 0) {
+            auto& lc = lifecycles[rec.order_id];
+            if (!lc.had_valid_add) {
+                lc.had_valid_add = true;
+                lc.add_price = rec.price;
+                lc.add_amount = rec.amount_rest;
+                lc.add_record = record_count;
+                lc.add_ts = rec.timestamp;
+            }
+        }
+    }
+
+    if (!first_crossed_found) {
+        std::cout << "No crossed book found in the file." << std::endl;
+        return 0;
+    }
+
+    std::cout << "\nFirst crossed book at record " << first_crossed_record << std::endl;
+    std::cout << "  best_bid: " << first_crossed_bb << std::endl;
+    std::cout << "  best_ask: " << first_crossed_ba << std::endl;
+
+    // Second pass: check if best-level orders had prior ADD events
+    file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    OrdLogReader reader2;
+    OrderLogRecord rec2;
+    record_count = 0;
+
+    while (reader2.next(file, rec2)) {
+        ++record_count;
+        if (record_count >= first_crossed_record) break;
+
+        if (rec2.event == OLMsgType::Add && tracked_orders.count(rec2.order_id) > 0) {
+            auto& lc = lifecycles[rec2.order_id];
+            if (!lc.had_valid_add) {
+                lc.had_valid_add = true;
+                lc.add_price = rec2.price;
+                lc.add_amount = rec2.amount_rest;
+                lc.add_record = record_count;
+                lc.add_ts = rec2.timestamp;
+            }
+        }
+    }
+
+    // Create report directory
+    if (!out_dir.empty()) {
+        std::filesystem::create_directories(out_dir);
+    }
+
+    // Write first_crossed_root_cause.csv
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_root_cause.csv" : out_dir + "/first_crossed_root_cause.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "first_crossed_book_record_index\n";
+            csv << first_crossed_record << "\n";
+            csv.close();
+            std::cout << "Wrote root cause to " << csv_path << std::endl;
+        }
+    }
+
+    // Write first_crossed_best_orders.csv (using captured info at moment of detection)
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_best_orders.csv" : out_dir + "/first_crossed_best_orders.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "side,order_id,price,qty_at_crossed\n";
+            for (const auto& info : captured_bid_orders) {
+                csv << side_name(info.side) << "," << info.order_id << "," << info.price << "," << info.qty << "\n";
+            }
+            for (const auto& info : captured_ask_orders) {
+                csv << side_name(info.side) << "," << info.order_id << "," << info.price << "," << info.qty << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote best orders to " << csv_path << std::endl;
+        }
+    }
+
+    // Write first_crossed_lifecycle.csv
+    {
+        std::string csv_path = out_dir.empty() ? "first_crossed_lifecycle.csv" : out_dir + "/first_crossed_lifecycle.csv";
+        std::ofstream csv(csv_path);
+        if (csv.is_open()) {
+            csv << "order_id,side,had_valid_add,add_record,add_ts,add_price,add_amount,event_count,events\n";
+            for (const auto& [id, lc] : lifecycles) {
+                csv << lc.order_id << ","
+                    << side_name(lc.side) << ","
+                    << (lc.had_valid_add ? "YES" : "NO") << ","
+                    << lc.add_record << ","
+                    << lc.add_ts << ","
+                    << lc.add_price << ","
+                    << lc.add_amount << ","
+                    << lc.events.size() << ",";
+                for (size_t i = 0; i < lc.events.size(); ++i) {
+                    if (i > 0) csv << ";";
+                    csv << lc.events[i];
+                }
+                csv << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote lifecycle to " << csv_path << std::endl;
+        }
+    }
+
+    // Print summary
+    std::cout << "\nFirst Crossed Root Cause Summary:" << std::endl;
+    std::cout << "  First crossed record:     " << first_crossed_record << std::endl;
+    std::cout << "  Best bid:                 " << first_crossed_bb << std::endl;
+    std::cout << "  Best ask:                 " << first_crossed_ba << std::endl;
+    std::cout << "  Best bid order count:     " << first_crossed_bid_ids.size() << std::endl;
+    std::cout << "  Best ask order count:     " << first_crossed_ask_ids.size() << std::endl;
+
+    int64_t valid_add_count = 0;
+    int64_t no_add_count = 0;
+    for (const auto& [id, lc] : lifecycles) {
+        if (lc.had_valid_add) ++valid_add_count;
+        else ++no_add_count;
+    }
+    std::cout << "  Orders with valid ADD:    " << valid_add_count << std::endl;
+    std::cout << "  Orders without ADD:       " << no_add_count << std::endl;
+
+    return 0;
+}
+
 static int cmd_convert(const std::string& path, const std::string& out_dir) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
@@ -764,7 +1404,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         SnapshotRecordsMode snapshot_records_mode = SnapshotRecordsMode::Ignore,
                         OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict,
                         BookUpdateMode book_update_mode = BookUpdateMode::PerRecord,
-                        const std::string& summary_out_path = "") {
+                        const std::string& summary_out_path = "",
+                        OrphanCancelMode orphan_cancel_mode = OrphanCancelMode::Strict) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -782,7 +1423,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::cout << "Reconstructing L2 (depth=" << depth
               << ", snapshot_mode=" << mode_name
               << ", fill_semantics=" << fill_mode_name
-              << ", orphan_fill_mode=" << orphan_fill_mode_name(orphan_fill_mode);
+              << ", orphan_fill_mode=" << orphan_fill_mode_name(orphan_fill_mode)
+              << ", orphan_cancel_mode=" << orphan_cancel_mode_name(orphan_cancel_mode);
     if (max_records > 0)  std::cout << ", max_records=" << max_records;
     if (max_snapshots > 0) std::cout << ", max_snapshots=" << max_snapshots;
     if (!trace_order_ids.empty()) {
@@ -798,6 +1440,7 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     OrderBook book;
     book.set_fill_delta_mode(fill_delta_mode);
     book.set_orphan_fill_mode(orphan_fill_mode);
+    book.set_orphan_cancel_mode(orphan_cancel_mode);
     OrdLogReader reader;
     std::vector<L2SnapshotEntry> snapshots;
     std::vector<L2DiagnosticEntry> diagnostics;
@@ -1583,6 +2226,9 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::cout << "snapshot_mode:                    " << mode_name << std::endl;
     std::cout << "snapshot_records_mode:            " << snapshot_records_mode_name << std::endl;
     std::cout << "fill_semantics:                   " << fill_mode_name << std::endl;
+    std::cout << "orphan_cancel_mode:               " << orphan_cancel_mode_name(orphan_cancel_mode) << std::endl;
+    std::cout << "orphan_cancel_ignored:            " << book.errors().orphan_cancel_ignored << std::endl;
+    std::cout << "orphan_remove_ignored:            " << book.errors().orphan_remove_ignored << std::endl;
     std::cout << "records_processed:                " << record_count << std::endl;
     std::cout << "transactions_seen:                " << transactions_seen << std::endl;
     std::cout << "snapshots_written:                " << snapshot_count << std::endl;
@@ -1632,6 +2278,9 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             summary_file << "  \"snapshot_records_mode\": \"" << snapshot_records_mode_name << "\",\n";
             summary_file << "  \"fill_semantics\": \"" << fill_mode_name << "\",\n";
             summary_file << "  \"orphan_fill_mode\": \"" << orphan_fill_mode_name(orphan_fill_mode) << "\",\n";
+            summary_file << "  \"orphan_cancel_mode\": \"" << orphan_cancel_mode_name(orphan_cancel_mode) << "\",\n";
+            summary_file << "  \"orphan_cancel_ignored\": " << book.errors().orphan_cancel_ignored << ",\n";
+            summary_file << "  \"orphan_remove_ignored\": " << book.errors().orphan_remove_ignored << ",\n";
             summary_file << "  \"records_processed\": " << record_count << ",\n";
             summary_file << "  \"transactions_seen\": " << transactions_seen << ",\n";
             summary_file << "  \"snapshots_written\": " << snapshot_count << ",\n";
@@ -1754,6 +2403,42 @@ int main(int argc, char* argv[]) {
         return cmd_missing_cancel_probe(file_path, out_path, max_probes);
     }
 
+    if (cmd == "orphan-cancel-audit") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest orphan-cancel-audit <OrdLog.qsh> [--out <file.csv>] [--max-audits N]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_path = "orphan_cancel_audit.csv";
+        int64_t max_audits = 200;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--max-audits") == 0 && i + 1 < argc) {
+                max_audits = std::atoll(argv[++i]);
+            }
+        }
+        return cmd_orphan_cancel_audit(file_path, out_path, max_audits);
+    }
+
+    if (cmd == "first-crossed-root-cause") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest first-crossed-root-cause <OrdLog.qsh> [--out-dir <dir>] [--context N]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_dir = "data/reports/qsh";
+        int context_events = 40;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--out-dir") == 0 && i + 1 < argc) {
+                out_dir = argv[++i];
+            } else if (std::strcmp(argv[i], "--context") == 0 && i + 1 < argc) {
+                context_events = std::atoi(argv[++i]);
+            }
+        }
+        return cmd_first_crossed_root_cause(file_path, out_dir, context_events);
+    }
+
     if (cmd == "l3-to-l2") {
         if (argc < 3) {
             std::cerr << "Usage: qsh-ingest l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N]\n"
@@ -1766,6 +2451,7 @@ int main(int argc, char* argv[]) {
                       << "  [--auto-trace-crossed-orders-out <file.csv>]\n"
                       << "  [--fill-semantics delta|rest]\n"
                       << "  [--orphan-fill-mode strict|ignore|reduce-same-price|transaction-rest]\n"
+                      << "  [--orphan-cancel-mode strict|ignore]\n"
                       << "  [--book-update-mode per-record|tx-grouped]\n"
                       << "  [--snapshot-records-mode ignore|load|marker]" << std::endl;
             return 1;
@@ -1789,6 +2475,7 @@ int main(int argc, char* argv[]) {
         std::string auto_trace_crossed_path;
         bool fill_delta_mode = true;
         OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict;
+        OrphanCancelMode orphan_cancel_mode = OrphanCancelMode::Strict;
         BookUpdateMode book_update_mode = BookUpdateMode::PerRecord;
         std::string summary_out_path;
         for (int i = 3; i < argc; ++i) {
@@ -1873,6 +2560,16 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Unknown orphan fill mode: " << mode_str << " (use strict, ignore, reduce-same-price, or transaction-rest)" << std::endl;
                     return 1;
                 }
+            } else if (std::strcmp(argv[i], "--orphan-cancel-mode") == 0 && i + 1 < argc) {
+                std::string mode_str = argv[++i];
+                if (mode_str == "strict") {
+                    orphan_cancel_mode = OrphanCancelMode::Strict;
+                } else if (mode_str == "ignore") {
+                    orphan_cancel_mode = OrphanCancelMode::Ignore;
+                } else {
+                    std::cerr << "Unknown orphan cancel mode: " << mode_str << " (use strict or ignore)" << std::endl;
+                    return 1;
+                }
             } else if (std::strcmp(argv[i], "--book-update-mode") == 0 && i + 1 < argc) {
                 std::string mode_str = argv[++i];
                 if (mode_str == "per-record") {
@@ -1892,7 +2589,7 @@ int main(int argc, char* argv[]) {
                             trace_order_ids, order_trace_path, ring_buffer_size,
                             best_level_orders_path, missing_order_path, auto_trace_crossed_path,
                             fill_delta_mode, snapshot_records_mode, orphan_fill_mode,
-                            book_update_mode, summary_out_path);
+                            book_update_mode, summary_out_path, orphan_cancel_mode);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

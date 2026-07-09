@@ -6,7 +6,9 @@ param(
     [string]$QshPath = ".\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh",
     [string]$ReportDir = ".\data\reports\qsh\RTS-3.21\2021-01-05",
     [switch]$SkipBuild,
-    [switch]$RunMissingCancelProbe
+    [switch]$RunMissingCancelProbe,
+    [switch]$RunOrphanCancelAudit,
+    [switch]$RunFirstCrossedProbe
 )
 
 $ErrorActionPreference = "Continue"
@@ -149,6 +151,9 @@ foreach ($mode in $modes) {
             non_positive_spread_snapshots   = $summary.non_positive_spread_snapshots
             first_missing_order_record_index = $summary.first_missing_order_record_index
             first_crossed_book_record_index = $summary.first_crossed_book_record_index
+            orphan_cancel_mode              = $summary.orphan_cancel_mode
+            orphan_cancel_ignored           = $summary.orphan_cancel_ignored
+            orphan_remove_ignored           = $summary.orphan_remove_ignored
             l2_strategy_ready               = $summary.l2_strategy_ready
         }
         Write-Host " OK" -ForegroundColor Green
@@ -210,6 +215,38 @@ if ($RunMissingCancelProbe) {
 } else {
     Write-Host ""
     Write-Host "Tip: run with -RunMissingCancelProbe to also probe missing_on_cancel orders." -ForegroundColor DarkGray
+}
+
+# --- 9. Orphan-cancel-audit (optional) ---
+if ($RunOrphanCancelAudit) {
+    Write-Host ""
+    Write-Host "Running orphan-cancel-audit..." -ForegroundColor Cyan
+    $auditOut = "$ReportDirFull\orphan_cancel_audit.csv"
+    & $ExePath "orphan-cancel-audit" $QshFullPath "--out" $auditOut "--max-audits" "200" 2>&1 | Write-Host
+    if (Test-Path $auditOut) {
+        Write-Host "Audit output: $auditOut" -ForegroundColor Green
+    } else {
+        Write-Host "Audit output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunOrphanCancelAudit for detailed orphan cancel/remove audit." -ForegroundColor DarkGray
+}
+
+# --- 10. First-crossed-root-cause (optional) ---
+if ($RunFirstCrossedProbe) {
+    Write-Host ""
+    Write-Host "Running first-crossed-root-cause..." -ForegroundColor Cyan
+    & $ExePath "first-crossed-root-cause" $QshFullPath "--out-dir" $ReportDirFull "--context" "40" 2>&1 | Write-Host
+    $rootCauseFile = "$ReportDirFull\first_crossed_root_cause.csv"
+    if (Test-Path $rootCauseFile) {
+        Write-Host "Root cause output: $ReportDirFull" -ForegroundColor Green
+    } else {
+        Write-Host "Root cause output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunFirstCrossedProbe for first crossed-book root cause trace." -ForegroundColor DarkGray
 }
 
 # --- 9. Summary ---

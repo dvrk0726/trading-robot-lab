@@ -30,6 +30,20 @@ enum class OrphanFillMode {
     TransactionRest   // Use amount_rest to update most recent resting order in same transaction
 };
 
+// M10N: Orphan cancel/remove handling mode
+enum class OrphanCancelMode {
+    Strict,  // Default: count missing_order_id for cancel/remove of unknown order
+    Ignore   // Skip cancel/remove of unknown order without mutating book
+};
+
+inline const char* orphan_cancel_mode_name(OrphanCancelMode m) {
+    switch (m) {
+        case OrphanCancelMode::Strict: return "strict";
+        case OrphanCancelMode::Ignore: return "ignore";
+        default:                       return "unknown";
+    }
+}
+
 inline const char* orphan_fill_mode_name(OrphanFillMode m) {
     switch (m) {
         case OrphanFillMode::Strict:          return "strict";
@@ -95,6 +109,10 @@ struct BookErrors {
     int64_t orphan_fill_transaction_rest_updates = 0;
     int64_t crossed_book_snapshots = 0;
     int64_t non_positive_spread_snapshots = 0;
+
+    // M10N: Orphan cancel/remove counters
+    int64_t orphan_cancel_ignored = 0;
+    int64_t orphan_remove_ignored = 0;
 
     // M10K: Transaction-grouped mode counters
     int64_t transactions_grouped = 0;
@@ -180,6 +198,9 @@ public:
     // M10J: Set orphan fill handling mode.
     void set_orphan_fill_mode(OrphanFillMode mode) { orphan_fill_mode_ = mode; }
 
+    // M10N: Set orphan cancel/remove handling mode.
+    void set_orphan_cancel_mode(OrphanCancelMode mode) { orphan_cancel_mode_ = mode; }
+
     // M10G: Record index of first missing_order_id event (for timing diagnostics)
     int64_t first_missing_order_record_index() const { return first_missing_order_record_index_; }
     void set_first_missing_order_record_index(int64_t idx) {
@@ -221,6 +242,7 @@ private:
     Timestamp last_ts_ = 0;
     bool fill_delta_mode_ = true;  // true: amount=delta (default), false: amount=original, fill=amount-amount_rest
     OrphanFillMode orphan_fill_mode_ = OrphanFillMode::Strict;  // M10J: orphan fill handling mode
+    OrphanCancelMode orphan_cancel_mode_ = OrphanCancelMode::Strict;  // M10N: orphan cancel/remove handling mode
 
     void add_order(const OrderLogRecord& rec);
     void fill_order(const OrderLogRecord& rec);

@@ -154,6 +154,17 @@ qsh-ingest dump-records <OrdLog.qsh> --dump-records-out audit.csv \
 # transaction-rest: use amount_rest to update most recent resting order (not yet implemented)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-fill-mode reduce-same-price --out l2_snapshots.csv
 
+# Experimental: orphan cancel/remove mode (M10N)
+# strict: default, count missing_order_id for cancel/remove of unknown order
+# ignore: skip cancel/remove of unknown order without mutating book
+qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-cancel-mode ignore --out l2_snapshots.csv
+
+# Orphan cancel/remove audit (M10N)
+qsh-ingest orphan-cancel-audit <OrdLog.qsh> --out orphan_cancel_audit.csv --max-audits 200
+
+# First crossed-book root cause trace (M10N)
+qsh-ingest first-crossed-root-cause <OrdLog.qsh> --out-dir data/reports/qsh --context 40
+
 # Experimental: book update mode (M10K)
 # per-record: default, apply each record individually
 # tx-grouped: group records by TxEnd, apply as transaction batch, emit snapshot after TxEnd

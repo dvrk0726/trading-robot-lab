@@ -284,6 +284,10 @@ void OrderBook::fill_order(const OrderLogRecord& rec) {
 void OrderBook::cancel_order(const OrderLogRecord& rec) {
     auto it = orders_.find(rec.order_id);
     if (it == orders_.end()) {
+        if (orphan_cancel_mode_ == OrphanCancelMode::Ignore) {
+            ++errors_.orphan_cancel_ignored;
+            return;
+        }
         ++errors_.missing_order_id;
         ++errors_.missing_on_cancel;
         if (rec.side == Side::Buy) ++errors_.missing_on_buy;
@@ -372,6 +376,10 @@ void OrderBook::cancel_order(const OrderLogRecord& rec) {
 void OrderBook::remove_order(const OrderLogRecord& rec) {
     auto it = orders_.find(rec.order_id);
     if (it == orders_.end()) {
+        if (orphan_cancel_mode_ == OrphanCancelMode::Ignore) {
+            ++errors_.orphan_remove_ignored;
+            return;
+        }
         ++errors_.missing_order_id;
         ++errors_.missing_on_remove;
         if (rec.side == Side::Buy) ++errors_.missing_on_buy;

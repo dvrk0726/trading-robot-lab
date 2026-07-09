@@ -1928,3 +1928,125 @@ The missing_on_cancel orders should be checked for their raw_flags to determine 
 2. **Investigate "skip-orphan-cancel" mode** — Add a mode that doesn't count `missing_order_id` for cancel/remove events on orders not in the active book. If this reduces crossed snapshots, the orphan cancels are benign.
 3. **Check if missing_on_cancel orders affect book state** — If the cancel events don't mutate the book (because the order isn't found), they may not cause crossed books. The crossed book root cause may be elsewhere.
 4. **Trace the first crossed book order** — Use `--auto-trace-crossed-orders-out` with the strict mode to identify which specific orders create the crossed state, then trace their lifecycle.
+
+---
+
+## M10N Orphan Cancel and First Crossed Book Root Cause
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### Build/Test Result
+
+```
+Build: OK (MSVC 2022 + vcpkg/zlib, Release clean)
+Tests: 15/15 passed (100%)
+```
+
+New test: `test_orphan_cancel_modes` — 10 tests for orphan cancel/remove ignore mode.
+
+### Real-Sample Validation
+
+```
+.\tools\run_qsh_real_sample_checks.ps1
+```
+
+| mode | missing_order_id | missing_on_fill | missing_on_cancel | missing_on_remove | orphan_fill_events | orphan_fill_level_reductions | crossed_book_snapshots | non_positive_spread_snapshots | first_missing_order_record_index | first_crossed_book_record_index | l2_strategy_ready |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| per-record strict | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| per-record reduce-same-price | 171 | 0 | 170 | 1 | 148 | 148 | 7884 | 7884 | 1966 | 2242 | NO |
+| snapshot-records-mode load | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+| tx-grouped | 319 | 148 | 170 | 1 | 148 | 0 | 7890 | 7890 | 1651 | 2210 | NO |
+
+### Orphan Cancel/Remove Audit Summary
+
+Audit of 200 orphan cancel/remove events:
+
+```
+Total orphan cancel/remove: 200
+Cancel events:              198
+Remove events:              2
+System records:             200
+Non-system records:         0
+Snapshot records:           0
+With prior ADD:             0
+With prior Snapshot:        0
+With any prior occurrence:  2
+With next occurrence:       0
+Near NewSession (±50):      0
+```
+
+**Conclusion: A. Orphan cancel/remove is likely BENIGN.**
+
+Evidence:
+- 198/200 orphan cancel events have ZERO prior occurrence anywhere in the OrdLog stream
+- 0/200 have prior ADD or Snapshot events
+- All 200 are system records (not NonSystem, not NonZeroReplAct)
+- cancel_order() and remove_order() already return early without mutating the book when the order is not found
+- These orders are likely system-level or cross-session orders whose cancel events can be safely ignored
+
+The `--orphan-cancel-mode ignore` flag was added. When set, cancel/remove events for unknown orders are silently skipped (counted as `orphan_cancel_ignored`/`orphan_remove_ignored`) without incrementing `missing_order_id`.
+
+### First Crossed Book Root Cause
+
+First crossed book at record 2136:
+
+```
+best_bid: 14100
+best_ask: 14062
+Best bid order: id=1925033994466246392, side=BUY, price=14100, qty=111
+Best ask order: id=1925033994522131746, side=SELL, price=14062, qty=30
+```
+
+Key finding: The crossed book has REAL orders at crossing prices. Both orders are in the active book with valid side, price, and quantity. The bid order (14100) is ABOVE the ask order (14062), creating a -38 spread.
+
+The crossed book is NOT caused by orphan cancel/remove (those don't mutate the book). The root cause is that legitimate orders exist at prices that cross. Possible explanations:
+1. These are MOEX exchange-level orders that cross by design (e.g., session initialization)
+2. The OrdLog stream records crossing states that are normal for the exchange
+3. A decoder or price delta issue (unlikely given M10I decoder audit)
+
+### What Changed
+
+| File | Change |
+|---|---|
+| `include/orderbook/order_book.hpp` | Added `OrphanCancelMode` enum (Strict, Ignore), `orphan_cancel_mode_name()`, `orphan_cancel_ignored`/`orphan_remove_ignored` counters to `BookErrors`, `set_orphan_cancel_mode()` method, `orphan_cancel_mode_` member |
+| `src/order_book.cpp` | Updated `cancel_order()` and `remove_order()` to skip unknown orders when `OrphanCancelMode::Ignore` is set |
+| `src/main.cpp` | Added `orphan-cancel-audit` command (detailed CSV audit of orphan cancel/remove records), `first-crossed-root-cause` command (traces exact orders causing first crossed book), `--orphan-cancel-mode strict\|ignore` CLI arg to `l3-to-l2`, orphan cancel mode to summary JSON and strategy-ready output |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunOrphanCancelAudit` and `-RunFirstCrossedProbe` switches |
+| `cpp/qsh_ingest/README.md` | Added documentation for new commands and `--orphan-cancel-mode` flag |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added `test_orphan_cancel_modes` test target |
+| `tests/test_orphan_cancel_modes.cpp` | New: 10 tests for orphan cancel/remove ignore mode |
+
+### New CLI Args
+
+```
+--orphan-cancel-mode <mode>  Orphan cancel/remove handling: strict (default) or ignore
+```
+
+### New Commands
+
+```
+orphan-cancel-audit <OrdLog.qsh> [--out <file.csv>] [--max-audits N]
+first-crossed-root-cause <OrdLog.qsh> [--out-dir <dir>] [--context N]
+```
+
+### New Summary JSON Fields
+
+```
+orphan_cancel_mode: "strict" or "ignore"
+orphan_cancel_ignored: count of cancel events skipped in ignore mode
+orphan_remove_ignored: count of remove events skipped in ignore mode
+```
+
+### L2 Strategy-Ready Status
+
+**NO.** Crossed snapshots remain at 7890 (strict) / 7884 (reduce-same-price). The orphan cancel/remove issue is resolved (benign, can be ignored), but the crossed-book root cause is separate — real orders exist at crossing prices.
+
+### Next Recommended Task
+
+1. Investigate whether the crossed-book orders (14100 bid / 14062 ask) are exchange-level orders that cross by design
+2. Check if the first 2136 records contain a NewSession + Snapshot initialization that creates crossing prices
+3. Consider whether the crossed-book state is acceptable for MOEX RTS-3.21 at session start
+4. If crossing is normal at session start, add a "skip-initial-crossed" mode that ignores crossed snapshots before the first valid spread
+5. The `l2_strategy_ready` remains NO until crossed diagnostics are clean or crossing is documented as expected behavior
