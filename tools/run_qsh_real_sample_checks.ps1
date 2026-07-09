@@ -10,7 +10,8 @@ param(
     [switch]$RunOrphanCancelAudit,
     [switch]$RunFirstCrossedProbe,
     [switch]$RunSnapshotAudit,
-    [switch]$RunCrossingWindowAudit
+    [switch]$RunCrossingWindowAudit,
+    [switch]$RunCrossedPersistenceAudit
 )
 
 $ErrorActionPreference = "Continue"
@@ -312,6 +313,22 @@ if ($RunCrossingWindowAudit) {
 } else {
     Write-Host ""
     Write-Host "Tip: run with -RunCrossingWindowAudit for crossing window audit of records 1966..2136." -ForegroundColor DarkGray
+}
+
+# --- 11c. Crossed-persistence-audit (optional) ---
+if ($RunCrossedPersistenceAudit) {
+    Write-Host ""
+    Write-Host "Running crossed-persistence-audit..." -ForegroundColor Cyan
+    $crossedPersistenceOut = "$ReportDirFull\crossed_persistence_audit.csv"
+    & $ExePath "crossed-persistence-audit" $QshFullPath "--from" "2136" "--out" $crossedPersistenceOut 2>&1 | Write-Host
+    if (Test-Path $crossedPersistenceOut) {
+        Write-Host "Crossed persistence audit output: $crossedPersistenceOut" -ForegroundColor Green
+    } else {
+        Write-Host "Crossed persistence audit output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunCrossedPersistenceAudit for crossed-state persistence analysis from record 2136." -ForegroundColor DarkGray
 }
 
 # --- 12. Summary ---

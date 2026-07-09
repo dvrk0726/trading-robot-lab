@@ -178,6 +178,13 @@ qsh-ingest snapshot-audit <OrdLog.qsh> --out snapshot_audit_before_crossing.csv 
 qsh-ingest crossing-window-audit <OrdLog.qsh> --from 1966 --to 2136 --out crossing_window_audit.csv
 qsh-ingest crossing-window-audit <OrdLog.qsh> --from 1966 --to 2136 --out audit.csv --target-order-id 1925033994466246392 --target-price 14100
 
+# Crossed-state persistence audit (M10R)
+# Tracks every transition from a given record, monitors when crossing clears,
+# and traces order/level lifecycle for bid_order and ask_order.
+# Reports: first_crossing_record_index, first_uncross_record_index, crossed duration,
+# order lifecycle (filled/canceled/removed), classification A/B/C/D/E.
+qsh-ingest crossed-persistence-audit <OrdLog.qsh> --from 2136 --out crossed_persistence_audit.csv
+
 # First crossed-book root cause trace (M10N, enhanced M10O)
 # Produces: first_crossed_root_cause.csv, first_crossed_best_orders.csv,
 #           first_crossed_lifecycle.csv, first_crossed_bid_order_lifecycle.csv,
@@ -257,7 +264,7 @@ Run all validation modes against the local QSH sample:
 Options:
 
 ```powershell
-.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit
+.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit -RunCrossedPersistenceAudit
 ```
 
 The script:

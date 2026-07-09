@@ -2403,3 +2403,131 @@ The task description's claim that "reduce-same-price first_crossing_event_record
 1. **Fix lifecycle tracing** — Enhance `first-crossed-root-cause` to trace orders from file start, not only after first crossing detection. This would have caught the ADD at record 2136.
 2. **Understand the 4265129 crossed snapshots** — The crossing at record 2136 is a single ADD event, but it causes millions of crossed snapshots. Investigate why the book remains crossed for so long.
 3. **L2 strategy-ready remains NO** — The crossing is caused by a real trading event (ADD at 14100), not a decoder bug. The root cause is in the market data itself. Consider whether crossed-book filtering should be applied to real trading events.
+
+---
+
+## M10R Crossed State Persistence and Market Phase Analysis
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### 1. Build/Test Result
+
+```
+Build: OK (Release)
+Tests: 16/16 passed
+```
+
+### 2. Real-Sample Validation Result
+
+```
+local QSH found: data/raw/qsh/RTS-3.21/2021-01-05/RTS-3.21.2021-01-05.OrdLog.qsh
+crossed-persistence-audit executed successfully
+real-sample validation with -RunCrossingWindowAudit -RunFirstCrossedProbe: all modes OK
+```
+
+### 3. Crossed Persistence Summary
+
+The `crossed-persistence-audit` command was run from record 2136 through end of file (5,362,594 records total).
+
+**Key findings:**
+
+| Metric | Value |
+|---|---|
+| first_crossing_record_index | 2136 |
+| first_uncross_record_index | NOT FOUND (crossing persists) |
+| records_crossed_duration | PERSISTS (not cleared) |
+| transactions_crossed_duration | PERSISTS |
+| crossed_records_count | 5,359,671 |
+| crossed_snapshots_count | 4,265,129 |
+| crossed_segments | 2 |
+| best_bid_at_cross_start | 14100 |
+| best_ask_at_cross_start | 14062 |
+
+**The crossing at record 2136 NEVER clears for the entire file.** The book remains crossed from record 2136 through the end (record 5,362,594). There are 2 crossed segments — the second starts after a NewSession event that clears the book, after which the book becomes crossed again.
+
+### 4. First Uncross Event
+
+**No uncross event found.** The crossing persists from record 2136 to end of file. The book is never restored to `best_bid < best_ask` state.
+
+### 5. Order/Level Lifecycle Summary
+
+**bid_order (1925033994466246392) — BUY 14100:**
+
+| Property | Value |
+|---|---|
+| Active at end | YES |
+| Was filled | NO (partial fill only) |
+| Was canceled | NO |
+| Was removed | NO |
+| Last event | FILL at record 2137 (111→81, partial) |
+
+The bid_order enters at record 2136 via ADD (qty=111). At record 2137, it receives a partial FILL reducing qty to 81. It remains active at qty=81 for the rest of the file — never fully filled, never canceled, never removed.
+
+**ask_order (1925033994522131746) — SELL 14062:**
+
+| Property | Value |
+|---|---|
+| Active at end | YES |
+| Was filled | NO |
+| Was canceled | NO |
+| Was removed | NO |
+| Last event | ADD at record 1957 |
+
+The ask_order was added at record 1957 (before the crossing). It remains at SELL 14062 with qty=30 for the entire file. It is never filled, canceled, or removed.
+
+**Why crossing persists:** The bid_order at 14100 is never fully removed (only partially filled), and the ask_order at 14062 is never removed. Since `best_bid (14100) >= best_ask (14062)`, the book stays crossed.
+
+### 6. Classification
+
+**Classification: B (persistent crossed state over many records/snapshots)**
+
+Evidence:
+- Crossing starts at record 2136 (ADD BUY 14100)
+- Never clears within the scanned range (5.36M records, 4.27M crossed snapshots)
+- Both crossing orders remain active throughout
+- No auction/session/clearing phase indicators found
+- No explicit trading phase field available in current OrdLog decoder
+
+### 7. Market/Session Clues
+
+Flags around the crossing event (record 2136):
+
+| Flag | Value | Notes |
+|---|---|---|
+| NewSession | 0 | Not a session start |
+| Snapshot | 0 | Not a snapshot record |
+| TxEnd | 0 | Not at transaction boundary |
+| NonSystem | 0 | System record |
+| CrossTrade | 0 | Not a cross-trade |
+| Counter | 1 (0x100) | Counter-trade flag set |
+| Buy + Add | 1 | Normal buy add |
+
+The Counter flag (0x100) is set on the crossing event and subsequent fill events. This suggests the crossing is related to a counter-trade mechanism in the MOEX trading system.
+
+**No explicit trading phase field available in current OrdLog decoder.**
+
+### 8. Strict vs Reduce Comparison
+
+| Mode | first_crossing_event_record_index | first_crossing_snapshot_record_index | first_crossing_snapshot_index | crossed_book_snapshots |
+|---|---|---|---|---|
+| strict | 2136 | 2210 | 2111 | 7890 |
+| reduce-same-price | 2136 | 2242 | 2117 | 7884 |
+| reduce+orphan-cancel-ignore | 2136 | 2242 | 2117 | 7884 |
+
+The crossing EVENT (record 2136) is identical across all modes. The difference is in snapshot emission timing — reduce-same-price mode delays the first crossed snapshot by 32 records (2210→2242) due to different orphan fill handling affecting book state.
+
+### 9. Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/src/main.cpp` | Added `cmd_crossed_persistence_audit` command with crossed-state tracking, order lifecycle monitoring, crossing duration measurement, and A/B/C/D/E classification; added command parsing in main(); updated help text |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunCrossedPersistenceAudit` switch |
+| `cpp/qsh_ingest/README.md` | Added crossed-persistence-audit CLI documentation and -RunCrossedPersistenceAudit flag |
+
+### 10. Next Recommended Task
+
+1. **Add crossed-book filtering** — The crossing is confirmed as a persistent real-market event (classification B), not a decoder bug. The next step is to implement filtering logic that marks crossed-book regions as non-strategy-ready and skips them during L2 snapshot export.
+2. **Investigate Counter flag** — The Counter flag (0x100) is set on the crossing event. Research whether counter-trades on MOEX are expected to produce crossed books (e.g., negotiated block trades).
+3. **L2 strategy-ready remains NO** — Until crossed-book filtering is implemented, L2 output cannot be used for strategy.
