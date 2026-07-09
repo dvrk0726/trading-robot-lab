@@ -165,6 +165,12 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-fill-mode reduce-same-price --orphan-c
 # Orphan cancel/remove audit (M10N)
 qsh-ingest orphan-cancel-audit <OrdLog.qsh> --out orphan_cancel_audit.csv --max-audits 200
 
+# Snapshot record audit (M10P)
+# Dumps snapshot records before first crossing and summarizes initial book state.
+# Reports: snapshot record count, buy/sell breakdown, price ranges, initial best bid/ask,
+# spread, crossed status, and traces the target bid order 1925033994466246392.
+qsh-ingest snapshot-audit <OrdLog.qsh> --out snapshot_audit_before_crossing.csv --max-records 10000
+
 # First crossed-book root cause trace (M10N, enhanced M10O)
 # Produces: first_crossed_root_cause.csv, first_crossed_best_orders.csv,
 #           first_crossed_lifecycle.csv, first_crossed_bid_order_lifecycle.csv,
@@ -244,7 +250,7 @@ Run all validation modes against the local QSH sample:
 Options:
 
 ```powershell
-.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe
+.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit
 ```
 
 The script:

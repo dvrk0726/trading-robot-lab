@@ -8,7 +8,8 @@ param(
     [switch]$SkipBuild,
     [switch]$RunMissingCancelProbe,
     [switch]$RunOrphanCancelAudit,
-    [switch]$RunFirstCrossedProbe
+    [switch]$RunFirstCrossedProbe,
+    [switch]$RunSnapshotAudit
 )
 
 $ErrorActionPreference = "Continue"
@@ -280,7 +281,23 @@ if ($RunFirstCrossedProbe) {
     Write-Host "Tip: run with -RunFirstCrossedProbe for first crossed-book root cause trace." -ForegroundColor DarkGray
 }
 
-# --- 9. Summary ---
+# --- 11. Snapshot-audit (optional) ---
+if ($RunSnapshotAudit) {
+    Write-Host ""
+    Write-Host "Running snapshot-audit..." -ForegroundColor Cyan
+    $snapshotAuditOut = "$ReportDirFull\snapshot_audit_before_crossing.csv"
+    & $ExePath "snapshot-audit" $QshFullPath "--out" $snapshotAuditOut "--max-records" "10000" 2>&1 | Write-Host
+    if (Test-Path $snapshotAuditOut) {
+        Write-Host "Snapshot audit output: $snapshotAuditOut" -ForegroundColor Green
+    } else {
+        Write-Host "Snapshot audit output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunSnapshotAudit for snapshot record audit before first crossing." -ForegroundColor DarkGray
+}
+
+# --- 12. Summary ---
 Write-Host ""
 Write-Host "=== Validation Complete ===" -ForegroundColor Cyan
 Write-Host "Report dir: $ReportDirFull"

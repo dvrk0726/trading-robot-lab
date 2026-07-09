@@ -2174,3 +2174,106 @@ The 1964 snapshot records before the first crossing suggest the book was initial
 3. If snapshot loading doesn't help, investigate whether the order is from a cross-session carry-over
 4. Consider adding a "skip-initial-crossed" mode that ignores crossed snapshots during session initialization
 5. The `l2_strategy_ready` remains NO until crossed diagnostics are clean or crossing is documented as expected behavior
+
+---
+
+## M10P Snapshot Record Handling and Initial Book Audit
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### 1. Build/Test Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. All targets compile clean (Release).
+
+**Tests: PASS.** 16/16 tests pass (added `test_snapshot_audit`).
+
+### 2. Real-Sample Validation Table
+
+| mode | missing_order_id | crossed_book_snapshots | first_crossing_event_record_index | l2_strategy_ready |
+|---|---|---|---|---|
+| per-record strict | 319 | 7890 | 2136 | NO |
+| per-record reduce-same-price | 171 | 7884 | 2242 | NO |
+| per-record orphan-cancel-ignore | 148 | 7890 | 2136 | NO |
+| per-record reduce+orphan-cancel-ignore | 0 | 7884 | 2242 | NO |
+| snapshot-records-mode load | 319 | 7890 | 2136 | NO |
+| tx-grouped | 319 | 7890 | 2136 | NO |
+
+### 3. Snapshot-Records-Mode Comparison
+
+| Metric | ignore | load | marker |
+|---|---|---|---|
+| missing_order_id | 319 | 319 | 319 |
+| crossed_book_snapshots | 7890 | 7890 | 7890 |
+| first_crossing_event_record_index | 2136 | 2136 | 2136 |
+| l2_strategy_ready | NO | NO | NO |
+
+**Observation:** All three modes produce identical results. `load` mode does not change the missing_order_id or crossed snapshot counts. The snapshot records in this file are already processed as Add events in all modes.
+
+### 4. Snapshot Audit Summary Before First Crossing
+
+```
+snapshot_records_processed:           1964
+snapshot_buy_records:                 1057
+snapshot_sell_records:                907
+snapshot_min_buy_price:               9739
+snapshot_max_buy_price:               14055
+snapshot_min_sell_price:              14062
+snapshot_max_sell_price:              15404
+```
+
+### 5. Initial Book State Summary
+
+```
+snapshot_records_loaded:              1964
+snapshot_buy_orders_loaded:           1057
+snapshot_sell_orders_loaded:           907
+snapshot_best_bid:                    14055
+snapshot_best_ask:                    14062
+snapshot_spread:                      7
+snapshot_crossed_at_initial_load:     NO
+snapshot_crossed_order_count:         0
+snapshot_top_bid_qty:                 198
+snapshot_top_ask_qty:                 30
+snapshot_top_bid_order_count:         3
+snapshot_top_ask_order_count:         1
+snapshot_streak_start:                2
+first_non_snapshot_after_new_session: 1966
+```
+
+**Key finding:** The snapshot initialization does NOT produce a crossed book. After all 1964 snapshot records are loaded, best_bid=14055 and best_ask=14062 with spread=7. The crossing occurs later during event processing at record 2136.
+
+### 6. Bid Order Snapshot Source Conclusion
+
+**CONCLUSION: E** — order 1925033994466246392 does NOT appear in snapshot records.
+
+The target bid order at 14100 is not found among the 1964 snapshot records processed before the first crossing. This contradicts the earlier hypothesis (M10O) that the order "likely originated from snapshot initialization."
+
+Revised interpretation:
+- The bid order at 14100 is NOT loaded from snapshot records
+- It must enter the book through a different mechanism
+- The crossing at record 2136 is caused by a real event (likely an Add at 14100) that occurs between records 1966 and 2136
+- The M10O lifecycle trace showed "Had valid ADD: NO" — but this may be because the lifecycle tracking starts at the first crossing detection and misses earlier events
+
+### 7. qsh-rs Snapshot Comparison
+
+```
+qsh-rs snapshot comparison skipped: not available locally
+```
+
+### 8. Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/src/main.cpp` | Added `cmd_snapshot_audit` command: dumps snapshot records with full audit columns before first crossing, tracks initial book state using OrderBook, traces bid_order 1925033994466246392, prints initial book state summary |
+| `cpp/qsh_ingest/tests/test_snapshot_audit.cpp` | New test file: 7 tests covering snapshot flag detection, book loading, crossed detection, record counting, empty snapshot handling, price tracking, summary determinism |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added `test_snapshot_audit` target |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunSnapshotAudit` switch to run snapshot-audit command and print compact summary |
+| `cpp/qsh_ingest/README.md` | Added snapshot-audit CLI documentation and -RunSnapshotAudit flag |
+
+### 9. Next Recommended Task
+
+1. **Investigate the actual ADD source of bid_order 1925033994466246392** — the order enters the book between records 1966 and 2136, likely via a non-snapshot Add event. A focused dump-records audit of records 1966-2136 should reveal the exact entry point.
+2. **Prove crossing root cause before filtering** — the crossing is NOT caused by snapshot initialization. It is caused by a real trading event. This means skip/ignore crossed filtering should NOT be applied to snapshot initialization.
+3. **L2 strategy-ready remains NO** — 7890 crossed snapshots remain. The root cause needs to be traced to its actual source (event at or before record 2136).

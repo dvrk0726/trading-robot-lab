@@ -55,6 +55,8 @@ static void print_help() {
     std::cout << "                        Probe missing_on_cancel orders for prior occurrences\n";
     std::cout << "  orphan-cancel-audit <OrdLog.qsh> [--out <file.csv>] [--max-audits N]\n";
     std::cout << "                        Detailed audit of orphan cancel/remove records\n";
+    std::cout << "  snapshot-audit <OrdLog.qsh> [--out <file.csv>] [--max-records N]\n";
+    std::cout << "                        Audit snapshot records before first crossing\n";
     std::cout << "  first-crossed-root-cause <OrdLog.qsh> [--out-dir <dir>] [--context N]\n";
     std::cout << "                        Trace the exact orders causing first crossed book\n";
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
@@ -1038,6 +1040,346 @@ static int cmd_orphan_cancel_audit(const std::string& path, const std::string& o
         std::cout << "     have prior occurrences but are not in the active book. Must stay an error." << std::endl;
     } else {
         std::cout << "  C. INCONCLUSIVE — keep strict behavior." << std::endl;
+    }
+
+    return 0;
+}
+
+// M10P: Snapshot record audit — dumps snapshot records before first crossing
+// and summarizes initial book state after snapshot initialization.
+static int cmd_snapshot_audit(const std::string& path, const std::string& out_path, int64_t max_records) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: snapshot-audit requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Running snapshot audit..." << std::endl;
+
+    // Use full OrderBook for accurate book state tracking
+    OrderBook book;
+
+    struct SnapshotRecord {
+        int64_t record_index;
+        Timestamp ts;
+        int64_t tx_index;
+        UID order_id;
+        OLMsgType event_type;
+        Side side;
+        Price price;
+        Volume amount;
+        Volume amount_rest;
+        uint16_t flags;
+        Volume repl_act;
+        bool is_snapshot;
+        bool is_new_session;
+        bool is_txend;
+        bool is_system;
+        bool is_non_system;
+        // Raw decoder state
+        int64_t raw_data_offset;
+        int raw_entry_flags;
+        uint16_t raw_order_flags;
+        bool has_timestamp_field;
+        bool has_order_id_field;
+        bool has_price_field;
+        bool has_amount_field;
+        int64_t order_id_before_delta;
+        int64_t order_id_after_delta;
+        Price price_before_delta;
+        Price price_after_delta;
+        Volume amount_before;
+        Volume amount_after;
+        Volume amount_rest_before;
+        Volume amount_rest_after;
+        bool is_add_order_id_path;
+    };
+    std::vector<SnapshotRecord> snapshot_records;
+
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+    int64_t tx_counter = 0;
+    bool first_crossed_found = false;
+    int64_t first_crossed_record = 0;
+    int64_t first_non_snapshot_after_new_session = 0;
+    bool saw_new_session = false;
+    bool in_snapshot_streak = false;
+    int64_t snapshot_streak_start = 0;
+
+    // Buy/sell stats for snapshot records
+    int64_t buy_count = 0;
+    int64_t sell_count = 0;
+    Price min_buy_price = 0;
+    Price max_buy_price = 0;
+    Price min_sell_price = 0;
+    Price max_sell_price = 0;
+
+    // Track the target bid order
+    const UID target_bid_order = 1925033994466246392;
+    bool target_order_found = false;
+    int64_t target_order_record_index = 0;
+    Side target_order_side = Side::Unknown;
+    Price target_order_price = 0;
+    Volume target_order_qty = 0;
+    uint16_t target_order_flags = 0;
+    Volume target_order_repl_act = 0;
+
+    while (reader.next_debug(file, rec)) {
+        ++record_count;
+
+        if (has_flag(rec.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        bool is_snapshot = has_flag(rec.order_flags, OLFlags::Snapshot);
+        bool is_new_session = has_flag(rec.order_flags, OLFlags::NewSession);
+        bool is_txend = has_flag(rec.order_flags, OLFlags::TxEnd);
+        bool is_system = is_system_record(rec);
+        bool is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+        Volume repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+
+        // Track NewSession
+        if (is_new_session) {
+            saw_new_session = true;
+            in_snapshot_streak = false;
+            book.clear();
+            continue;
+        }
+
+        // Track snapshot streak boundary
+        if (saw_new_session) {
+            if (is_snapshot) {
+                if (!in_snapshot_streak) {
+                    in_snapshot_streak = true;
+                    snapshot_streak_start = record_count;
+                }
+            } else {
+                if (in_snapshot_streak && first_non_snapshot_after_new_session == 0) {
+                    first_non_snapshot_after_new_session = record_count;
+                    in_snapshot_streak = false;
+                    // Snapshot streak ended — stop processing
+                    break;
+                }
+            }
+        }
+
+        // Process snapshot records
+        if (is_snapshot && !first_crossed_found) {
+            // Track buy/sell counts and prices
+            if (rec.side == Side::Buy) {
+                ++buy_count;
+                if (min_buy_price == 0 || rec.price < min_buy_price) min_buy_price = rec.price;
+                if (rec.price > max_buy_price) max_buy_price = rec.price;
+            } else if (rec.side == Side::Sell) {
+                ++sell_count;
+                if (min_sell_price == 0 || rec.price < min_sell_price) min_sell_price = rec.price;
+                if (rec.price > max_sell_price) max_sell_price = rec.price;
+            }
+
+            // Track target bid order
+            if (rec.order_id == target_bid_order) {
+                target_order_found = true;
+                target_order_record_index = record_count;
+                target_order_side = rec.side;
+                target_order_price = rec.price;
+                target_order_qty = rec.amount_rest;
+                target_order_flags = rec.order_flags;
+                target_order_repl_act = repl_act;
+            }
+
+            // Apply to full OrderBook for accurate state tracking
+            book.apply(rec);
+
+            // Check for crossed book in current state
+            if (book.bid_depth() > 0 && book.ask_depth() > 0) {
+                Price bb = book.best_bid();
+                Price ba = book.best_ask();
+                if (bb > 0 && ba > 0 && bb >= ba && !first_crossed_found) {
+                    first_crossed_found = true;
+                    first_crossed_record = record_count;
+                }
+            }
+
+            // Store snapshot record
+            SnapshotRecord sr;
+            sr.record_index = record_count;
+            sr.ts = rec.timestamp;
+            sr.tx_index = tx_counter;
+            sr.order_id = rec.order_id;
+            sr.event_type = rec.event;
+            sr.side = rec.side;
+            sr.price = rec.price;
+            sr.amount = rec.amount;
+            sr.amount_rest = rec.amount_rest;
+            sr.flags = rec.order_flags;
+            sr.repl_act = repl_act;
+            sr.is_snapshot = is_snapshot;
+            sr.is_new_session = is_new_session;
+            sr.is_txend = is_txend;
+            sr.is_system = is_system;
+            sr.is_non_system = is_non_system;
+            sr.raw_data_offset = rec.debug.raw_data_offset;
+            sr.raw_entry_flags = static_cast<int>(rec.debug.raw_entry_flags);
+            sr.raw_order_flags = rec.debug.raw_order_flags;
+            sr.has_timestamp_field = rec.debug.has_timestamp_field;
+            sr.has_order_id_field = rec.debug.has_order_id_field;
+            sr.has_price_field = rec.debug.has_price_field;
+            sr.has_amount_field = rec.debug.has_amount_field;
+            sr.order_id_before_delta = rec.debug.order_id_before_delta;
+            sr.order_id_after_delta = rec.debug.order_id_after_delta;
+            sr.price_before_delta = rec.debug.price_before_delta;
+            sr.price_after_delta = rec.debug.price_after_delta;
+            sr.amount_before = rec.debug.amount_before;
+            sr.amount_after = rec.debug.amount_after;
+            sr.amount_rest_before = 0;  // not tracked by debug
+            sr.amount_rest_after = rec.amount_rest;
+            sr.is_add_order_id_path = rec.debug.is_add_order_id_path;
+            snapshot_records.push_back(sr);
+
+            if (max_records > 0 && static_cast<int64_t>(snapshot_records.size()) >= max_records) {
+                break;
+            }
+        } else if (!is_snapshot && !first_crossed_found) {
+            // Non-snapshot record: apply to book for accurate state tracking
+            book.apply(rec);
+        }
+    }
+
+    // Write CSV
+    if (!out_path.empty()) {
+        std::ofstream csv(out_path);
+        if (csv.is_open()) {
+            csv << "record_index,ts,tx_index,order_id,event_type,side,price,amount,amount_rest,"
+                << "flags_hex,repl_act,is_snapshot,is_new_session,is_txend,is_system,is_non_system,"
+                << "raw_data_offset,raw_entry_flags,raw_order_flags_hex,raw_side_bits,raw_event_bits,"
+                << "has_timestamp_field,has_order_id_field,has_price_field,has_amount_field,"
+                << "order_id_before_delta,order_id_after_delta,order_id_delta,"
+                << "price_before_delta,price_after_delta,price_delta,"
+                << "amount_before,amount_after,amount_rest_before,amount_rest_after,"
+                << "order_id_path\n";
+
+            for (const auto& sr : snapshot_records) {
+                uint16_t side_bits = sr.flags & (OLFlags::Buy | OLFlags::Sell);
+                uint16_t event_bits = sr.flags & (OLFlags::Add | OLFlags::Fill | OLFlags::Moved |
+                    OLFlags::Canceled | OLFlags::CanceledGroup | OLFlags::CrossTrade);
+
+                csv << sr.record_index << ","
+                    << sr.ts << ","
+                    << sr.tx_index << ","
+                    << sr.order_id << ","
+                    << ol_msg_type_name(sr.event_type) << ","
+                    << side_name(sr.side) << ","
+                    << sr.price << ","
+                    << sr.amount << ","
+                    << sr.amount_rest << ","
+                    << "0x" << std::hex << sr.flags << std::dec << ","
+                    << sr.repl_act << ","
+                    << (sr.is_snapshot ? 1 : 0) << ","
+                    << (sr.is_new_session ? 1 : 0) << ","
+                    << (sr.is_txend ? 1 : 0) << ","
+                    << (sr.is_system ? 1 : 0) << ","
+                    << (sr.is_non_system ? 1 : 0) << ","
+                    << sr.raw_data_offset << ","
+                    << sr.raw_entry_flags << ","
+                    << "0x" << std::hex << sr.raw_order_flags << std::dec << ","
+                    << "0x" << std::hex << side_bits << std::dec << ","
+                    << "0x" << std::hex << event_bits << std::dec << ","
+                    << (sr.has_timestamp_field ? 1 : 0) << ","
+                    << (sr.has_order_id_field ? 1 : 0) << ","
+                    << (sr.has_price_field ? 1 : 0) << ","
+                    << (sr.has_amount_field ? 1 : 0) << ","
+                    << sr.order_id_before_delta << ","
+                    << sr.order_id_after_delta << ","
+                    << (sr.order_id_after_delta - sr.order_id_before_delta) << ","
+                    << sr.price_before_delta << ","
+                    << sr.price_after_delta << ","
+                    << (sr.price_after_delta - sr.price_before_delta) << ","
+                    << sr.amount_before << ","
+                    << sr.amount_after << ","
+                    << sr.amount_rest_before << ","
+                    << sr.amount_rest_after << ","
+                    << (sr.is_add_order_id_path ? "growing" : "leb128") << "\n";
+            }
+            csv.close();
+            std::cout << "Wrote " << snapshot_records.size() << " snapshot records to " << out_path << std::endl;
+        } else {
+            std::cerr << "Warning: cannot open output file: " << out_path << std::endl;
+        }
+    }
+
+    // Compute initial book state summary using full OrderBook
+    Price snapshot_best_bid = book.best_bid();
+    Price snapshot_best_ask = book.best_ask();
+    Price snapshot_spread = book.spread();
+    bool snapshot_crossed = (snapshot_best_bid > 0 && snapshot_best_ask > 0 && snapshot_best_bid >= snapshot_best_ask);
+
+    // Count orders at best levels
+    Volume snapshot_top_bid_qty = book.best_bid_total_qty();
+    Volume snapshot_top_ask_qty = book.best_ask_total_qty();
+    int snapshot_top_bid_order_count = book.best_bid_order_count();
+    int snapshot_top_ask_order_count = book.best_ask_order_count();
+
+    // Count crossed snapshot records using first_crossed_record
+    int64_t crossed_snapshot_records = 0;
+    if (first_crossed_record > 0) {
+        // Count how many snapshot records are at or after the first crossed record
+        for (const auto& sr : snapshot_records) {
+            if (sr.record_index >= first_crossed_record) ++crossed_snapshot_records;
+        }
+    }
+
+    // Print snapshot audit summary
+    std::cout << "\n=== Snapshot Audit Summary ===" << std::endl;
+    std::cout << "snapshot_records_processed:           " << snapshot_records.size() << std::endl;
+    std::cout << "snapshot_buy_records:                 " << buy_count << std::endl;
+    std::cout << "snapshot_sell_records:                " << sell_count << std::endl;
+    std::cout << "snapshot_min_buy_price:               " << min_buy_price << std::endl;
+    std::cout << "snapshot_max_buy_price:               " << max_buy_price << std::endl;
+    std::cout << "snapshot_min_sell_price:              " << min_sell_price << std::endl;
+    std::cout << "snapshot_max_sell_price:              " << max_sell_price << std::endl;
+
+    // Print initial book state summary
+    std::cout << "\n=== Initial Book State (after snapshot load) ===" << std::endl;
+    std::cout << "snapshot_records_loaded:              " << snapshot_records.size() << std::endl;
+    std::cout << "snapshot_buy_orders_loaded:           " << buy_count << std::endl;
+    std::cout << "snapshot_sell_orders_loaded:           " << sell_count << std::endl;
+    std::cout << "snapshot_best_bid:                    " << snapshot_best_bid << std::endl;
+    std::cout << "snapshot_best_ask:                    " << snapshot_best_ask << std::endl;
+    std::cout << "snapshot_spread:                      " << snapshot_spread << std::endl;
+    std::cout << "snapshot_crossed_at_initial_load:     " << (snapshot_crossed ? "YES" : "NO") << std::endl;
+    std::cout << "snapshot_crossed_order_count:         " << crossed_snapshot_records << std::endl;
+    std::cout << "snapshot_top_bid_qty:                 " << snapshot_top_bid_qty << std::endl;
+    std::cout << "snapshot_top_ask_qty:                 " << snapshot_top_ask_qty << std::endl;
+    std::cout << "snapshot_top_bid_order_count:         " << snapshot_top_bid_order_count << std::endl;
+    std::cout << "snapshot_top_ask_order_count:         " << snapshot_top_ask_order_count << std::endl;
+
+    // Snapshot boundary
+    std::cout << "\n=== Snapshot Boundary ===" << std::endl;
+    std::cout << "saw_new_session:                      " << (saw_new_session ? "YES" : "NO") << std::endl;
+    std::cout << "snapshot_streak_start:                " << snapshot_streak_start << std::endl;
+    std::cout << "first_non_snapshot_after_new_session: " << first_non_snapshot_after_new_session << std::endl;
+    std::cout << "first_crossed_record:                 " << first_crossed_record << std::endl;
+
+    // Target bid order trace
+    std::cout << "\n=== Bid Order Trace (1925033994466246392) ===" << std::endl;
+    if (target_order_found) {
+        std::cout << "CONCLUSION: A" << std::endl;
+        std::cout << "  order enters via a snapshot record decoded as "
+                  << side_name(target_order_side) << " " << target_order_price
+                  << " qty=" << target_order_qty << std::endl;
+        std::cout << "  record_index:  " << target_order_record_index << std::endl;
+        std::cout << "  flags_hex:     0x" << std::hex << target_order_flags << std::dec << std::endl;
+        std::cout << "  repl_act:      " << target_order_repl_act << std::endl;
+    } else {
+        std::cout << "CONCLUSION: E" << std::endl;
+        std::cout << "  order does not appear in snapshot records before first crossing." << std::endl;
     }
 
     return 0;
@@ -2943,6 +3285,24 @@ int main(int argc, char* argv[]) {
             }
         }
         return cmd_orphan_cancel_audit(file_path, out_path, max_audits);
+    }
+
+    if (cmd == "snapshot-audit") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest snapshot-audit <OrdLog.qsh> [--out <file.csv>] [--max-records N]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_path = "snapshot_audit.csv";
+        int64_t max_records = 0;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--max-records") == 0 && i + 1 < argc) {
+                max_records = std::atoll(argv[++i]);
+            }
+        }
+        return cmd_snapshot_audit(file_path, out_path, max_records);
     }
 
     if (cmd == "first-crossed-root-cause") {
