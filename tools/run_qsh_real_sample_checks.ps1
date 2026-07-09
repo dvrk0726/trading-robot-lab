@@ -15,7 +15,8 @@ param(
     [switch]$RunCounterFlagAudit,
     [switch]$RunRemainingCrossedAudit,
     [switch]$RunStrategyReadyExport,
-    [switch]$RunNonSystemFlagAudit
+    [switch]$RunNonSystemFlagAudit,
+    [switch]$RunPersistentCrossedRootCause
 )
 
 $ErrorActionPreference = "Continue"
@@ -448,6 +449,22 @@ if ($RunNonSystemFlagAudit) {
 } else {
     Write-Host ""
     Write-Host "Tip: run with -RunNonSystemFlagAudit for NonSystem flag (0x200) event audit." -ForegroundColor DarkGray
+}
+
+# --- 11d3. Persistent-crossed-root-cause (optional, M10W) ---
+if ($RunPersistentCrossedRootCause) {
+    Write-Host ""
+    Write-Host "Running persistent-crossed-root-cause (counter-ignore-book + non-system-ignore-book)..." -ForegroundColor Cyan
+    $persistentCrossedOut = "$ReportDirFull\persistent_crossed_root_cause.csv"
+    & $ExePath "persistent-crossed-root-cause" $QshFullPath "--out" $persistentCrossedOut "--context" "100" 2>&1 | Write-Host
+    if (Test-Path $persistentCrossedOut) {
+        Write-Host "Persistent crossed root cause output: $persistentCrossedOut" -ForegroundColor Green
+    } else {
+        Write-Host "Persistent crossed root cause output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunPersistentCrossedRootCause for persistent crossed-state root cause analysis." -ForegroundColor DarkGray
 }
 
 # --- 11e. Remaining-crossed-audit (optional, M10T) ---

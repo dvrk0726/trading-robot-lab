@@ -234,6 +234,16 @@ qsh-ingest remaining-crossed-audit <OrdLog.qsh> --counter-mode ignore-book --out
 #           first_crossed_orders_raw_audit.csv
 qsh-ingest first-crossed-root-cause <OrdLog.qsh> --out-dir data/reports/qsh --context 40
 
+# Persistent crossed root cause (M10W)
+# Finds the true not-crossed -> crossed transition under counter-ignore-book + non-system-ignore-book.
+# Unlike first-crossed-root-cause, this command:
+#   1. Uses counter-ignore-book + non-system-ignore-book modes
+# 2. Detects the exact transition event (was_crossed=false -> is_crossed_after=true)
+# 3. Traces lifecycle of top-of-book orders at the transition
+# 4. Reports whether crossing orders are still active at end of file
+# Outputs: transition info, context window, top-of-book orders, per-order lifecycle CSV.
+qsh-ingest persistent-crossed-root-cause <OrdLog.qsh> --out persistent_crossed_root_cause.csv --context 100
+
 # Experimental: book update mode (M10K)
 # per-record: default, apply each record individually
 # tx-grouped: group records by TxEnd, apply as transaction batch, emit snapshot after TxEnd

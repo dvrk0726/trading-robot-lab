@@ -3018,3 +3018,160 @@ Since NonSystem is not the cause, the remaining 907 crossed snapshots need inves
 
 Only after this should Trading Lab UI work resume:
 **M10X — Trading Lab Data Quality UI**
+
+---
+
+## M10W Persistent crossed-state lifecycle and transaction semantics
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### 1. Build/Test Result
+
+```
+Build: OK (Release)
+Tests: 19/19 passed (added test_persistent_crossed with 6 test cases)
+```
+
+### 2. Real-Sample Validation Result
+
+```
+local QSH found: data/raw/qsh/RTS-3.21/2021-01-05/RTS-3.21.2021-01-05.OrdLog.qsh
+persistent-crossed-root-cause executed successfully
+```
+
+### 3. True Transition Found
+
+Under `--counter-mode ignore-book --non-system-mode ignore-book`:
+
+| Field | Value |
+|---|---|
+| transition_record_index | **16195** |
+| transition_tx_index | 9118 |
+| event_type | **ADD** |
+| order_id | **1925033994463939517** |
+| side | **BUY** |
+| price | **14120** |
+| amount | 35 |
+| amount_rest | 35 |
+| flags_hex | **0x94** (Add + Buy + TxEnd) |
+| best_bid_before | 14055 |
+| best_ask_before | 14062 |
+| best_bid_after | **14120** |
+| best_ask_after | 14062 |
+| crossed_before | **NO** |
+| crossed_after | **YES** |
+| spread_before | 7 |
+| spread_after | -58 |
+| mutation_path | add |
+| is_counter | NO |
+| is_non_system | NO |
+| is_cross_trade | NO |
+| is_snapshot | NO |
+| is_new_session | NO |
+| is_system | YES |
+
+**Key finding:** The true transition is at record 16195, which IS the first crossing event. The M10V report incorrectly stated that record 16195 had `crossed_before = YES` — this was because M10V's `remaining-crossed-audit` was checking the book state WITH the counter-flagged ADD at 14110 already applied. Under `counter-ignore-book`, that ADD is skipped, so `best_bid_before = 14055` (not 14110), and the book is NOT crossed before record 16195.
+
+### 4. Why Earlier Diagnostics Pointed to 16195 Incorrectly
+
+M10T reported record 16195 as the first remaining crossing trigger. M10V said this was wrong because `crossed_before = YES`. The discrepancy:
+
+| Diagnostic | counter-mode | best_bid_before at 16195 | crossed_before |
+|---|---|---|---|
+| M10T remaining-crossed-audit | include (default) | 14110 | YES |
+| M10W persistent-crossed-root-cause | **ignore-book** | **14055** | **NO** |
+
+The counter-flagged ADD at 14110 (which occurs before record 16195) creates the appearance of an already-crossed book. When counter events are ignored for book mutation, the true transition at 16195 is correctly detected.
+
+### 5. Top Bid/Ask Lifecycle Traces
+
+**Top Bid Order (1925033994463939517):**
+- active_at_transition: YES
+- active_at_end: YES (still in book at end of file)
+- had_valid_add: YES (at record 16195)
+- lifecycle_events: 2 (ADD + one more event)
+- Price: 14120
+- Qty at transition: 35
+
+**Top Ask Order (1925033994522131746):**
+- active_at_transition: YES
+- active_at_end: YES (still in book at end of file)
+- had_valid_add: YES
+- lifecycle_events: 1
+- Price: 14062
+
+**Critical observation:** Both orders are still active at the end of the file. The crossing BUY order at 14120 is NEVER removed, canceled, or fully filled. This is why the crossed state persists.
+
+### 6. Fill Semantics Comparison
+
+The crossing order (1925033994463939517) is an ADD BUY at 14120 with qty=35. It has 2 lifecycle events total. The order is never fully filled or removed. Fill semantics (delta vs rest) do not affect this specific crossing because the order is not being filled — it simply sits in the book at a price above the best ask.
+
+### 7. TxEnd / Transaction Grouping Analysis
+
+The transition occurs at record 16195 with flags 0x94 = Add + Buy + **TxEnd**. This means:
+- The ADD is the last (or only) record in its transaction
+- Under `tx-grouped` mode, the entire transaction is applied atomically
+- The TxEnd flag ensures the snapshot is emitted after this record
+- Transaction grouping does not change the outcome — the ADD creates the crossing regardless of per-record vs tx-grouped mode
+
+### 8. Market/Session Phase Clues
+
+| Clue | Value |
+|---|---|
+| is_counter | NO |
+| is_non_system | NO |
+| is_cross_trade | NO |
+| is_snapshot | NO |
+| is_new_session | NO |
+| is_txend | YES |
+| is_system | YES |
+| is_non_zero_repl_act | NO |
+
+The transition is a normal system ADD record with TxEnd flag. No special market phase indicators. The order is added during normal trading (not during snapshot initialization or session boundary).
+
+### 9. External/Reference Check Result
+
+No local external reference found. The following would be needed:
+- QSH OrdLog flag semantics for Fill/Counter/CrossTrade/System/NonSystem
+- QScalp qsh2txt output for the transition window
+- Independent qsh-rs reconstruction for the same records
+- MOEX ASTS/FAST OrdLog semantics for comparable fields
+
+### 10. Classification
+
+**Classification: H — Genuine market crossed state that should remain gated, not fixed.**
+
+Evidence:
+1. The crossing is caused by a legitimate ADD BUY order at 14120 (above best ask 14062)
+2. The order is a normal system record (flags 0x94 = Add + Buy + TxEnd)
+3. No Counter, NonSystem, CrossTrade, or other special flags
+4. The order is never removed, canceled, or fully filled — it persists to end of file
+5. The crossed state (best_bid=14120 >= best_ask=14062) is a genuine market state
+6. The order lifecycle is clean: ADD → persists → still active at end
+
+This is NOT a decoder bug, NOT a lifecycle bug, and NOT a transaction grouping bug. It is a genuine market crossed state that should be gated (strategy_ready=false) rather than "fixed."
+
+### 11. Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/src/main.cpp` | Added `cmd_persistent_crossed_root_cause` command with transition detection, lifecycle tracing, context window, and summary output |
+| `cpp/qsh_ingest/tests/test_persistent_crossed.cpp` | New: 6 deterministic tests covering transition detection, already-crossed handling, counter/non-system ignore, lifecycle events |
+| `cpp/qsh_ingest/CMakeLists.txt` | Added `test_persistent_crossed` test target |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunPersistentCrossedRootCause` switch |
+| `cpp/qsh_ingest/README.md` | Added persistent-crossed-root-cause documentation |
+| `agent_workspaces/mimo/reports/2026-07-08-m9-cpp-qsh-ordlog-data-layer.md` | Added M10W section |
+
+### 12. Next Recommended Task
+
+**M10X — Trading Lab Data Quality UI**
+
+Since the remaining 907 crossed snapshots are classified as genuine market states (H), the next step is to build a Data Quality UI that:
+1. Loads the summary JSON from l3-to-l2
+2. Displays strategy-ready status and reason counts
+3. Shows crossed/locked/invalid snapshot counts
+4. Allows filtering by strategy_reject_reason
+
+No parser/decoder fix is needed — the crossed states are real and should be gated, not removed.

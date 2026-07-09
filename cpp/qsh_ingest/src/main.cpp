@@ -71,6 +71,8 @@ static void print_help() {
     std::cout << "  remaining-crossed-audit <OrdLog.qsh> --counter-mode ignore-book\n";
     std::cout << "                        [--out <file.csv>] [--from N] [--to N] [--context N]\n";
     std::cout << "                        Audit remaining crossed snapshots after counter-ignore-book\n";
+    std::cout << "  persistent-crossed-root-cause <OrdLog.qsh> [--out <file.csv>] [--from N] [--to N] [--context N]\n";
+    std::cout << "                        Find true not-crossed->crossed transition under counter-ignore-book + non-system-ignore-book\n";
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
     std::cout << "                        [--out <file.csv>] [--diagnostics-out <file.csv>]\n";
     std::cout << "                        [--max-diagnostics N]\n";
@@ -3483,6 +3485,679 @@ static int cmd_remaining_crossed_audit(const std::string& path, const std::strin
     return 0;
 }
 
+// M10W: Persistent crossed root cause — find the true not-crossed -> crossed transition
+// under counter-ignore-book + non-system-ignore-book, and trace top-of-book order lifecycle.
+static int cmd_persistent_crossed_root_cause(const std::string& path, const std::string& out_path,
+                                              int64_t from_index, int64_t to_index, int context_size) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: persistent-crossed-root-cause requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Running persistent-crossed-root-cause..." << std::endl;
+    std::cout << "counter-mode: ignore-book" << std::endl;
+    std::cout << "non-system-mode: ignore-book" << std::endl;
+    if (from_index > 1) std::cout << "from_index: " << from_index << std::endl;
+    if (to_index > 0) std::cout << "to_index: " << to_index << std::endl;
+
+    // --- Pass 1: Find the true transition event ---
+    OrderBook book;
+    book.set_counter_mode(CounterMode::IgnoreBook);
+    book.set_non_system_mode(NonSystemMode::IgnoreBook);
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+    int64_t tx_counter = 0;
+
+    bool was_crossed = false;
+    bool transition_found = false;
+    int64_t transition_record_index = 0;
+    int64_t transition_snapshot_index = 0;
+    int64_t transition_tx_index = 0;
+
+    // Ring buffer for context before transition
+    struct ContextEvent {
+        int64_t record_index;
+        int64_t tx_index;
+        Timestamp ts;
+        OLMsgType event_type;
+        UID order_id;
+        Side side;
+        Price price;
+        Volume amount;
+        Volume amount_rest;
+        uint16_t flags;
+        uint8_t entry_flags;
+        Volume repl_act;
+        bool is_counter;
+        bool is_non_system;
+        bool is_cross_trade;
+        bool is_moved;
+        bool is_add;
+        bool is_fill;
+        bool is_cancel;
+        bool is_remove;
+        bool is_snapshot;
+        bool is_new_session;
+        bool is_txend;
+        bool is_system;
+        bool is_non_zero_repl_act;
+        Price best_bid_before;
+        Price best_ask_before;
+        Price best_bid_after;
+        Price best_ask_after;
+        Price spread_before;
+        Price spread_after;
+        bool crossed_before;
+        bool crossed_after;
+        std::string mutation_path;
+    };
+    std::deque<ContextEvent> ring;
+    std::vector<ContextEvent> post_transition_events;
+    int64_t post_transition_count = 0;
+
+    // Transition event details
+    ContextEvent transition_event;
+
+    // Top-of-book orders at transition
+    std::vector<UID> transition_bid_ids;
+    std::vector<UID> transition_ask_ids;
+    Price transition_bb = 0;
+    Price transition_ba = 0;
+
+    while (reader.next(file, rec)) {
+        ++record_count;
+
+        if (has_flag(rec.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        bool is_counter = has_flag(rec.order_flags, OLFlags::Counter);
+        bool is_snapshot = has_flag(rec.order_flags, OLFlags::Snapshot);
+        bool is_new_session = has_flag(rec.order_flags, OLFlags::NewSession);
+        bool is_txend = has_flag(rec.order_flags, OLFlags::TxEnd);
+        bool is_system = is_system_record(rec);
+        bool is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+        bool is_cross_trade = has_flag(rec.order_flags, OLFlags::CrossTrade);
+        bool is_moved = has_flag(rec.order_flags, OLFlags::Moved);
+        bool is_add = (rec.event == OLMsgType::Add);
+        bool is_fill = (rec.event == OLMsgType::Fill);
+        bool is_cancel = (rec.event == OLMsgType::Cancel);
+        bool is_remove = (rec.event == OLMsgType::Remove);
+        bool is_non_zero_repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct);
+        Volume repl_act = is_non_zero_repl_act ? 1 : 0;
+
+        // Track state before apply
+        Price best_bid_before = book.best_bid();
+        Price best_ask_before = book.best_ask();
+        Price spread_before = (best_bid_before > 0 && best_ask_before > 0) ? (best_ask_before - best_bid_before) : 0;
+        bool crossed_before = (best_bid_before > 0 && best_ask_before > 0 && best_bid_before >= best_ask_before);
+
+        // Detect mutation path
+        std::string mutation_path;
+        if (is_add) mutation_path = "add";
+        else if (is_fill) mutation_path = "fill";
+        else if (is_cancel) mutation_path = "cancel";
+        else if (is_remove) mutation_path = "remove";
+        else if (is_moved) mutation_path = "move";
+        else mutation_path = "other";
+
+        // Build context event
+        ContextEvent ce;
+        ce.record_index = record_count;
+        ce.tx_index = tx_counter;
+        ce.ts = rec.timestamp;
+        ce.event_type = rec.event;
+        ce.order_id = rec.order_id;
+        ce.side = rec.side;
+        ce.price = rec.price;
+        ce.amount = rec.amount;
+        ce.amount_rest = rec.amount_rest;
+        ce.flags = rec.order_flags;
+        ce.entry_flags = rec.entry_flags;
+        ce.repl_act = repl_act;
+        ce.is_counter = is_counter;
+        ce.is_non_system = is_non_system;
+        ce.is_cross_trade = is_cross_trade;
+        ce.is_moved = is_moved;
+        ce.is_add = is_add;
+        ce.is_fill = is_fill;
+        ce.is_cancel = is_cancel;
+        ce.is_remove = is_remove;
+        ce.is_snapshot = is_snapshot;
+        ce.is_new_session = is_new_session;
+        ce.is_txend = is_txend;
+        ce.is_system = is_system;
+        ce.is_non_zero_repl_act = is_non_zero_repl_act;
+        ce.best_bid_before = best_bid_before;
+        ce.best_ask_before = best_ask_before;
+        ce.spread_before = spread_before;
+        ce.crossed_before = crossed_before;
+
+        // Apply to book
+        book.apply(rec);
+
+        // Track state after apply
+        Price best_bid_after = book.best_bid();
+        Price best_ask_after = book.best_ask();
+        Price spread_after = (best_bid_after > 0 && best_ask_after > 0) ? (best_ask_after - best_bid_after) : 0;
+        bool crossed_after = (best_bid_after > 0 && best_ask_after > 0 && best_bid_after >= best_ask_after);
+
+        ce.best_bid_after = best_bid_after;
+        ce.best_ask_after = best_ask_after;
+        ce.spread_after = spread_after;
+        ce.crossed_after = crossed_after;
+        ce.mutation_path = mutation_path;
+
+        // Ring buffer: push before checking transition
+        ring.push_back(ce);
+        while (static_cast<int>(ring.size()) > context_size) {
+            ring.pop_front();
+        }
+
+        // Detect the true transition: was_crossed == false && crossed_after == true
+        if (crossed_after && !was_crossed && !transition_found) {
+            transition_found = true;
+            transition_record_index = record_count;
+            transition_snapshot_index = tx_counter;  // snapshot index = tx count in txend mode
+            transition_tx_index = tx_counter;
+            transition_event = ce;
+            transition_bb = best_bid_after;
+            transition_ba = best_ask_after;
+            transition_bid_ids = book.best_bid_order_ids(20);
+            transition_ask_ids = book.best_ask_order_ids(20);
+
+            std::cout << "\n*** TRUE TRANSITION FOUND ***" << std::endl;
+            std::cout << "  record_index:  " << transition_record_index << std::endl;
+            std::cout << "  tx_index:      " << transition_tx_index << std::endl;
+            std::cout << "  event_type:    " << ol_msg_type_name(ce.event_type) << std::endl;
+            std::cout << "  order_id:      " << ce.order_id << std::endl;
+            std::cout << "  side:          " << side_name(ce.side) << std::endl;
+            std::cout << "  price:         " << ce.price << std::endl;
+            std::cout << "  amount:        " << ce.amount << std::endl;
+            std::cout << "  amount_rest:   " << ce.amount_rest << std::endl;
+            std::cout << "  flags_hex:     0x" << std::hex << ce.flags << std::dec << std::endl;
+            std::cout << "  best_bid_before: " << ce.best_bid_before << std::endl;
+            std::cout << "  best_ask_before: " << ce.best_ask_before << std::endl;
+            std::cout << "  best_bid_after:  " << ce.best_bid_after << std::endl;
+            std::cout << "  best_ask_after:  " << ce.best_ask_after << std::endl;
+            std::cout << "  crossed_before:  " << (ce.crossed_before ? "YES" : "NO") << std::endl;
+            std::cout << "  crossed_after:   " << (ce.crossed_after ? "YES" : "NO") << std::endl;
+            std::cout << "  mutation_path:   " << ce.mutation_path << std::endl;
+            std::cout << "  top bid orders:  " << transition_bid_ids.size() << std::endl;
+            std::cout << "  top ask orders:  " << transition_ask_ids.size() << std::endl;
+        }
+
+        // Collect post-transition events
+        if (transition_found && post_transition_count < context_size * 2) {
+            ++post_transition_count;
+            post_transition_events.push_back(ce);
+        }
+
+        was_crossed = crossed_after;
+
+        // Apply range filter for pass 1 (we scan everything to find transition)
+        if (transition_found && record_count > transition_record_index + context_size * 2) {
+            break;
+        }
+    }
+
+    if (!transition_found) {
+        std::cout << "\nNo not-crossed -> crossed transition found under counter-ignore-book + non-system-ignore-book." << std::endl;
+        std::cout << "The book may be crossed from the start (snapshot initialization)." << std::endl;
+        return 0;
+    }
+
+    // --- Pass 2: Trace lifecycle of top-of-book orders ---
+    std::cout << "\nTracing lifecycle of top-of-book orders..." << std::endl;
+
+    struct LifecycleEvent {
+        int64_t record_index;
+        int64_t tx_index;
+        Timestamp ts;
+        OLMsgType event_type;
+        UID order_id;
+        Side side;
+        Price price;
+        Volume amount;
+        Volume amount_rest;
+        uint16_t flags;
+        uint8_t entry_flags;
+        Volume repl_act;
+        bool is_counter;
+        bool is_non_system;
+        bool is_cross_trade;
+        bool is_moved;
+        bool is_add;
+        bool is_fill;
+        bool is_cancel;
+        bool is_remove;
+        bool is_snapshot;
+        bool is_new_session;
+        bool is_txend;
+        bool is_system;
+        bool is_non_zero_repl_act;
+        Price best_bid_before;
+        Price best_ask_before;
+        Price best_bid_after;
+        Price best_ask_after;
+        Volume active_qty_before;
+        Volume active_qty_after;
+        std::string mutation_path;
+    };
+
+    // Collect lifecycle events for all tracked orders
+    std::set<UID> tracked_orders;
+    for (UID id : transition_bid_ids) tracked_orders.insert(id);
+    for (UID id : transition_ask_ids) tracked_orders.insert(id);
+
+    std::map<UID, std::vector<LifecycleEvent>> order_lifecycles;
+    std::map<UID, bool> order_had_valid_add;
+    std::map<UID, Price> order_add_price;
+    std::map<UID, Volume> order_add_amount;
+    std::map<UID, int64_t> order_add_record;
+    std::map<UID, bool> order_is_active_at_transition;
+    std::map<UID, Volume> order_qty_at_transition;
+
+    // Initialize
+    for (UID id : tracked_orders) {
+        order_had_valid_add[id] = false;
+        order_add_price[id] = 0;
+        order_add_amount[id] = 0;
+        order_add_record[id] = 0;
+        order_is_active_at_transition[id] = false;
+        order_qty_at_transition[id] = 0;
+    }
+
+    // Check which orders are active at transition
+    {
+        // Rebuild book up to transition
+        file = open_qsh_file(path);
+        if (!file.valid) {
+            std::cerr << "Error: " << file.error << std::endl;
+            return 1;
+        }
+        OrderBook lifecycle_book;
+        lifecycle_book.set_counter_mode(CounterMode::IgnoreBook);
+        lifecycle_book.set_non_system_mode(NonSystemMode::IgnoreBook);
+        OrdLogReader reader2;
+        OrderLogRecord rec2;
+        int64_t rc = 0;
+
+        while (reader2.next(file, rec2)) {
+            ++rc;
+            lifecycle_book.apply(rec2);
+            if (rc == transition_record_index) {
+                // Capture order states at transition
+                for (UID id : tracked_orders) {
+                    Side s; Price p; Volume v;
+                    if (lifecycle_book.get_order_info(id, s, p, v)) {
+                        order_is_active_at_transition[id] = true;
+                        order_qty_at_transition[id] = v;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    // Full lifecycle trace
+    {
+        file = open_qsh_file(path);
+        if (!file.valid) {
+            std::cerr << "Error: " << file.error << std::endl;
+            return 1;
+        }
+        OrderBook lifecycle_book;
+        lifecycle_book.set_counter_mode(CounterMode::IgnoreBook);
+        lifecycle_book.set_non_system_mode(NonSystemMode::IgnoreBook);
+        OrdLogReader reader3;
+        OrderLogRecord rec3;
+        int64_t rc = 0;
+        int64_t tx = 0;
+
+        while (reader3.next(file, rec3)) {
+            ++rc;
+            if (has_flag(rec3.order_flags, OLFlags::TxEnd)) ++tx;
+
+            if (tracked_orders.count(rec3.order_id) > 0) {
+                // Track ADD events
+                if (rec3.event == OLMsgType::Add && !order_had_valid_add[rec3.order_id]) {
+                    order_had_valid_add[rec3.order_id] = true;
+                    order_add_price[rec3.order_id] = rec3.price;
+                    order_add_amount[rec3.order_id] = rec3.amount_rest;
+                    order_add_record[rec3.order_id] = rc;
+                }
+
+                // Capture lifecycle event
+                Price bb_before = lifecycle_book.best_bid();
+                Price ba_before = lifecycle_book.best_ask();
+                Volume active_qty_before = 0;
+                { Side s; Price p; Volume v;
+                  if (lifecycle_book.get_order_info(rec3.order_id, s, p, v)) active_qty_before = v; }
+
+                lifecycle_book.apply(rec3);
+
+                Price bb_after = lifecycle_book.best_bid();
+                Price ba_after = lifecycle_book.best_ask();
+                Volume active_qty_after = 0;
+                { Side s; Price p; Volume v;
+                  if (lifecycle_book.get_order_info(rec3.order_id, s, p, v)) active_qty_after = v; }
+
+                LifecycleEvent le;
+                le.record_index = rc;
+                le.tx_index = tx;
+                le.ts = rec3.timestamp;
+                le.event_type = rec3.event;
+                le.order_id = rec3.order_id;
+                le.side = rec3.side;
+                le.price = rec3.price;
+                le.amount = rec3.amount;
+                le.amount_rest = rec3.amount_rest;
+                le.flags = rec3.order_flags;
+                le.entry_flags = rec3.entry_flags;
+                le.repl_act = has_flag(rec3.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+                le.is_counter = has_flag(rec3.order_flags, OLFlags::Counter);
+                le.is_non_system = has_flag(rec3.order_flags, OLFlags::NonSystem);
+                le.is_cross_trade = has_flag(rec3.order_flags, OLFlags::CrossTrade);
+                le.is_moved = has_flag(rec3.order_flags, OLFlags::Moved);
+                le.is_add = (rec3.event == OLMsgType::Add);
+                le.is_fill = (rec3.event == OLMsgType::Fill);
+                le.is_cancel = (rec3.event == OLMsgType::Cancel);
+                le.is_remove = (rec3.event == OLMsgType::Remove);
+                le.is_snapshot = has_flag(rec3.order_flags, OLFlags::Snapshot);
+                le.is_new_session = has_flag(rec3.order_flags, OLFlags::NewSession);
+                le.is_txend = has_flag(rec3.order_flags, OLFlags::TxEnd);
+                le.is_system = is_system_record(rec3);
+                le.is_non_zero_repl_act = has_flag(rec3.order_flags, OLFlags::NonZeroReplAct);
+                le.best_bid_before = bb_before;
+                le.best_ask_before = ba_before;
+                le.best_bid_after = bb_after;
+                le.best_ask_after = ba_after;
+                le.active_qty_before = active_qty_before;
+                le.active_qty_after = active_qty_after;
+
+                // Mutation path
+                if (le.is_add) le.mutation_path = "add";
+                else if (le.is_fill) le.mutation_path = "fill";
+                else if (le.is_cancel) le.mutation_path = "cancel";
+                else if (le.is_remove) le.mutation_path = "remove";
+                else if (le.is_moved) le.mutation_path = "move";
+                else le.mutation_path = "other";
+
+                order_lifecycles[rec3.order_id].push_back(le);
+            } else {
+                lifecycle_book.apply(rec3);
+            }
+
+            // Stop after transition + some margin
+            if (rc > transition_record_index + 5000) break;
+        }
+    }
+
+    // Check if orders are still active at end of file
+    std::map<UID, bool> order_active_at_end;
+    {
+        file = open_qsh_file(path);
+        if (!file.valid) {
+            std::cerr << "Error: " << file.error << std::endl;
+            return 1;
+        }
+        OrderBook final_book;
+        final_book.set_counter_mode(CounterMode::IgnoreBook);
+        final_book.set_non_system_mode(NonSystemMode::IgnoreBook);
+        OrdLogReader reader4;
+        OrderLogRecord rec4;
+
+        while (reader4.next(file, rec4)) {
+            final_book.apply(rec4);
+        }
+
+        for (UID id : tracked_orders) {
+            Side s; Price p; Volume v;
+            order_active_at_end[id] = final_book.get_order_info(id, s, p, v);
+        }
+    }
+
+    // --- Write output ---
+    std::ofstream csv(out_path);
+    if (!csv.is_open()) {
+        std::cerr << "Error: cannot open output file: " << out_path << std::endl;
+        return 1;
+    }
+
+    // Write transition info
+    csv << "# persistent-crossed-root-cause transition\n";
+    csv << "transition_record_index,transition_snapshot_index,transition_tx_index,"
+        << "event_type,order_id,side,price,amount,amount_rest,"
+        << "flags_hex,entry_flags_hex,"
+        << "is_counter,is_non_system,is_cross_trade,is_moved,"
+        << "is_add,is_fill,is_cancel,is_remove,is_snapshot,is_new_session,is_txend,is_system,is_non_zero_repl_act,"
+        << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+        << "spread_before,spread_after,crossed_before,crossed_after,mutation_path\n";
+
+    csv << transition_event.record_index << ","
+        << transition_event.tx_index << ","
+        << transition_event.tx_index << ","
+        << ol_msg_type_name(transition_event.event_type) << ","
+        << transition_event.order_id << ","
+        << side_name(transition_event.side) << ","
+        << transition_event.price << ","
+        << transition_event.amount << ","
+        << transition_event.amount_rest << ","
+        << "0x" << std::hex << transition_event.flags << std::dec << ","
+        << "0x" << std::hex << transition_event.entry_flags << std::dec << ","
+        << (transition_event.is_counter ? 1 : 0) << ","
+        << (transition_event.is_non_system ? 1 : 0) << ","
+        << (transition_event.is_cross_trade ? 1 : 0) << ","
+        << (transition_event.is_moved ? 1 : 0) << ","
+        << (transition_event.is_add ? 1 : 0) << ","
+        << (transition_event.is_fill ? 1 : 0) << ","
+        << (transition_event.is_cancel ? 1 : 0) << ","
+        << (transition_event.is_remove ? 1 : 0) << ","
+        << (transition_event.is_snapshot ? 1 : 0) << ","
+        << (transition_event.is_new_session ? 1 : 0) << ","
+        << (transition_event.is_txend ? 1 : 0) << ","
+        << (transition_event.is_system ? 1 : 0) << ","
+        << (transition_event.is_non_zero_repl_act ? 1 : 0) << ","
+        << transition_event.best_bid_before << ","
+        << transition_event.best_ask_before << ","
+        << transition_event.best_bid_after << ","
+        << transition_event.best_ask_after << ","
+        << transition_event.spread_before << ","
+        << transition_event.spread_after << ","
+        << (transition_event.crossed_before ? 1 : 0) << ","
+        << (transition_event.crossed_after ? 1 : 0) << ","
+        << transition_event.mutation_path
+        << "\n\n";
+
+    // Write context window
+    csv << "# context window around transition\n";
+    csv << "record_index,ts,tx_index,event_type,order_id,side,price,amount,amount_rest,"
+        << "flags_hex,entry_flags_hex,"
+        << "is_counter,is_non_system,is_cross_trade,is_moved,"
+        << "is_add,is_fill,is_cancel,is_remove,is_snapshot,is_new_session,is_txend,is_system,is_non_zero_repl_act,"
+        << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+        << "spread_before,spread_after,crossed_before,crossed_after,mutation_path\n";
+
+    for (const auto& ce : ring) {
+        csv << ce.record_index << "," << ce.ts << "," << ce.tx_index << ","
+            << ol_msg_type_name(ce.event_type) << "," << ce.order_id << ","
+            << side_name(ce.side) << "," << ce.price << "," << ce.amount << "," << ce.amount_rest << ","
+            << "0x" << std::hex << ce.flags << std::dec << ","
+            << "0x" << std::hex << ce.entry_flags << std::dec << ","
+            << (ce.is_counter ? 1 : 0) << ","
+            << (ce.is_non_system ? 1 : 0) << ","
+            << (ce.is_cross_trade ? 1 : 0) << ","
+            << (ce.is_moved ? 1 : 0) << ","
+            << (ce.is_add ? 1 : 0) << ","
+            << (ce.is_fill ? 1 : 0) << ","
+            << (ce.is_cancel ? 1 : 0) << ","
+            << (ce.is_remove ? 1 : 0) << ","
+            << (ce.is_snapshot ? 1 : 0) << ","
+            << (ce.is_new_session ? 1 : 0) << ","
+            << (ce.is_txend ? 1 : 0) << ","
+            << (ce.is_system ? 1 : 0) << ","
+            << (ce.is_non_zero_repl_act ? 1 : 0) << ","
+            << ce.best_bid_before << "," << ce.best_ask_before << ","
+            << ce.best_bid_after << "," << ce.best_ask_after << ","
+            << ce.spread_before << "," << ce.spread_after << ","
+            << (ce.crossed_before ? 1 : 0) << "," << (ce.crossed_after ? 1 : 0) << ","
+            << ce.mutation_path << "\n";
+    }
+    for (const auto& ce : post_transition_events) {
+        csv << ce.record_index << "," << ce.ts << "," << ce.tx_index << ","
+            << ol_msg_type_name(ce.event_type) << "," << ce.order_id << ","
+            << side_name(ce.side) << "," << ce.price << "," << ce.amount << "," << ce.amount_rest << ","
+            << "0x" << std::hex << ce.flags << std::dec << ","
+            << "0x" << std::hex << ce.entry_flags << std::dec << ","
+            << (ce.is_counter ? 1 : 0) << ","
+            << (ce.is_non_system ? 1 : 0) << ","
+            << (ce.is_cross_trade ? 1 : 0) << ","
+            << (ce.is_moved ? 1 : 0) << ","
+            << (ce.is_add ? 1 : 0) << ","
+            << (ce.is_fill ? 1 : 0) << ","
+            << (ce.is_cancel ? 1 : 0) << ","
+            << (ce.is_remove ? 1 : 0) << ","
+            << (ce.is_snapshot ? 1 : 0) << ","
+            << (ce.is_new_session ? 1 : 0) << ","
+            << (ce.is_txend ? 1 : 0) << ","
+            << (ce.is_system ? 1 : 0) << ","
+            << (ce.is_non_zero_repl_act ? 1 : 0) << ","
+            << ce.best_bid_before << "," << ce.best_ask_before << ","
+            << ce.best_bid_after << "," << ce.best_ask_after << ","
+            << ce.spread_before << "," << ce.spread_after << ","
+            << (ce.crossed_before ? 1 : 0) << "," << (ce.crossed_after ? 1 : 0) << ","
+            << ce.mutation_path << "\n";
+    }
+
+    // Write top-of-book orders summary
+    csv << "\n# top-of-book orders at transition\n";
+    csv << "side,order_id,price,qty_at_transition,is_active_at_transition,is_active_at_end,had_valid_add,add_record,add_price,add_amount,lifecycle_event_count\n";
+    for (UID id : transition_bid_ids) {
+        csv << "BUY," << id << ","
+            << (order_is_active_at_transition[id] ? order_qty_at_transition[id] : 0) << ","
+            << order_qty_at_transition[id] << ","
+            << (order_is_active_at_transition[id] ? 1 : 0) << ","
+            << (order_active_at_end[id] ? 1 : 0) << ","
+            << (order_had_valid_add[id] ? 1 : 0) << ","
+            << order_add_record[id] << ","
+            << order_add_price[id] << ","
+            << order_add_amount[id] << ","
+            << order_lifecycles[id].size() << "\n";
+    }
+    for (UID id : transition_ask_ids) {
+        csv << "SELL," << id << ","
+            << (order_is_active_at_transition[id] ? order_qty_at_transition[id] : 0) << ","
+            << order_qty_at_transition[id] << ","
+            << (order_is_active_at_transition[id] ? 1 : 0) << ","
+            << (order_active_at_end[id] ? 1 : 0) << ","
+            << (order_had_valid_add[id] ? 1 : 0) << ","
+            << order_add_record[id] << ","
+            << order_add_price[id] << ","
+            << order_add_amount[id] << ","
+            << order_lifecycles[id].size() << "\n";
+    }
+
+    // Write lifecycle for each tracked order
+    for (UID id : tracked_orders) {
+        csv << "\n# lifecycle for order " << id << "\n";
+        csv << "record_index,ts,tx_index,event_type,order_id,side,price,amount,amount_rest,"
+            << "flags_hex,entry_flags_hex,"
+            << "is_counter,is_non_system,is_cross_trade,is_moved,"
+            << "is_add,is_fill,is_cancel,is_remove,is_snapshot,is_new_session,is_txend,is_system,is_non_zero_repl_act,"
+            << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+            << "active_qty_before,active_qty_after,mutation_path\n";
+
+        for (const auto& le : order_lifecycles[id]) {
+            csv << le.record_index << "," << le.ts << "," << le.tx_index << ","
+                << ol_msg_type_name(le.event_type) << "," << le.order_id << ","
+                << side_name(le.side) << "," << le.price << "," << le.amount << "," << le.amount_rest << ","
+                << "0x" << std::hex << le.flags << std::dec << ","
+                << "0x" << std::hex << le.entry_flags << std::dec << ","
+                << (le.is_counter ? 1 : 0) << ","
+                << (le.is_non_system ? 1 : 0) << ","
+                << (le.is_cross_trade ? 1 : 0) << ","
+                << (le.is_moved ? 1 : 0) << ","
+                << (le.is_add ? 1 : 0) << ","
+                << (le.is_fill ? 1 : 0) << ","
+                << (le.is_cancel ? 1 : 0) << ","
+                << (le.is_remove ? 1 : 0) << ","
+                << (le.is_snapshot ? 1 : 0) << ","
+                << (le.is_new_session ? 1 : 0) << ","
+                << (le.is_txend ? 1 : 0) << ","
+                << (le.is_system ? 1 : 0) << ","
+                << (le.is_non_zero_repl_act ? 1 : 0) << ","
+                << le.best_bid_before << "," << le.best_ask_before << ","
+                << le.best_bid_after << "," << le.best_ask_after << ","
+                << le.active_qty_before << "," << le.active_qty_after << ","
+                << le.mutation_path << "\n";
+        }
+    }
+
+    csv.close();
+    std::cout << "\nWrote persistent-crossed-root-cause output to " << out_path << std::endl;
+
+    // Print summary
+    std::cout << "\n=== Persistent Crossed Root Cause Summary ===" << std::endl;
+    std::cout << "transition_record_index:  " << transition_record_index << std::endl;
+    std::cout << "transition_tx_index:      " << transition_tx_index << std::endl;
+    std::cout << "event_type:               " << ol_msg_type_name(transition_event.event_type) << std::endl;
+    std::cout << "order_id:                 " << transition_event.order_id << std::endl;
+    std::cout << "side:                     " << side_name(transition_event.side) << std::endl;
+    std::cout << "price:                    " << transition_event.price << std::endl;
+    std::cout << "amount:                   " << transition_event.amount << std::endl;
+    std::cout << "amount_rest:              " << transition_event.amount_rest << std::endl;
+    std::cout << "flags_hex:                0x" << std::hex << transition_event.flags << std::dec << std::endl;
+    std::cout << "best_bid_before:          " << transition_event.best_bid_before << std::endl;
+    std::cout << "best_ask_before:          " << transition_event.best_ask_before << std::endl;
+    std::cout << "best_bid_after:           " << transition_event.best_bid_after << std::endl;
+    std::cout << "best_ask_after:           " << transition_event.best_ask_after << std::endl;
+    std::cout << "crossed_before:           " << (transition_event.crossed_before ? "YES" : "NO") << std::endl;
+    std::cout << "crossed_after:            " << (transition_event.crossed_after ? "YES" : "NO") << std::endl;
+    std::cout << "mutation_path:            " << transition_event.mutation_path << std::endl;
+    std::cout << "top_bid_orders:           " << transition_bid_ids.size() << std::endl;
+    std::cout << "top_ask_orders:           " << transition_ask_ids.size() << std::endl;
+
+    // Lifecycle summary
+    std::cout << "\n--- Top Bid Order Lifecycle ---" << std::endl;
+    for (UID id : transition_bid_ids) {
+        std::cout << "  order " << id << ":" << std::endl;
+        std::cout << "    active_at_transition: " << (order_is_active_at_transition[id] ? "YES" : "NO") << std::endl;
+        std::cout << "    active_at_end:        " << (order_active_at_end[id] ? "YES" : "NO") << std::endl;
+        std::cout << "    had_valid_add:        " << (order_had_valid_add[id] ? "YES" : "NO") << std::endl;
+        std::cout << "    lifecycle_events:     " << order_lifecycles[id].size() << std::endl;
+    }
+    std::cout << "\n--- Top Ask Order Lifecycle ---" << std::endl;
+    for (UID id : transition_ask_ids) {
+        std::cout << "  order " << id << ":" << std::endl;
+        std::cout << "    active_at_transition: " << (order_is_active_at_transition[id] ? "YES" : "NO") << std::endl;
+        std::cout << "    active_at_end:        " << (order_active_at_end[id] ? "YES" : "NO") << std::endl;
+        std::cout << "    had_valid_add:        " << (order_had_valid_add[id] ? "YES" : "NO") << std::endl;
+        std::cout << "    lifecycle_events:     " << order_lifecycles[id].size() << std::endl;
+    }
+
+    // Market/session phase clues
+    std::cout << "\n--- Market/Session Phase Clues ---" << std::endl;
+    std::cout << "  is_counter:           " << (transition_event.is_counter ? "YES" : "NO") << std::endl;
+    std::cout << "  is_non_system:        " << (transition_event.is_non_system ? "YES" : "NO") << std::endl;
+    std::cout << "  is_cross_trade:       " << (transition_event.is_cross_trade ? "YES" : "NO") << std::endl;
+    std::cout << "  is_snapshot:          " << (transition_event.is_snapshot ? "YES" : "NO") << std::endl;
+    std::cout << "  is_new_session:       " << (transition_event.is_new_session ? "YES" : "NO") << std::endl;
+    std::cout << "  is_txend:             " << (transition_event.is_txend ? "YES" : "NO") << std::endl;
+    std::cout << "  is_system:            " << (transition_event.is_system ? "YES" : "NO") << std::endl;
+    std::cout << "  is_non_zero_repl_act: " << (transition_event.is_non_zero_repl_act ? "YES" : "NO") << std::endl;
+
+    return 0;
+}
+
 static int cmd_convert(const std::string& path, const std::string& out_dir) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
@@ -4675,7 +5350,12 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             summary_file << "    \"empty_book\": " << l2_empty_book << ",\n";
             summary_file << "    \"invalid_price\": " << l2_invalid_price << ",\n";
             summary_file << "    \"invalid_depth\": " << l2_invalid_depth << "\n";
-            summary_file << "  }\n";
+            summary_file << "  },\n";
+            // M10W: Persistent crossed lifecycle fields
+            summary_file << "  \"persistent_crossed_transition_record_index\": " << book.first_crossing_event_record_index() << ",\n";
+            summary_file << "  \"persistent_crossed_transition_snapshot_index\": " << book.first_crossing_snapshot_index() << ",\n";
+            summary_file << "  \"persistent_crossed_transition_tx_index\": " << book.tx_index_at_first_crossing() << ",\n";
+            summary_file << "  \"persistent_crossed_persists_to_end_of_window\": " << (l2_crossed > 0 ? "true" : "false") << "\n";
             summary_file << "}\n";
             summary_file.close();
             std::cout << "Summary written to " << summary_out_path << std::endl;
@@ -4959,6 +5639,31 @@ int main(int argc, char* argv[]) {
             }
         }
         return cmd_remaining_crossed_audit(file_path, out_path, from_index, to_index, context_size, max_records, non_system_mode);
+    }
+
+    if (cmd == "persistent-crossed-root-cause") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest persistent-crossed-root-cause <OrdLog.qsh>\n"
+                      << "  [--out <file.csv>] [--from N] [--to N] [--context N]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_path = "persistent_crossed_root_cause.csv";
+        int64_t from_index = 1;
+        int64_t to_index = 0;
+        int context_size = 100;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--from") == 0 && i + 1 < argc) {
+                from_index = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--to") == 0 && i + 1 < argc) {
+                to_index = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--context") == 0 && i + 1 < argc) {
+                context_size = std::atoi(argv[++i]);
+            }
+        }
+        return cmd_persistent_crossed_root_cause(file_path, out_path, from_index, to_index, context_size);
     }
 
     if (cmd == "l3-to-l2") {
