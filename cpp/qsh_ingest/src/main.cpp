@@ -12,10 +12,29 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <deque>
 #include <filesystem>
 #include <cstring>
 
 using namespace qsh;
+
+// Snapshot emission mode.
+enum class SnapshotMode { Event, TxEnd };
+
+// Ring buffer entry for first-crossed context trace.
+struct RingEntry {
+    int64_t record_index = 0;
+    int64_t tx_index = 0;
+    Timestamp timestamp = 0;
+    OLMsgType event_type = OLMsgType::Unknown;
+    UID order_id = 0;
+    Side side = Side::Unknown;
+    Price price = 0;
+    Volume qty = 0;
+    Volume amount_rest = 0;
+    uint16_t flags = 0;
+    Volume repl_act = 0;
+};
 
 static void print_help() {
     std::cout << "qsh-ingest — QScalp History Data parser (C++20)\n\n";
@@ -27,6 +46,9 @@ static void print_help() {
     std::cout << "                        [--out <file.csv>] [--diagnostics-out <file.csv>]\n";
     std::cout << "                        [--max-diagnostics N]\n";
     std::cout << "                        [--trace-crossed-out <file.csv>] [--max-trace-events N]\n";
+    std::cout << "                        [--snapshot-mode event|txend]\n";
+    std::cout << "                        [--trace-order-id <id>] [--trace-order-out <file.csv>]\n";
+    std::cout << "                        [--trace-crossed-context N]\n";
     std::cout << "                          L3->L2 reconstruction\n";
     std::cout << "\nOptions:\n";
     std::cout << "  --depth N              L2 depth (default: 20)\n";
@@ -37,6 +59,11 @@ static void print_help() {
     std::cout << "  --max-diagnostics N    Max diagnostics entries (default: 100)\n";
     std::cout << "  --trace-crossed-out <f> Write crossed-book trace CSV\n";
     std::cout << "  --max-trace-events N   Max trace events (default: 100)\n";
+    std::cout << "  --snapshot-mode <mode> Snapshot emission: event (after every record)\n";
+    std::cout << "                        or txend (after TxEnd only, default)\n";
+    std::cout << "  --trace-order-id <id> Trace lifecycle of a specific order ID\n";
+    std::cout << "  --trace-order-out <f> Write order lifecycle trace CSV\n";
+    std::cout << "  --trace-crossed-context N  Ring buffer size for first-crossed context (default: 20)\n";
     std::cout << "\nSafety:\n";
     std::cout << "  No broker connection. No live trading. Historical files only.\n";
 }
@@ -224,7 +251,9 @@ static int cmd_convert(const std::string& path, const std::string& out_dir) {
 
 static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records, int64_t max_snapshots,
                         const std::string& out_path, const std::string& diag_path, int64_t max_diagnostics,
-                        const std::string& trace_path, int64_t max_trace_events) {
+                        const std::string& trace_path, int64_t max_trace_events,
+                        SnapshotMode snap_mode, UID trace_order_id, const std::string& order_trace_path,
+                        int ring_buffer_size) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -237,9 +266,12 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         return 1;
     }
 
-    std::cout << "Reconstructing L2 (depth=" << depth;
+    const char* mode_name = (snap_mode == SnapshotMode::Event) ? "event" : "txend";
+    std::cout << "Reconstructing L2 (depth=" << depth
+              << ", snapshot_mode=" << mode_name;
     if (max_records > 0)  std::cout << ", max_records=" << max_records;
     if (max_snapshots > 0) std::cout << ", max_snapshots=" << max_snapshots;
+    if (trace_order_id > 0) std::cout << ", trace_order_id=" << trace_order_id;
     std::cout << ") from OrdLog..." << std::endl;
 
     OrderBook book;
@@ -251,6 +283,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     int64_t system_count = 0;
     int64_t snapshot_count = 0;
     int64_t moved_count = 0;
+    int64_t tx_counter = 0;
+    int64_t transactions_seen = 0;
 
     // L2 diagnostics counters
     int64_t l2_crossed = 0;
@@ -267,7 +301,24 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     uint16_t last_flags = 0;
     Volume last_repl_act = 0;
     int64_t last_tx_index = 0;
-    int64_t tx_counter = 0;
+
+    // Ring buffer for first-crossed context
+    std::deque<RingEntry> ring;
+    bool first_crossed_found = false;
+    int64_t post_crossed_count = 0;
+    std::vector<std::string> crossed_context_lines;
+
+    // Order lifecycle trace
+    std::ofstream order_trace_file;
+    bool trace_order_active = (trace_order_id > 0);
+    if (trace_order_active && !order_trace_path.empty()) {
+        order_trace_file.open(order_trace_path);
+        if (order_trace_file.is_open()) {
+            order_trace_file << "ts,record_index,tx_index,event_type,order_id,side,price,qty,"
+                             << "amount_rest,flags,repl_act,book_best_bid_after,book_best_ask_after,"
+                             << "spread_after\n";
+        }
+    }
 
     OrderLogRecord rec;
     while (reader.next(file, rec)) {
@@ -288,6 +339,13 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         last_flags = rec.order_flags;
         last_repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
 
+        // Track TxEnd
+        if (is_tx_end(rec)) {
+            ++tx_counter;
+            last_tx_index = tx_counter;
+            transactions_seen = tx_counter;
+        }
+
         // NewSession clears the book
         if (has_flag(rec.order_flags, OLFlags::NewSession)) {
             book.clear();
@@ -301,14 +359,53 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
 
         book.apply(rec);
 
-        // Track TxEnd
-        if (is_tx_end(rec)) {
-            ++tx_counter;
-            last_tx_index = tx_counter;
+        // Ring buffer: push current event
+        RingEntry ring_entry;
+        ring_entry.record_index = record_count;
+        ring_entry.tx_index = last_tx_index;
+        ring_entry.timestamp = rec.timestamp;
+        ring_entry.event_type = rec.event;
+        ring_entry.order_id = rec.order_id;
+        ring_entry.side = rec.side;
+        ring_entry.price = rec.price;
+        ring_entry.qty = rec.amount;
+        ring_entry.amount_rest = rec.amount_rest;
+        ring_entry.flags = rec.order_flags;
+        ring_entry.repl_act = last_repl_act;
+        ring.push_back(ring_entry);
+        while (static_cast<int>(ring.size()) > ring_buffer_size) {
+            ring.pop_front();
         }
 
-        // Take snapshot on TxEnd
-        if (is_tx_end(rec) && book.bid_depth() > 0 && book.ask_depth() > 0) {
+        // Order lifecycle trace: write if this order matches
+        if (trace_order_active && rec.order_id == trace_order_id && order_trace_file.is_open()) {
+            order_trace_file << rec.timestamp << ","
+                << record_count << ","
+                << last_tx_index << ","
+                << ol_msg_type_name(rec.event) << ","
+                << rec.order_id << ","
+                << side_name(rec.side) << ","
+                << rec.price << ","
+                << rec.amount << ","
+                << rec.amount_rest << ","
+                << rec.order_flags << ","
+                << last_repl_act << ","
+                << book.best_bid() << ","
+                << book.best_ask() << ","
+                << book.spread() << "\n";
+        }
+
+        // Determine if we should emit a snapshot now
+        bool should_snapshot = false;
+        if (snap_mode == SnapshotMode::Event) {
+            // Emit after every system record (except NewSession which clears)
+            should_snapshot = true;
+        } else {
+            // TxEnd mode: emit only on TxEnd boundaries
+            should_snapshot = is_tx_end(rec);
+        }
+
+        if (should_snapshot && book.bid_depth() > 0 && book.ask_depth() > 0) {
             L2SnapshotEntry entry;
             entry.timestamp = rec.timestamp;
             entry.levels = book.snapshot(depth);
@@ -356,7 +453,7 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
             }
             if (bb > 0 && ba > 0 && bb >= ba) {
                 ++l2_crossed;
-                ++l2_non_positive_spread;  // crossed implies non-positive spread
+                ++l2_non_positive_spread;
                 if (max_diagnostics <= 0 || static_cast<int64_t>(diagnostics.size()) < max_diagnostics) {
                     L2DiagnosticEntry de;
                     de.timestamp = rec.timestamp;
@@ -387,6 +484,46 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         << last_tx_index;
                     trace_lines.push_back(oss.str());
                 }
+
+                // First-crossed context: dump ring buffer + start post-crossed collection
+                if (!first_crossed_found && ring_buffer_size > 0) {
+                    first_crossed_found = true;
+                    // Dump ring buffer (events before first crossed)
+                    for (const auto& re : ring) {
+                        std::ostringstream oss;
+                        oss << re.timestamp << ","
+                            << re.record_index << ","
+                            << re.tx_index << ","
+                            << ol_msg_type_name(re.event_type) << ","
+                            << re.order_id << ","
+                            << side_name(re.side) << ","
+                            << re.price << ","
+                            << re.qty << ","
+                            << re.amount_rest << ","
+                            << re.flags << ","
+                            << re.repl_act;
+                        crossed_context_lines.push_back(oss.str());
+                    }
+                    post_crossed_count = 0;
+                }
+            }
+
+            // Collect post-crossed events
+            if (first_crossed_found && post_crossed_count < ring_buffer_size) {
+                ++post_crossed_count;
+                std::ostringstream oss;
+                oss << rec.timestamp << ","
+                    << record_count << ","
+                    << last_tx_index << ","
+                    << ol_msg_type_name(rec.event) << ","
+                    << rec.order_id << ","
+                    << side_name(rec.side) << ","
+                    << rec.price << ","
+                    << rec.amount << ","
+                    << rec.amount_rest << ","
+                    << rec.order_flags << ","
+                    << last_repl_act;
+                crossed_context_lines.push_back(oss.str());
             }
 
             if (max_snapshots > 0 && snapshot_count >= max_snapshots) break;
@@ -395,10 +532,12 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         if (max_records > 0 && record_count >= max_records) break;
     }
 
-    std::cout << "\nRecords processed: " << record_count << std::endl;
-    std::cout << "System records:    " << system_count << std::endl;
-    std::cout << "L2 snapshots:      " << snapshot_count << std::endl;
-    std::cout << "Moved events:      " << moved_count << std::endl;
+    std::cout << "\nsnapshot_mode:       " << mode_name << std::endl;
+    std::cout << "Records processed:   " << record_count << std::endl;
+    std::cout << "System records:      " << system_count << std::endl;
+    std::cout << "Transactions seen:   " << transactions_seen << std::endl;
+    std::cout << "L2 snapshots:        " << snapshot_count << std::endl;
+    std::cout << "Moved events:        " << moved_count << std::endl;
     std::cout << "\nBook errors:" << std::endl;
     auto& errs = book.errors();
     std::cout << "  missing_order_id:      " << errs.missing_order_id << std::endl;
@@ -446,12 +585,41 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
         }
     }
 
+    // Write order lifecycle trace
+    if (trace_order_active && order_trace_file.is_open()) {
+        order_trace_file.close();
+        std::cout << "Order lifecycle trace written to " << order_trace_path << std::endl;
+    }
+
+    // Write first-crossed context trace
+    if (first_crossed_found && !crossed_context_lines.empty()) {
+        std::string ctx_path = out_path + ".crossed_context.csv";
+        std::ofstream ctx_out(ctx_path);
+        if (ctx_out.is_open()) {
+            ctx_out << "ts,record_index,tx_index,event_type,order_id,side,price,qty,"
+                    << "amount_rest,flags,repl_act\n";
+            for (const auto& line : crossed_context_lines) {
+                ctx_out << line << "\n";
+            }
+            ctx_out.close();
+            std::cout << "First-crossed context (" << crossed_context_lines.size()
+                      << " events) written to " << ctx_path << std::endl;
+        }
+    }
+
     // Final strategy-ready status
     std::cout << "\n=== L2 Strategy-Ready Status ===" << std::endl;
+    std::cout << "snapshot_mode:                    " << mode_name << std::endl;
+    std::cout << "records_processed:                " << record_count << std::endl;
+    std::cout << "transactions_seen:                " << transactions_seen << std::endl;
+    std::cout << "snapshots_written:                " << snapshot_count << std::endl;
     std::cout << "l2_crossed_book_snapshots:        " << l2_crossed << std::endl;
     std::cout << "l2_non_positive_spread_snapshots: " << l2_non_positive_spread << std::endl;
     if (!trace_path.empty()) {
         std::cout << "trace_file:                       " << trace_path << std::endl;
+    }
+    if (trace_order_active) {
+        std::cout << "order_trace_file:                 " << order_trace_path << std::endl;
     }
     std::cout << "L2 strategy-ready:                " << (has_invalid ? "NO" : "YES") << std::endl;
 
@@ -507,7 +675,9 @@ int main(int argc, char* argv[]) {
         if (argc < 3) {
             std::cerr << "Usage: qsh-ingest l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N]\n"
                       << "  [--max-snapshots N] [--out <file.csv>] [--diagnostics-out <file.csv>]\n"
-                      << "  [--max-diagnostics N] [--trace-crossed-out <file.csv>] [--max-trace-events N]" << std::endl;
+                      << "  [--max-diagnostics N] [--trace-crossed-out <file.csv>] [--max-trace-events N]\n"
+                      << "  [--snapshot-mode event|txend] [--trace-order-id <id>] [--trace-order-out <file.csv>]\n"
+                      << "  [--trace-crossed-context N]" << std::endl;
             return 1;
         }
         std::string file_path = argv[2];
@@ -519,6 +689,10 @@ int main(int argc, char* argv[]) {
         std::string out_path = "l2_snapshots.csv";
         std::string diag_path;
         std::string trace_path;
+        SnapshotMode snap_mode = SnapshotMode::TxEnd;
+        UID trace_order_id = 0;
+        std::string order_trace_path;
+        int ring_buffer_size = 20;
         for (int i = 3; i < argc - 1; ++i) {
             if (std::strcmp(argv[i], "--depth") == 0 && i + 1 < argc) {
                 depth = std::atoi(argv[i + 1]);
@@ -544,8 +718,30 @@ int main(int argc, char* argv[]) {
             if (std::strcmp(argv[i], "--max-trace-events") == 0 && i + 1 < argc) {
                 max_trace_events = std::atoll(argv[i + 1]);
             }
+            if (std::strcmp(argv[i], "--snapshot-mode") == 0 && i + 1 < argc) {
+                std::string mode_str = argv[i + 1];
+                if (mode_str == "event") {
+                    snap_mode = SnapshotMode::Event;
+                } else if (mode_str == "txend") {
+                    snap_mode = SnapshotMode::TxEnd;
+                } else {
+                    std::cerr << "Unknown snapshot mode: " << mode_str << " (use event or txend)" << std::endl;
+                    return 1;
+                }
+            }
+            if (std::strcmp(argv[i], "--trace-order-id") == 0 && i + 1 < argc) {
+                trace_order_id = std::atoll(argv[i + 1]);
+            }
+            if (std::strcmp(argv[i], "--trace-order-out") == 0 && i + 1 < argc) {
+                order_trace_path = argv[i + 1];
+            }
+            if (std::strcmp(argv[i], "--trace-crossed-context") == 0 && i + 1 < argc) {
+                ring_buffer_size = std::atoi(argv[i + 1]);
+            }
         }
-        return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path, max_diagnostics, trace_path, max_trace_events);
+        return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path,
+                            max_diagnostics, trace_path, max_trace_events, snap_mode,
+                            trace_order_id, order_trace_path, ring_buffer_size);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

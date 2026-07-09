@@ -434,3 +434,122 @@ Recommended scope:
 5. Investigate the 319 missing_order_id events to determine if they represent real book corruption or benign re-processing
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+---
+
+## M10C TxEnd and Order Lifecycle Trace
+
+Date: 2026-07-09
+Task: M10C_TXEND_AND_ORDER_LIFECYCLE_TRACE.md
+
+### Problem
+
+Crossed-book L2 snapshots (921 out of 10000) may be caused by:
+1. Snapshot emission inside unfinished OrdLog transactions (intra-transaction temporary states)
+2. Stale/missing order lifecycle handling
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `src/main.cpp` | Added `--snapshot-mode event\|txend`, `--trace-order-id`, `--trace-order-out`, `--trace-crossed-context` CLI args. Added `SnapshotMode` enum, `RingEntry` struct, ring buffer for first-crossed context, order lifecycle trace output. Updated `cmd_l3_to_l2()` with event-mode snapshot emission, order tracing, and first-crossed context dump. |
+| `cpp/qsh_ingest/README.md` | Added safe command examples for event mode, txend mode, order lifecycle trace, and first-crossed context trace. |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_snapshot_mode.cpp` | 6 synthetic tests for snapshot modes, order lifecycle, and ring buffer |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 6
+```
+
+New test `test_snapshot_mode` covers:
+- Event mode sees temporary crossed state (move bid above ask, snapshot captures crossed)
+- TxEnd mode avoids temporary crossed state (fix crossed before TxEnd, snapshot is clean)
+- Order lifecycle trace captures add/fill sequence with book state after each event
+- Order lifecycle add then cancel sequence
+- Ring buffer retains last N entries correctly
+- Touching book (spread==0) is both crossed and non-positive
+
+### New CLI Args
+
+```
+--snapshot-mode <mode>         Snapshot emission: event (after every record)
+                               or txend (after TxEnd only, default)
+--trace-order-id <id>          Trace lifecycle of a specific order ID
+--trace-order-out <file.csv>   Write order lifecycle trace CSV
+--trace-crossed-context N      Ring buffer size for first-crossed context (default: 20)
+```
+
+### Event Mode vs TxEnd Mode
+
+**Event mode** (`--snapshot-mode event`): Emits an L2 snapshot after every system record. This can capture intra-transaction temporary states where the book is crossed during a multi-record transaction (e.g., a move that temporarily crosses the spread before being corrected within the same transaction).
+
+**TxEnd mode** (`--snapshot-mode txend`, default): Emits an L2 snapshot only after TxEnd boundaries. If crossed states are intra-transaction, this mode would reduce or eliminate them since the book should be consistent at transaction boundaries.
+
+### Order Lifecycle Trace
+
+When `--trace-order-id <id>` is provided, the lifecycle of that specific order is written to CSV:
+
+```
+ts,record_index,tx_index,event_type,order_id,side,price,qty,amount_rest,flags,repl_act,
+book_best_bid_after,book_best_ask_after,spread_after
+```
+
+This allows direct observation of when an order was added, filled, moved, cancelled, or removed, and how each event affected the book state.
+
+### First-Crossed Context Trace
+
+When `--trace-crossed-context N` is provided (default: 20), a ring buffer of the last N decoded records is maintained. When the first crossed-book snapshot is detected, the ring buffer is dumped plus the next N events after the crossed snapshot. Output is written to `<out_path>.crossed_context.csv`.
+
+This provides direct visibility into the sequence of events leading to and following the first crossed state.
+
+### Hypothesis Conclusion
+
+The M10C implementation provides the tools to determine whether crossed-book snapshots are:
+
+1. **Intra-transaction temporary states** — If `--snapshot-mode txend` reduces or eliminates crossed snapshots compared to `--snapshot-mode event`, the crossed states were temporary intra-transaction artifacts that don't affect the final book state at transaction boundaries.
+
+2. **Stale order lifecycle issues** — If crossed snapshots persist even in txend mode, the order lifecycle trace (`--trace-order-id`) and first-crossed context trace (`--trace-crossed-context`) provide the data needed to identify which specific orders are causing the crossed state and why they aren't being properly removed.
+
+To run the comparison:
+
+```powershell
+# Event mode
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh --depth 5 --max-records 100000 --max-snapshots 10000 --snapshot-mode event --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_event.csv
+
+# TxEnd mode (default)
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh --depth 5 --max-records 100000 --max-snapshots 10000 --snapshot-mode txend --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_txend.csv
+```
+
+### Remaining Limitations
+
+1. **Cannot run on real QSH** — No QSH file available on this system. The event vs txend comparison must be run by the owner with the real `RTS-3.21.2021-01-05.OrdLog.qsh`.
+
+2. **Order lifecycle trace requires known order ID** — The `--trace-order-id` requires the user to know which order ID to trace. The first-crossed context trace (`--trace-crossed-context`) provides automatic context without needing a specific order ID.
+
+3. **No Python-side visualization** — The new CSV outputs (order lifecycle, crossed context) are not yet visualized in Trading Lab.
+
+4. **Ring buffer size fixed at runtime** — The `--trace-crossed-context N` ring buffer size must be set before execution; it cannot be adjusted post-hoc.
+
+### Next Recommended Task
+
+Run the event vs txend comparison on the real QSH file:
+
+1. Run both modes and compare `l2_crossed_book_snapshots`
+2. If txend reduces crossed: document that crossed states are intra-transaction
+3. If txend does not reduce: use `--trace-order-id` and `--trace-crossed-context` to identify stale orders
+4. Investigate the 319 `missing_order_id` events with order lifecycle trace
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**

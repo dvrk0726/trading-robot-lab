@@ -87,6 +87,22 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 
 qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
   --out l2_sample.csv --diagnostics-out l2_diagnostics.csv --max-diagnostics 100 \
   --trace-crossed-out l2_trace.csv --max-trace-events 100
+
+# Reconstruct with event-mode snapshots (after every record)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --snapshot-mode event --out l2_event.csv
+
+# Reconstruct with txend-mode snapshots (after TxEnd only, default)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --snapshot-mode txend --out l2_txend.csv
+
+# Trace lifecycle of a specific order
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 \
+  --trace-order-id 12345 --trace-order-out order_lifecycle.csv
+
+# First-crossed context trace (ring buffer of events around first crossed snapshot)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --depth 5 --max-records 100000 --max-snapshots 10000 \
+  --out l2_sample.csv --trace-crossed-context 20
 ```
 
 **L2 output is not strategy-ready until diagnostics are clean.**
