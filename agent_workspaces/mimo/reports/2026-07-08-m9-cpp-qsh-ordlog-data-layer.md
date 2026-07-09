@@ -1616,3 +1616,141 @@ qsh-rs uses transaction-grouped processing where fills are matched against order
 4. Investigate whether the orphan fills are caused by intra-transaction matching
 
 **L2 output is not strategy-ready until crossed book diagnostics are clean.**
+
+---
+
+## M10K TxEnd transaction grouping and Cancel/Remove model
+
+Date: 2026-07-09
+Task: M10K_TXEND_TRANSACTION_GROUPING_AND_CANCEL_REMOVE_MODEL.md
+
+### Problem
+
+M10J showed that simple orphan Fill handling improves diagnostics but does not solve crossed L2. The remaining issue is likely transaction-level handling of Fill/Cancel/Remove grouped by TxEnd, not per-record book mutation. Need to implement diagnostic TxEnd transaction grouping for OrdLog L3->L2 reconstruction.
+
+### Changes Made
+
+#### Modified files
+
+| File | Change |
+|---|---|
+| `include/orderbook/order_book.hpp` | Added `TransactionBatchResult` struct with orphan event diagnostics. Added M10K counters to `BookErrors`: `transactions_grouped`, `records_in_grouped_transactions`, `max_records_in_transaction`, `tx_grouped_orphan_fill/cancel/remove_events`, `tx_grouped_orphan_fill/cancel/remove_resolved`, `tx_grouped_missing_order_id`, `tx_grouped_crossed_book_snapshots`. Added `apply_transaction()` method declaration. |
+| `src/order_book.cpp` | Implemented `apply_transaction()`: accepts a vector of records, snapshots pre-transaction order IDs, tracks orders added within transaction, detects orphan fill/cancel/remove events, tracks resolved events (order added in same tx), updates BookErrors M10K counters. |
+| `src/main.cpp` | Added `BookUpdateMode` enum (PerRecord, TxGrouped). Added `--book-update-mode per-record|tx-grouped` CLI arg. Added tx-grouped processing path in `cmd_l3_to_l2()`: buffers records until TxEnd, calls `apply_transaction()`, emits snapshot after TxEnd. Added M10K diagnostics to output. Updated help text and strategy-ready status. |
+| `cpp/qsh_ingest/README.md` | Added `--book-update-mode` documentation and comparison command examples. |
+
+#### New files
+
+| File | Description |
+|---|---|
+| `tests/test_tx_grouped.cpp` | 13 synthetic tests for tx-grouped mode |
+
+### Build Result
+
+**Build: PASS.** MSVC 2022 + vcpkg/zlib. Release clean.
+
+### Test Result
+
+```
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 14
+```
+
+New test `test_tx_grouped` covers:
+- Per-record mode unchanged (apply one by one)
+- Tx-grouped mode batches until TxEnd
+- ADD+FILL in same transaction (not orphan)
+- ADD+FILL+REMOVE in same transaction (remove resolved in tx)
+- Action on order from book before transaction (not orphan)
+- Orphan Cancel/Remove tracked clearly
+- Orphan Fill tracked clearly
+- Multiple transactions accumulate counters
+- ADD then CANCEL in same transaction
+- Empty transaction batch
+- max_records_in_transaction tracking
+- ADD+FILL+ADD in same transaction
+- TransactionBatchResult defaults
+
+### New CLI Args
+
+```
+--book-update-mode <mode>  Book update: per-record (default) or tx-grouped
+```
+
+### New Diagnostic Counters
+
+```
+book_update_mode:                       per-record or tx-grouped
+transactions_grouped:                   Number of transactions processed
+records_in_grouped_transactions:        Total records in all transactions
+max_records_in_transaction:             Max records in a single transaction
+orphan_fill_events (tx):                Orphan fills (order not in book, not added in tx)
+orphan_cancel_events (tx):              Orphan cancels
+orphan_remove_events (tx):              Orphan removes
+orphan_fill_resolved_in_transaction:    Fills where order was added in same tx
+orphan_cancel_resolved_in_transaction:  Cancels where order was added in same tx
+orphan_remove_resolved_in_transaction:  Removes where order was added in same tx
+tx_grouped_missing_order_id:            Missing order ID events in tx-grouped mode
+tx_grouped_crossed_book_snapshots:      Crossed snapshots in tx-grouped mode
+```
+
+### Transaction Batch Behavior
+
+In `tx-grouped` mode, `apply_transaction()` processes a batch of records:
+
+1. **Snapshot pre-transaction state**: Records which order_ids are in the book before the transaction
+2. **Track new orders**: As ADD records are processed, their order_ids are added to `tx_added_orders`
+3. **Classify each non-ADD record**:
+   - Order in book → normal (not orphan)
+   - Order not in book, but added in this tx → "resolved in transaction" (orphan but explainable)
+   - Order not in book, not added in this tx → true orphan
+4. **Apply each record**: Uses existing `apply()` for actual book mutation
+5. **Return diagnostics**: `TransactionBatchResult` with all orphan/resolved counts
+
+### Orphan Event Definitions
+
+| Event | Orphan condition | Resolved condition |
+|---|---|---|
+| **FILL** | order not in book AND not added in tx | order not in book BUT added in tx (consumed before this fill) |
+| **CANCEL** | same | same |
+| **REMOVE** | same | same |
+
+### Recommended Owner Commands
+
+```powershell
+# Compare per-record vs tx-grouped on real QSH data
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend --book-update-mode per-record `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_per_record.csv
+
+.\build\qsh_ingest\Release\qsh_ingest.exe l3-to-l2 `
+  .\data\raw\qsh\RTS-3.21\2021-01-05\RTS-3.21.2021-01-05.OrdLog.qsh `
+  --depth 5 --max-records 100000 --max-snapshots 10000 `
+  --snapshot-mode txend --book-update-mode tx-grouped `
+  --out .\data\reports\qsh\RTS-3.21\2021-01-05\l2_tx_grouped.csv
+```
+
+### Expected Output
+
+The report states one of:
+- **A.** tx-grouped mode significantly improves crossed L2 and missing order diagnostics
+- **B.** tx-grouped mode improves missing orders but not crossed L2
+- **C.** tx-grouped mode does not help, so root cause is deeper decoder/spec issue
+- **D.** tx-grouped infrastructure is partial, and limitations are clearly documented
+
+### What Remains Unresolved
+
+1. **Cannot run on real QSH** — No QSH file available on this system. The per-record vs tx-grouped comparison must be run by the owner.
+2. **Crossed snapshots may persist** — If tx-grouped does not reduce crossed L2, the root cause is deeper (decoder/spec issue, not transaction grouping).
+3. **Snapshot emission timing** — In tx-grouped mode, snapshots are emitted only after TxEnd (same as txend snapshot mode). Event-mode snapshots are not supported in tx-grouped mode.
+
+### Next Recommended Task
+
+1. Owner runs per-record vs tx-grouped comparison on real QSH file
+2. Compare `crossed_book_snapshots`, `missing_order_id`, `missing_on_cancel`, `missing_on_remove`
+3. If tx-grouped improves: investigate orphan event patterns (which orders are truly orphan vs resolved)
+4. If tx-grouped does not help: root cause is deeper — investigate decoder spec or initial book state
+
+**L2 output is not strategy-ready until crossed book diagnostics are clean.**

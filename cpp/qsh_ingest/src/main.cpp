@@ -25,6 +25,9 @@ enum class SnapshotMode { Event, TxEnd };
 // Snapshot records handling mode (experimental).
 enum class SnapshotRecordsMode { Ignore, Load, Marker };
 
+// M10K: Book update mode.
+enum class BookUpdateMode { PerRecord, TxGrouped };
+
 // Ring buffer entry for first-crossed context trace.
 struct RingEntry {
     int64_t record_index = 0;
@@ -60,6 +63,7 @@ static void print_help() {
     std::cout << "                        [--auto-trace-crossed-orders-out <file.csv>]\n";
     std::cout << "                        [--fill-semantics delta|rest]\n";
     std::cout << "                        [--orphan-fill-mode strict|ignore|reduce-same-price|transaction-rest]\n";
+    std::cout << "                        [--book-update-mode per-record|tx-grouped]\n";
     std::cout << "                          L3->L2 reconstruction\n";
     std::cout << "\nOptions:\n";
     std::cout << "  --depth N              L2 depth (default: 20)\n";
@@ -81,6 +85,7 @@ static void print_help() {
     std::cout << "  --fill-semantics <mode>  Fill interpretation: delta (default) or rest\n";
     std::cout << "  --orphan-fill-mode <mode>  Orphan fill handling: strict (default), ignore,\n";
     std::cout << "                             reduce-same-price, or transaction-rest\n";
+    std::cout << "  --book-update-mode <mode>  Book update: per-record (default) or tx-grouped\n";
     std::cout << "  --audit                  Include raw decoder state in dump-records output\n";
     std::cout << "\nSafety:\n";
     std::cout << "  No broker connection. No live trading. Historical files only.\n";
@@ -538,7 +543,8 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
                         const std::string& auto_trace_crossed_path,
                         bool fill_delta_mode,
                         SnapshotRecordsMode snapshot_records_mode = SnapshotRecordsMode::Ignore,
-                        OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict) {
+                        OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict,
+                        BookUpdateMode book_update_mode = BookUpdateMode::PerRecord) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
         std::cerr << "Error: " << file.error << std::endl;
@@ -683,10 +689,131 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     };
     std::vector<MissingOrderEvent> pending_missing_events;
 
+    // M10K: Transaction buffer for tx-grouped mode
+    std::vector<OrderLogRecord> tx_buffer;
+    int64_t tx_grouped_crossed = 0;
+
     OrderLogRecord rec;
     while (reader.next(file, rec)) {
         ++record_count;
 
+        // M10K: Tx-grouped mode — buffer records until TxEnd
+        if (book_update_mode == BookUpdateMode::TxGrouped) {
+            if (!is_system_record(rec)) {
+                if (has_flag(rec.order_flags, OLFlags::Add)) {
+                    ++book.errors_ref().add_records_skipped;
+                    if (has_flag(rec.order_flags, OLFlags::NonSystem)) {
+                        ++book.errors_ref().skip_non_system;
+                    }
+                    if (has_flag(rec.order_flags, OLFlags::NonZeroReplAct)) {
+                        ++book.errors_ref().skip_non_zero_repl_act;
+                    }
+                }
+                if (max_records > 0 && record_count >= max_records) break;
+                continue;
+            }
+            ++system_count;
+
+            // Track last event for trace
+            last_event_type = rec.event;
+            last_order_id = rec.order_id;
+            last_side = rec.side;
+            last_price = rec.price;
+            last_qty = rec.amount;
+            last_flags = rec.order_flags;
+            last_repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct) ? 1 : 0;
+
+            // Track TxEnd
+            if (is_tx_end(rec)) {
+                ++tx_counter;
+                last_tx_index = tx_counter;
+                transactions_seen = tx_counter;
+            }
+
+            // NewSession clears the book and flushes buffer
+            if (has_flag(rec.order_flags, OLFlags::NewSession)) {
+                tx_buffer.clear();
+                book.clear();
+                ++book.errors_ref().new_session_records_seen;
+                ++book.errors_ref().book_clears_due_to_new_session;
+                if (max_records > 0 && record_count >= max_records) break;
+                continue;
+            }
+
+            if (rec.event == OLMsgType::Moved) {
+                ++moved_count;
+            }
+
+            // M10G: Track Snapshot records
+            if (has_flag(rec.order_flags, OLFlags::Snapshot)) {
+                ++book.errors_ref().snapshot_records_seen;
+                if (snapshot_records_mode == SnapshotRecordsMode::Load) {
+                    if (rec.event == OLMsgType::Add && is_system_record(rec)) {
+                        ++book.errors_ref().snapshot_orders_loaded;
+                    }
+                } else if (snapshot_records_mode == SnapshotRecordsMode::Marker) {
+                    if (max_records > 0 && record_count >= max_records) break;
+                    continue;
+                }
+            }
+
+            // Buffer the record
+            tx_buffer.push_back(rec);
+
+            // On TxEnd, flush the transaction buffer
+            if (is_tx_end(rec)) {
+                // Apply entire transaction batch
+                TransactionBatchResult tx_result = book.apply_transaction(tx_buffer);
+
+                // Update tx-grouped diagnostics
+                ++book.errors_ref().transactions_grouped;
+                book.errors_ref().records_in_grouped_transactions += tx_result.records_processed;
+                if (tx_result.records_processed > book.errors_ref().max_records_in_transaction) {
+                    book.errors_ref().max_records_in_transaction = tx_result.records_processed;
+                }
+
+                // Track first valid book record
+                if (book.bid_depth() > 0 && book.ask_depth() > 0) {
+                    book.set_first_valid_book_record_index(record_count);
+                }
+
+                // Emit snapshot after TxEnd (same as txend snapshot mode)
+                bool should_snapshot = (snap_mode == SnapshotMode::TxEnd) || (snap_mode == SnapshotMode::Event);
+                if (should_snapshot && book.bid_depth() > 0 && book.ask_depth() > 0) {
+                    L2SnapshotEntry entry;
+                    entry.timestamp = rec.timestamp;
+                    entry.levels = book.snapshot(depth);
+                    entry.mid = book.mid_price();
+                    entry.spread = book.spread();
+                    snapshots.push_back(entry);
+                    ++snapshot_count;
+
+                    // L2 diagnostics
+                    Price bb = book.best_bid();
+                    Price ba = book.best_ask();
+                    [[maybe_unused]] Price sp = book.spread();
+
+                    if (bb <= 0) ++l2_empty_bid;
+                    if (ba <= 0) ++l2_empty_ask;
+                    if (bb > 0 && ba > 0 && bb >= ba) {
+                        ++l2_crossed;
+                        ++l2_non_positive_spread;
+                        ++tx_grouped_crossed;
+                        book.set_first_crossed_book_record_index(record_count);
+                    }
+
+                    if (max_snapshots > 0 && snapshot_count >= max_snapshots) break;
+                }
+
+                // Clear buffer for next transaction
+                tx_buffer.clear();
+            }
+
+            if (max_records > 0 && record_count >= max_records) break;
+            continue;
+        }
+
+        // Per-record mode (original behavior)
         if (!is_system_record(rec)) {
             // M10G: Track non-system records
             if (has_flag(rec.order_flags, OLFlags::Add)) {
@@ -1095,6 +1222,22 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     std::cout << "  orphan_fill_level_reductions:      " << errs.orphan_fill_level_reductions << std::endl;
     std::cout << "  orphan_fill_transaction_rest_updates: " << errs.orphan_fill_transaction_rest_updates << std::endl;
 
+    // M10K: Transaction-grouped diagnostics
+    const char* book_update_mode_name = (book_update_mode == BookUpdateMode::TxGrouped) ? "tx-grouped" : "per-record";
+    std::cout << "\nTransaction-grouped diagnostics:" << std::endl;
+    std::cout << "  book_update_mode:                       " << book_update_mode_name << std::endl;
+    std::cout << "  transactions_grouped:                   " << errs.transactions_grouped << std::endl;
+    std::cout << "  records_in_grouped_transactions:        " << errs.records_in_grouped_transactions << std::endl;
+    std::cout << "  max_records_in_transaction:             " << errs.max_records_in_transaction << std::endl;
+    std::cout << "  orphan_fill_events (tx):                " << errs.tx_grouped_orphan_fill_events << std::endl;
+    std::cout << "  orphan_cancel_events (tx):              " << errs.tx_grouped_orphan_cancel_events << std::endl;
+    std::cout << "  orphan_remove_events (tx):              " << errs.tx_grouped_orphan_remove_events << std::endl;
+    std::cout << "  orphan_fill_resolved_in_transaction:    " << errs.tx_grouped_orphan_fill_resolved << std::endl;
+    std::cout << "  orphan_cancel_resolved_in_transaction:  " << errs.tx_grouped_orphan_cancel_resolved << std::endl;
+    std::cout << "  orphan_remove_resolved_in_transaction:  " << errs.tx_grouped_orphan_remove_resolved << std::endl;
+    std::cout << "  tx_grouped_missing_order_id:            " << errs.tx_grouped_missing_order_id << std::endl;
+    std::cout << "  tx_grouped_crossed_book_snapshots:      " << tx_grouped_crossed << std::endl;
+
     // L2 diagnostics summary
     std::cout << "\nL2 export diagnostics:" << std::endl;
     std::cout << "  crossed_book_snapshots:         " << l2_crossed << std::endl;
@@ -1208,6 +1351,7 @@ static int cmd_l3_to_l2(const std::string& path, int depth, int64_t max_records,
     else if (snapshot_records_mode == SnapshotRecordsMode::Marker) snapshot_records_mode_name = "marker";
 
     std::cout << "\n=== L2 Strategy-Ready Status ===" << std::endl;
+    std::cout << "book_update_mode:                 " << book_update_mode_name << std::endl;
     std::cout << "snapshot_mode:                    " << mode_name << std::endl;
     std::cout << "snapshot_records_mode:            " << snapshot_records_mode_name << std::endl;
     std::cout << "fill_semantics:                   " << fill_mode_name << std::endl;
@@ -1343,6 +1487,7 @@ int main(int argc, char* argv[]) {
                       << "  [--auto-trace-crossed-orders-out <file.csv>]\n"
                       << "  [--fill-semantics delta|rest]\n"
                       << "  [--orphan-fill-mode strict|ignore|reduce-same-price|transaction-rest]\n"
+                      << "  [--book-update-mode per-record|tx-grouped]\n"
                       << "  [--snapshot-records-mode ignore|load|marker]" << std::endl;
             return 1;
         }
@@ -1365,6 +1510,7 @@ int main(int argc, char* argv[]) {
         std::string auto_trace_crossed_path;
         bool fill_delta_mode = true;
         OrphanFillMode orphan_fill_mode = OrphanFillMode::Strict;
+        BookUpdateMode book_update_mode = BookUpdateMode::PerRecord;
         for (int i = 3; i < argc; ++i) {
             if (std::strcmp(argv[i], "--depth") == 0 && i + 1 < argc) {
                 depth = std::atoi(argv[++i]);
@@ -1447,13 +1593,24 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Unknown orphan fill mode: " << mode_str << " (use strict, ignore, reduce-same-price, or transaction-rest)" << std::endl;
                     return 1;
                 }
+            } else if (std::strcmp(argv[i], "--book-update-mode") == 0 && i + 1 < argc) {
+                std::string mode_str = argv[++i];
+                if (mode_str == "per-record") {
+                    book_update_mode = BookUpdateMode::PerRecord;
+                } else if (mode_str == "tx-grouped") {
+                    book_update_mode = BookUpdateMode::TxGrouped;
+                } else {
+                    std::cerr << "Unknown book update mode: " << mode_str << " (use per-record or tx-grouped)" << std::endl;
+                    return 1;
+                }
             }
         }
         return cmd_l3_to_l2(file_path, depth, max_records, max_snapshots, out_path, diag_path,
                             max_diagnostics, trace_path, max_trace_events, snap_mode,
                             trace_order_ids, order_trace_path, ring_buffer_size,
                             best_level_orders_path, missing_order_path, auto_trace_crossed_path,
-                            fill_delta_mode, snapshot_records_mode, orphan_fill_mode);
+                            fill_delta_mode, snapshot_records_mode, orphan_fill_mode,
+                            book_update_mode);
     }
 
     std::cerr << "Unknown command: " << cmd << std::endl;

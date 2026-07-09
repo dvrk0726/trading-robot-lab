@@ -153,6 +153,15 @@ qsh-ingest dump-records <OrdLog.qsh> --dump-records-out audit.csv \
 # reduce-same-price: reduce volume at same price level without order_id lookup
 # transaction-rest: use amount_rest to update most recent resting order (not yet implemented)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-fill-mode reduce-same-price --out l2_snapshots.csv
+
+# Experimental: book update mode (M10K)
+# per-record: default, apply each record individually
+# tx-grouped: group records by TxEnd, apply as transaction batch, emit snapshot after TxEnd
+qsh-ingest l3-to-l2 <OrdLog.qsh> --book-update-mode tx-grouped --out l2_snapshots.csv
+
+# Compare per-record vs tx-grouped modes
+qsh-ingest l3-to-l2 <OrdLog.qsh> --book-update-mode per-record --max-records 100000 --max-snapshots 10000 --snapshot-mode txend --out l2_per_record.csv
+qsh-ingest l3-to-l2 <OrdLog.qsh> --book-update-mode tx-grouped --max-records 100000 --max-snapshots 10000 --snapshot-mode txend --out l2_tx_grouped.csv
 ```
 
 **L2 output is not strategy-ready until diagnostics are clean.**

@@ -40,6 +40,18 @@ inline const char* orphan_fill_mode_name(OrphanFillMode m) {
     }
 }
 
+// M10K: Transaction batch result for tx-grouped mode.
+struct TransactionBatchResult {
+    int64_t records_processed = 0;
+    int64_t orphan_fill_events = 0;
+    int64_t orphan_cancel_events = 0;
+    int64_t orphan_remove_events = 0;
+    int64_t orphan_fill_resolved_in_transaction = 0;
+    int64_t orphan_cancel_resolved_in_transaction = 0;
+    int64_t orphan_remove_resolved_in_transaction = 0;
+    int64_t missing_order_id = 0;
+};
+
 // Error counters for book reconstruction.
 struct BookErrors {
     int64_t missing_order_id = 0;
@@ -83,6 +95,19 @@ struct BookErrors {
     int64_t orphan_fill_transaction_rest_updates = 0;
     int64_t crossed_book_snapshots = 0;
     int64_t non_positive_spread_snapshots = 0;
+
+    // M10K: Transaction-grouped mode counters
+    int64_t transactions_grouped = 0;
+    int64_t records_in_grouped_transactions = 0;
+    int64_t max_records_in_transaction = 0;
+    int64_t tx_grouped_orphan_fill_events = 0;
+    int64_t tx_grouped_orphan_cancel_events = 0;
+    int64_t tx_grouped_orphan_remove_events = 0;
+    int64_t tx_grouped_orphan_fill_resolved = 0;
+    int64_t tx_grouped_orphan_cancel_resolved = 0;
+    int64_t tx_grouped_orphan_remove_resolved = 0;
+    int64_t tx_grouped_missing_order_id = 0;
+    int64_t tx_grouped_crossed_book_snapshots = 0;
 };
 
 // L3 order book reconstruction from OrdLog events.
@@ -91,6 +116,10 @@ public:
     // Apply an OrderLogRecord to the book.
     // Returns true on success, false on error (error counted internally).
     bool apply(const OrderLogRecord& rec);
+
+    // M10K: Apply a transaction batch (grouped by TxEnd).
+    // Returns diagnostics about orphan events within the transaction.
+    TransactionBatchResult apply_transaction(const std::vector<OrderLogRecord>& records);
 
     // Clear the book (on NewSession).
     void clear();

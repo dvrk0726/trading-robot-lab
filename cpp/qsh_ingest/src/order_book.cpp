@@ -1,6 +1,7 @@
 #include "orderbook/order_book.hpp"
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <sstream>
 
 namespace qsh {
@@ -22,6 +23,89 @@ bool OrderBook::apply(const OrderLogRecord& rec) {
     last_ts_ = rec.timestamp;
 
     return true;
+}
+
+TransactionBatchResult OrderBook::apply_transaction(const std::vector<OrderLogRecord>& records) {
+    TransactionBatchResult result;
+    result.records_processed = static_cast<int64_t>(records.size());
+
+    // Snapshot which order_ids are in the book before this transaction
+    std::set<UID> pre_tx_orders;
+    for (const auto& [id, _] : orders_) {
+        pre_tx_orders.insert(id);
+    }
+
+    // Track order_ids added within this transaction
+    std::set<UID> tx_added_orders;
+
+    int64_t missing_before = errors_.missing_order_id;
+
+    for (const auto& rec : records) {
+        if (rec.event == OLMsgType::Add) {
+            // Track that this order was added in this transaction
+            tx_added_orders.insert(rec.order_id);
+            apply(rec);
+        } else if (rec.event == OLMsgType::Fill) {
+            bool in_book = orders_.find(rec.order_id) != orders_.end();
+            bool added_in_tx = tx_added_orders.count(rec.order_id) > 0;
+
+            if (!in_book && !added_in_tx) {
+                // Truly orphan: order not in book AND not added in this tx
+                ++result.orphan_fill_events;
+                // Still apply to count missing_order_id in BookErrors
+                apply(rec);
+            } else if (!in_book && added_in_tx) {
+                // Order was added in this tx but already consumed before this fill
+                // This is a "resolved" case: the order existed in this tx
+                ++result.orphan_fill_resolved_in_transaction;
+                apply(rec);
+            } else {
+                // Normal: order in book
+                apply(rec);
+            }
+        } else if (rec.event == OLMsgType::Cancel || rec.event == OLMsgType::Moved) {
+            bool in_book = orders_.find(rec.order_id) != orders_.end();
+            bool added_in_tx = tx_added_orders.count(rec.order_id) > 0;
+
+            if (!in_book && !added_in_tx) {
+                ++result.orphan_cancel_events;
+                apply(rec);
+            } else if (!in_book && added_in_tx) {
+                ++result.orphan_cancel_resolved_in_transaction;
+                apply(rec);
+            } else {
+                apply(rec);
+            }
+        } else if (rec.event == OLMsgType::Remove) {
+            bool in_book = orders_.find(rec.order_id) != orders_.end();
+            bool added_in_tx = tx_added_orders.count(rec.order_id) > 0;
+
+            if (!in_book && !added_in_tx) {
+                ++result.orphan_remove_events;
+                apply(rec);
+            } else if (!in_book && added_in_tx) {
+                ++result.orphan_remove_resolved_in_transaction;
+                apply(rec);
+            } else {
+                apply(rec);
+            }
+        } else {
+            apply(rec);
+        }
+    }
+
+    result.missing_order_id = errors_.missing_order_id - missing_before;
+
+    // Update BookErrors M10K counters
+    errors_.tx_grouped_orphan_fill_events += result.orphan_fill_events;
+    errors_.tx_grouped_orphan_cancel_events += result.orphan_cancel_events;
+    errors_.tx_grouped_orphan_remove_events += result.orphan_remove_events;
+    errors_.tx_grouped_orphan_fill_resolved += result.orphan_fill_resolved_in_transaction;
+    errors_.tx_grouped_orphan_cancel_resolved += result.orphan_cancel_resolved_in_transaction;
+    errors_.tx_grouped_orphan_remove_resolved += result.orphan_remove_resolved_in_transaction;
+    errors_.tx_grouped_missing_order_id += result.missing_order_id;
+
+    return result;
 }
 
 void OrderBook::clear() {
