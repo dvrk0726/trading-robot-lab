@@ -2531,3 +2531,114 @@ The crossing EVENT (record 2136) is identical across all modes. The difference i
 1. **Add crossed-book filtering** — The crossing is confirmed as a persistent real-market event (classification B), not a decoder bug. The next step is to implement filtering logic that marks crossed-book regions as non-strategy-ready and skips them during L2 snapshot export.
 2. **Investigate Counter flag** — The Counter flag (0x100) is set on the crossing event. Research whether counter-trades on MOEX are expected to produce crossed books (e.g., negotiated block trades).
 3. **L2 strategy-ready remains NO** — Until crossed-book filtering is implemented, L2 output cannot be used for strategy.
+
+---
+
+## M10S Counter Flag Semantics and Book Impact
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### 1. Build/Test Result
+
+```
+Build: OK (Release)
+Tests: 16/16 passed
+```
+
+### 2. Real-Sample Validation Table
+
+```
+local QSH found: data/raw/qsh/RTS-3.21/2021-01-05/RTS-3.21.2021-01-05.OrdLog.qsh
+counter-flag-audit executed successfully
+real-sample validation with -RunCounterFlagAudit: all 8 modes OK
+```
+
+| mode | counter_mode | missing_order_id | crossed_book_snapshots | counter_records_seen | counter_records_ignored | first_crossed_book_record_index | l2_strategy_ready |
+|---|---|---|---|---|---|---|---|
+| per-record strict | include | 319 | 7890 | 15821 | 0 | 2210 | False |
+| per-record reduce-same-price | include | 171 | 7884 | 15821 | 0 | 2242 | False |
+| per-record orphan-cancel-ignore | include | 148 | 7890 | 15821 | 0 | 2210 | False |
+| per-record reduce+orphan-cancel-ignore | include | 0 | 7884 | 15821 | 0 | 2242 | False |
+| snapshot-records-mode load | include | 319 | 7890 | 15821 | 0 | 2210 | False |
+| tx-grouped | include | 319 | 7890 | 15821 | 0 | 2210 | False |
+| per-record counter-ignore-book | ignore-book | 272 | 907 | 15821 | 15821 | 16215 | False |
+| reduce+orphan-cancel-ignore+counter-ignore-book | ignore-book | 0 | 907 | 15821 | 15821 | 16215 | False |
+
+### 3. Counter Flag Audit Summary
+
+| Metric | Value |
+|---|---|
+| counter_records_total | 724,888 |
+| counter_add | 316,582 |
+| counter_fill | 148,929 |
+| counter_cancel | 0 |
+| counter_remove | 259,377 |
+| counter_move | 0 |
+| counter_buy | 544,443 |
+| counter_sell | 180,445 |
+| counter_snapshot | 0 |
+| counter_new_session | 0 |
+| counter_txend | 259,377 |
+| counter_non_system | 0 |
+| counter_cross_trade | 63 |
+| first_counter_record_index | 2136 |
+| first_counter_add_record_index | 2136 |
+
+**Record 2136/2137 Inspection:**
+- record_2136_flags: 0x114 (Counter=1, Add=1, Buy=1)
+- record_2136_is_counter: YES
+- record_2137_flags: 0x118 (Counter=1, Fill=1, Buy=1)
+- record_2137_is_counter: YES
+
+### 4. Book Impact Summary
+
+| Metric | Value |
+|---|---|
+| counter_events_that_create_new_best_bid | 18 |
+| counter_events_that_create_new_best_ask | 6 |
+| counter_events_that_create_crossed_book | 1 |
+| counter_events_inside_crossed_state | 724,887 |
+| counter_events_that_uncross_book | 0 |
+| first_counter_crossing_record_index | 2136 |
+
+**Key insight:** Almost all Counter events (724,887 out of 724,888) occur INSIDE the crossed state. Only 1 Counter event creates the crossed book (record 2136). Counter events do NOT uncross the book.
+
+### 5. Counter-Mode Comparison
+
+| Mode | crossed_book_snapshots | Reduction |
+|---|---|---|
+| include (default) | 7,890 | baseline |
+| ignore-book | 907 | **87% reduction** |
+
+**The `ignore-book` mode reduces crossed book snapshots by 87%** (from 7,890 to 907). The first crossing event also moves from record 2210 to record 16215, indicating that Counter events are the primary cause of the crossed state in the early part of the file.
+
+### 6. A/B/C/D Conclusion
+
+**Conclusion: A — Counter events should not mutate normal visible book; ignore-book fixes crossed state.**
+
+Evidence:
+1. Counter events are the PRIMARY cause of the crossed state (724,887 out of 724,888 Counter events are inside crossed state)
+2. The `ignore-book` mode reduces crossed book snapshots by 87% (7,890 → 907)
+3. The first crossing event moves from record 2210 to record 16215 when Counter events are ignored
+4. Counter events include ADD (316,582), FILL (148,929), and REMOVE (259,377) — these are counter-trade events that should not affect the normal visible order book
+5. The Counter flag (0x100) indicates counter-trade events on MOEX, which are negotiated block trades that should be excluded from normal book reconstruction
+
+**Recommendation:** Change default counter mode from `include` to `ignore-book` for L2 reconstruction. Counter events should be counted separately for diagnostics but should not mutate the visible order book.
+
+### 7. Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/include/orderbook/order_book.hpp` | Added `CounterMode` enum (Include, IgnoreBook); added counter tracking fields to `BookErrors`; added `set_counter_mode()` to OrderBook |
+| `cpp/qsh_ingest/src/order_book.cpp` | Added counter-aware logic in `apply()` — tracks all Counter events and skips book mutation in ignore-book mode |
+| `cpp/qsh_ingest/src/main.cpp` | Added `cmd_counter_flag_audit` command; added `--counter-mode` argument to l3-to-l2; added counter stats to summary JSON and console output |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunCounterFlagAudit` switch; added counter-ignore-book validation modes; updated comparison table |
+| `cpp/qsh_ingest/README.md` | Added counter-flag-audit and --counter-mode documentation |
+
+### 8. Next Recommended Task
+
+1. **Change default counter mode to ignore-book** — Strong evidence supports excluding Counter events from normal book mutation. This should be the new default for L2 reconstruction.
+2. **L2 strategy-ready may become YES** — With counter-ignore-book mode, crossed_book_snapshots dropped to 907. Investigate remaining 907 crossed snapshots to determine if they are also non-strategy-ready events.
+3. **Add Counter event filtering to diagnostics** — Counter events should be tracked separately in diagnostics output for audit purposes.

@@ -44,6 +44,20 @@ inline const char* orphan_cancel_mode_name(OrphanCancelMode m) {
     }
 }
 
+// M10S: Counter event handling mode
+enum class CounterMode {
+    Include,     // Default: Counter events mutate book normally
+    IgnoreBook   // Counter events skipped for book mutation, counted separately
+};
+
+inline const char* counter_mode_name(CounterMode m) {
+    switch (m) {
+        case CounterMode::Include:    return "include";
+        case CounterMode::IgnoreBook: return "ignore-book";
+        default:                      return "unknown";
+    }
+}
+
 inline const char* orphan_fill_mode_name(OrphanFillMode m) {
     switch (m) {
         case OrphanFillMode::Strict:          return "strict";
@@ -126,6 +140,27 @@ struct BookErrors {
     int64_t tx_grouped_orphan_remove_resolved = 0;
     int64_t tx_grouped_missing_order_id = 0;
     int64_t tx_grouped_crossed_book_snapshots = 0;
+
+    // M10S: Counter flag tracking
+    int64_t counter_records_seen = 0;
+    int64_t counter_add = 0;
+    int64_t counter_fill = 0;
+    int64_t counter_cancel = 0;
+    int64_t counter_remove = 0;
+    int64_t counter_move = 0;
+    int64_t counter_buy = 0;
+    int64_t counter_sell = 0;
+    int64_t counter_snapshot = 0;
+    int64_t counter_new_session = 0;
+    int64_t counter_txend = 0;
+    int64_t counter_non_system = 0;
+    int64_t counter_cross_trade = 0;
+    int64_t counter_records_ignored_for_book = 0;
+    int64_t counter_add_ignored_for_book = 0;
+    int64_t counter_fill_ignored_for_book = 0;
+    int64_t counter_cancel_ignored_for_book = 0;
+    int64_t counter_remove_ignored_for_book = 0;
+    int64_t counter_move_ignored_for_book = 0;
 };
 
 // L3 order book reconstruction from OrdLog events.
@@ -205,6 +240,9 @@ public:
     // M10N: Set orphan cancel/remove handling mode.
     void set_orphan_cancel_mode(OrphanCancelMode mode) { orphan_cancel_mode_ = mode; }
 
+    // M10S: Set counter event handling mode.
+    void set_counter_mode(CounterMode mode) { counter_mode_ = mode; }
+
     // M10G: Record index of first missing_order_id event (for timing diagnostics)
     int64_t first_missing_order_record_index() const { return first_missing_order_record_index_; }
     void set_first_missing_order_record_index(int64_t idx) {
@@ -278,6 +316,7 @@ private:
     bool fill_delta_mode_ = true;  // true: amount=delta (default), false: amount=original, fill=amount-amount_rest
     OrphanFillMode orphan_fill_mode_ = OrphanFillMode::Strict;  // M10J: orphan fill handling mode
     OrphanCancelMode orphan_cancel_mode_ = OrphanCancelMode::Strict;  // M10N: orphan cancel/remove handling mode
+    CounterMode counter_mode_ = CounterMode::Include;  // M10S: counter event handling mode
 
     void add_order(const OrderLogRecord& rec);
     void fill_order(const OrderLogRecord& rec);

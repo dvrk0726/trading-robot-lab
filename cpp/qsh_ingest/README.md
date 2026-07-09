@@ -162,6 +162,9 @@ qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-cancel-mode ignore --out l2_snapshots.
 # Combine orphan fill and cancel modes (M10O)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-fill-mode reduce-same-price --orphan-cancel-mode ignore --out l2_snapshots.csv
 
+# Combine all experimental modes (M10S)
+qsh-ingest l3-to-l2 <OrdLog.qsh> --orphan-fill-mode reduce-same-price --orphan-cancel-mode ignore --counter-mode ignore-book --out l2_snapshots.csv
+
 # Orphan cancel/remove audit (M10N)
 qsh-ingest orphan-cancel-audit <OrdLog.qsh> --out orphan_cancel_audit.csv --max-audits 200
 
@@ -184,6 +187,20 @@ qsh-ingest crossing-window-audit <OrdLog.qsh> --from 1966 --to 2136 --out audit.
 # Reports: first_crossing_record_index, first_uncross_record_index, crossed duration,
 # order lifecycle (filled/canceled/removed), classification A/B/C/D/E.
 qsh-ingest crossed-persistence-audit <OrdLog.qsh> --from 2136 --out crossed_persistence_audit.csv
+
+# Counter flag audit (M10S)
+# Counts all Counter-flagged (0x100) events and measures their book impact.
+# Reports: counter_records_total, counter_add/fill/cancel/remove/move, counter_buy/sell,
+# counter_snapshot/new_session/txend/non_system/cross_trade,
+# first_counter_record_index, first_counter_add_record_index,
+# counter_events_that_create_new_best_bid/ask, counter_events_that_create_crossed_book,
+# counter_events_inside_crossed_state, counter_events_that_uncross_book.
+qsh-ingest counter-flag-audit <OrdLog.qsh> --out counter_flag_audit.csv
+
+# Experimental: counter mode (M10S)
+# include: default, Counter events mutate book normally
+# ignore-book: Counter events skipped for book mutation, counted separately
+qsh-ingest l3-to-l2 <OrdLog.qsh> --counter-mode ignore-book --out l2_snapshots.csv
 
 # First crossed-book root cause trace (M10N, enhanced M10O)
 # Produces: first_crossed_root_cause.csv, first_crossed_best_orders.csv,
@@ -230,6 +247,14 @@ The `--summary-out <file.json>` option writes a machine-readable summary with th
 - `orphan_fill_mode`: strict, ignore, reduce-same-price, or transaction-rest
 - `orphan_cancel_mode`: strict or ignore
 - `orphan_cancel_ignored`: count of ignored orphan cancels
+- `counter_mode`: include or ignore-book
+- `counter_records_seen`: count of Counter-flagged records
+- `counter_records_ignored_for_book`: count of Counter records skipped for book mutation
+- `counter_add_ignored_for_book`: count of Counter ADD records skipped
+- `counter_fill_ignored_for_book`: count of Counter FILL records skipped
+- `counter_cancel_ignored_for_book`: count of Counter CANCEL records skipped
+- `counter_remove_ignored_for_book`: count of Counter REMOVE records skipped
+- `counter_move_ignored_for_book`: count of Counter MOVE records skipped
 - `orphan_remove_ignored`: count of ignored orphan removes
 - `records_processed`: total records processed
 - `transactions_seen`: total transactions seen
@@ -264,24 +289,27 @@ Run all validation modes against the local QSH sample:
 Options:
 
 ```powershell
-.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit -RunCrossedPersistenceAudit
+.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit -RunCrossedPersistenceAudit -RunCounterFlagAudit
 ```
 
 The script:
 - Builds qsh_ingest and runs tests (unless `-SkipBuild`)
-- Runs six `l3-to-l2` modes with `--summary-out`:
+- Runs eight `l3-to-l2` modes with `--summary-out`:
   1. per-record strict
   2. per-record reduce-same-price
   3. per-record orphan-cancel-ignore
   4. per-record reduce+orphan-cancel-ignore
   5. snapshot-records-mode load
   6. tx-grouped
+  7. per-record counter-ignore-book
+  8. reduce+orphan-cancel-ignore+counter-ignore-book
 - Prints a compact comparison table
 - Reports L2 strategy-ready status
 - Optionally probes `missing_on_cancel` orders
 - Optionally runs orphan cancel/remove audit
 - Optionally runs first crossed-book root cause trace
 - Optionally runs crossing window audit for records 1966..2136
+- Optionally runs counter flag audit (M10S)
 
 Raw QSH must stay under `data/raw/qsh/...`. Generated reports stay under `data/reports/qsh/...`. Both are ignored by Git.
 

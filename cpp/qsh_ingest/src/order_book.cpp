@@ -7,6 +7,38 @@
 namespace qsh {
 
 bool OrderBook::apply(const OrderLogRecord& rec) {
+    bool is_counter = has_flag(rec.order_flags, OLFlags::Counter);
+
+    // M10S: Track all Counter records regardless of mode
+    if (is_counter) {
+        ++errors_.counter_records_seen;
+        if (rec.event == OLMsgType::Add)    ++errors_.counter_add;
+        if (rec.event == OLMsgType::Fill)   ++errors_.counter_fill;
+        if (rec.event == OLMsgType::Cancel) ++errors_.counter_cancel;
+        if (rec.event == OLMsgType::Remove) ++errors_.counter_remove;
+        if (rec.event == OLMsgType::Moved)  ++errors_.counter_move;
+        if (rec.side == Side::Buy)          ++errors_.counter_buy;
+        if (rec.side == Side::Sell)         ++errors_.counter_sell;
+        if (has_flag(rec.order_flags, OLFlags::Snapshot))     ++errors_.counter_snapshot;
+        if (has_flag(rec.order_flags, OLFlags::NewSession))   ++errors_.counter_new_session;
+        if (has_flag(rec.order_flags, OLFlags::TxEnd))        ++errors_.counter_txend;
+        if (has_flag(rec.order_flags, OLFlags::NonSystem))    ++errors_.counter_non_system;
+        if (has_flag(rec.order_flags, OLFlags::CrossTrade))   ++errors_.counter_cross_trade;
+    }
+
+    // M10S: In ignore-book mode, skip book mutation for Counter events
+    if (is_counter && counter_mode_ == CounterMode::IgnoreBook) {
+        ++errors_.counter_records_ignored_for_book;
+        if (rec.event == OLMsgType::Add)    ++errors_.counter_add_ignored_for_book;
+        if (rec.event == OLMsgType::Fill)   ++errors_.counter_fill_ignored_for_book;
+        if (rec.event == OLMsgType::Cancel) ++errors_.counter_cancel_ignored_for_book;
+        if (rec.event == OLMsgType::Remove) ++errors_.counter_remove_ignored_for_book;
+        if (rec.event == OLMsgType::Moved)  ++errors_.counter_move_ignored_for_book;
+        last_ts_ = rec.timestamp;
+        return true;
+    }
+
+    // Original logic for Include mode or non-Counter events
     if (rec.event == OLMsgType::Add) {
         add_order(rec);
     } else if (rec.event == OLMsgType::Fill) {

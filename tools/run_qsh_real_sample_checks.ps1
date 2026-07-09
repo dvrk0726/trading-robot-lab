@@ -11,7 +11,8 @@ param(
     [switch]$RunFirstCrossedProbe,
     [switch]$RunSnapshotAudit,
     [switch]$RunCrossingWindowAudit,
-    [switch]$RunCrossedPersistenceAudit
+    [switch]$RunCrossedPersistenceAudit,
+    [switch]$RunCounterFlagAudit
 )
 
 $ErrorActionPreference = "Continue"
@@ -153,6 +154,35 @@ $modes = @(
             "--book-update-mode", "tx-grouped",
             "--out", "$ReportDirFull\l2_tx_grouped.csv",
             "--summary-out", "$ReportDirFull\l2_tx_grouped.summary.json")
+    },
+    @{
+        Name     = "per-record counter-ignore-book"
+        CsvOut   = "$ReportDirFull\l2_counter_ignore_book.csv"
+        Summary  = "$ReportDirFull\l2_counter_ignore_book.summary.json"
+        Args     = @("l3-to-l2", $QshFullPath,
+            "--depth", "5",
+            "--max-records", "100000",
+            "--max-snapshots", "10000",
+            "--snapshot-mode", "txend",
+            "--orphan-fill-mode", "strict",
+            "--counter-mode", "ignore-book",
+            "--out", "$ReportDirFull\l2_counter_ignore_book.csv",
+            "--summary-out", "$ReportDirFull\l2_counter_ignore_book.summary.json")
+    },
+    @{
+        Name     = "reduce+orphan-cancel-ignore+counter-ignore-book"
+        CsvOut   = "$ReportDirFull\l2_reduce_orphan_cancel_counter_ignore.csv"
+        Summary  = "$ReportDirFull\l2_reduce_orphan_cancel_counter_ignore.summary.json"
+        Args     = @("l3-to-l2", $QshFullPath,
+            "--depth", "5",
+            "--max-records", "100000",
+            "--max-snapshots", "10000",
+            "--snapshot-mode", "txend",
+            "--orphan-fill-mode", "reduce-same-price",
+            "--orphan-cancel-mode", "ignore",
+            "--counter-mode", "ignore-book",
+            "--out", "$ReportDirFull\l2_reduce_orphan_cancel_counter_ignore.csv",
+            "--summary-out", "$ReportDirFull\l2_reduce_orphan_cancel_counter_ignore.summary.json")
     }
 )
 
@@ -185,6 +215,9 @@ foreach ($mode in $modes) {
             non_positive_spread_snapshots   = $summary.non_positive_spread_snapshots
             first_missing_order_record_index = $summary.first_missing_order_record_index
             first_crossed_book_record_index = $summary.first_crossed_book_record_index
+            counter_mode                    = $summary.counter_mode
+            counter_records_seen            = $summary.counter_records_seen
+            counter_records_ignored_for_book = $summary.counter_records_ignored_for_book
             l2_strategy_ready               = $summary.l2_strategy_ready
         }
         Write-Host " OK" -ForegroundColor Green
@@ -205,6 +238,9 @@ foreach ($mode in $modes) {
             non_positive_spread_snapshots   = "?"
             first_missing_order_record_index = "?"
             first_crossed_book_record_index = "?"
+            counter_mode                    = "?"
+            counter_records_seen            = "?"
+            counter_records_ignored_for_book = "?"
             l2_strategy_ready               = "?"
         }
     }
@@ -216,13 +252,13 @@ Write-Host "=== Real-Sample Validation Results ===" -ForegroundColor Cyan
 Write-Host ""
 
 # Build markdown-compatible table
-$header = "| mode | missing_order_id | missing_on_fill | missing_on_cancel | missing_on_remove | orphan_cancel_mode | orphan_cancel_ignored | orphan_remove_ignored | orphan_fill_events | orphan_fill_level_reductions | crossed_book_snapshots | non_positive_spread_snapshots | first_missing_order_record_index | first_crossed_book_record_index | l2_strategy_ready |"
-$sep    = "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+$header = "| mode | counter_mode | missing_order_id | crossed_book_snapshots | counter_records_seen | counter_records_ignored | first_crossed_book_record_index | l2_strategy_ready |"
+$sep    = "|---|---|---|---|---|---|---|---|"
 Write-Host $header
 Write-Host $sep
 
 foreach ($r in $results) {
-    $line = "| $($r.Mode) | $($r.missing_order_id) | $($r.missing_on_fill) | $($r.missing_on_cancel) | $($r.missing_on_remove) | $($r.orphan_cancel_mode) | $($r.orphan_cancel_ignored) | $($r.orphan_remove_ignored) | $($r.orphan_fill_events) | $($r.orphan_fill_level_reductions) | $($r.crossed_book_snapshots) | $($r.non_positive_spread_snapshots) | $($r.first_missing_order_record_index) | $($r.first_crossed_book_record_index) | $($r.l2_strategy_ready) |"
+    $line = "| $($r.Mode) | $($r.counter_mode) | $($r.missing_order_id) | $($r.crossed_book_snapshots) | $($r.counter_records_seen) | $($r.counter_records_ignored_for_book) | $($r.first_crossed_book_record_index) | $($r.l2_strategy_ready) |"
     Write-Host $line
 }
 
@@ -329,6 +365,22 @@ if ($RunCrossedPersistenceAudit) {
 } else {
     Write-Host ""
     Write-Host "Tip: run with -RunCrossedPersistenceAudit for crossed-state persistence analysis from record 2136." -ForegroundColor DarkGray
+}
+
+# --- 11d. Counter-flag-audit (optional) ---
+if ($RunCounterFlagAudit) {
+    Write-Host ""
+    Write-Host "Running counter-flag-audit..." -ForegroundColor Cyan
+    $counterAuditOut = "$ReportDirFull\counter_flag_audit.csv"
+    & $ExePath "counter-flag-audit" $QshFullPath "--out" $counterAuditOut 2>&1 | Write-Host
+    if (Test-Path $counterAuditOut) {
+        Write-Host "Counter flag audit output: $counterAuditOut" -ForegroundColor Green
+    } else {
+        Write-Host "Counter flag audit output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunCounterFlagAudit for Counter flag (0x100) event audit." -ForegroundColor DarkGray
 }
 
 # --- 12. Summary ---
