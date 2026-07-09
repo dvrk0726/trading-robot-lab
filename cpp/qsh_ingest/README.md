@@ -200,7 +200,14 @@ qsh-ingest counter-flag-audit <OrdLog.qsh> --out counter_flag_audit.csv
 # Experimental: counter mode (M10S)
 # include: default, Counter events mutate book normally
 # ignore-book: Counter events skipped for book mutation, counted separately
+# NOTE: ignore-book is experimental until remaining crossed snapshots are classified (M10T)
 qsh-ingest l3-to-l2 <OrdLog.qsh> --counter-mode ignore-book --out l2_snapshots.csv
+
+# Remaining crossed audit (M10T)
+# Classifies remaining crossed snapshots after counter-ignore-book.
+# Outputs CSV with full event flags, book state, and mutation path for each crossed event.
+qsh-ingest remaining-crossed-audit <OrdLog.qsh> --counter-mode ignore-book --out remaining_crossed_after_counter_ignore.csv
+qsh-ingest remaining-crossed-audit <OrdLog.qsh> --counter-mode ignore-book --out audit.csv --from 16190 --to 16220 --context 50
 
 # First crossed-book root cause trace (M10N, enhanced M10O)
 # Produces: first_crossed_root_cause.csv, first_crossed_best_orders.csv,
@@ -289,7 +296,7 @@ Run all validation modes against the local QSH sample:
 Options:
 
 ```powershell
-.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit -RunCrossedPersistenceAudit -RunCounterFlagAudit
+.\tools\run_qsh_real_sample_checks.ps1 -QshPath "..." -ReportDir "..." -SkipBuild -RunMissingCancelProbe -RunOrphanCancelAudit -RunFirstCrossedProbe -RunSnapshotAudit -RunCrossingWindowAudit -RunCrossedPersistenceAudit -RunCounterFlagAudit -RunRemainingCrossedAudit
 ```
 
 The script:

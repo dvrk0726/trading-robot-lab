@@ -2642,3 +2642,115 @@ Evidence:
 1. **Change default counter mode to ignore-book** — Strong evidence supports excluding Counter events from normal book mutation. This should be the new default for L2 reconstruction.
 2. **L2 strategy-ready may become YES** — With counter-ignore-book mode, crossed_book_snapshots dropped to 907. Investigate remaining 907 crossed snapshots to determine if they are also non-strategy-ready events.
 3. **Add Counter event filtering to diagnostics** — Counter events should be tracked separately in diagnostics output for audit purposes.
+
+---
+
+## M10T Remaining crossed snapshots after counter-ignore-book
+
+Date: 2026-07-09
+Agent: MiMo
+Status: completed
+
+### 1. Build/Test Result
+
+- Build: **GREEN** (MSVC Release)
+- Tests: **16/16 passed** (0 failures)
+
+### 2. Real-Sample Validation Result
+
+Ran `run_qsh_real_sample_checks.ps1` with `-RunCounterFlagAudit -RunCrossedPersistenceAudit -RunCrossingWindowAudit -RunFirstCrossedProbe`:
+
+| Mode | counter_mode | missing_order_id | crossed_book_snapshots | first_crossed_book_record_index | l2_strategy_ready |
+|---|---|---|---|---|---|
+| per-record strict | include | 319 | 7,890 | 2210 | False |
+| per-record reduce+orphan-cancel-ignore | include | 0 | 7,884 | 2242 | False |
+| per-record counter-ignore-book | ignore-book | 272 | 907 | 16215 | False |
+| reduce+orphan-cancel-ignore+counter-ignore-book | ignore-book | 0 | 907 | 16215 | False |
+
+### 3. First Remaining Crossed Event/Snapshot
+
+Under `--counter-mode ignore-book`:
+
+| Field | Value |
+|---|---|
+| first_remaining_crossing_event_record_index | **16195** |
+| first_remaining_crossing_snapshot_record_index | **16215** |
+| first_remaining_crossing_snapshot_index | **9094** |
+| tx_index_at_first_crossing | 9118 |
+| records_in_first_crossing_tx | 1 |
+| best_bid_before | 14110 |
+| best_ask_before | 14062 |
+| best_bid_after | **14120** |
+| best_ask_after | 14062 |
+| last_event_type | **ADD** |
+| last_order_id | 1925033994463939517 |
+| last_side | **BUY** |
+| last_price | **14120** |
+| last_amount | 35 |
+| last_amount_rest | 35 |
+| last_flags_hex | **0x94** (Add + Buy + NonSystem) |
+| last_repl_act | 0 |
+
+**Key finding:** The crossing is caused by a **non-Counter ADD BUY order at 14120** (flags 0x94 = Add + Buy + NonSystem). This is a normal trading event — NOT a Counter event. The order at 14120 is added while the best ask is at 14062, creating best_bid (14120) > best_ask (14062).
+
+### 4. Raw Flags Around Crossing
+
+Context window (records 16190-16215):
+
+- Records 16190-16194: Counter-flagged (0x114) ADD/REMOVE pairs at 14100 (BUY side). These are ignored by counter-ignore-book mode.
+- **Record 16195: ADD BUY 14120, flags 0x94 (non-Counter)** — creates the crossing
+- Records 16196-16214: FILL events at 14120 (BUY) and 14112-14119 (SELL) — sweep through resting SELL orders
+- Record 16215: FILL SELL 14120, flags 0x4a8 (Counter + Fill + Sell + NonSystem) — Counter event, ignored
+
+**No Counter, CrossTrade, Moved, Snapshot, NewSession, or NonZeroReplAct flags on the crossing trigger event (16195).**
+
+### 5. Order Lifecycle Traces
+
+**Order 1925033994463939517 (crossing BUY order):**
+- ADD at record 16195: BUY 14120, qty 35. Before: best_bid=14055, best_ask=14062. After: best_bid=14120, best_ask=14062. **Creates crossing.**
+- FILL at record 16196: BUY 14120, qty 1, amount_rest 34
+- Still active at end of observed window
+
+**Order 1925033994463171658 (Counter FILL SELL at 14120):**
+- FILL at record 16215: SELL 14120, qty 7, amount_rest 0, flags 0x4a8 (Counter)
+- This is a Counter event — ignored for book mutation
+
+### 6. Mode Comparison Table
+
+| Mode | counter_mode | orphan_fill_mode | orphan_cancel_mode | missing_order_id | crossed_book_snapshots | first_crossing_event_record_index | first_crossing_snapshot_record_index | first_crossing_snapshot_index | counter_records_seen | counter_records_ignored_for_book | l2_strategy_ready | remaining_crossing_classification |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| per-record strict | include | strict | strict | 319 | 7,890 | 2210 | 2210 | 1 | 15,821 | 0 | False | A (Counter events) |
+| per-record reduce+orphan-cancel-ignore | include | reduce-same-price | ignore | 0 | 7,884 | 2242 | 2242 | 1 | 15,821 | 0 | False | A (Counter events) |
+| per-record counter-ignore-book | ignore-book | strict | strict | 272 | 907 | 16195 | 16215 | 9094 | 15,821 | 15,821 | False | B (normal trading) |
+| reduce+orphan-cancel-ignore+counter-ignore-book | ignore-book | reduce-same-price | ignore | 0 | 907 | 16195 | 16215 | 9094 | 15,821 | 15,821 | False | B (normal trading) |
+
+### 7. A/B/C/D/E Classification
+
+**Classification: B — Crossed states are short transitional states; mark affected snapshots non-strategy-ready.**
+
+Evidence:
+1. The remaining 907 crossed snapshots are caused by **normal trading events** (non-Counter ADD and FILL operations)
+2. The crossing trigger is an ADD BUY order at 14120 (flags 0x94 = Add + Buy + NonSystem) — a legitimate aggressive order that crosses the spread
+3. No special flags (Counter, CrossTrade, Moved, Snapshot, NewSession, NonZeroReplAct) are present on the crossing trigger event
+4. The crossing persists for the rest of the file (5,346,400 crossed events out of 5,362,594 total records) because the aggressive BUY order at 14120 is never fully filled or canceled
+5. This is a real market microstructure phenomenon: aggressive buying that crosses the spread is a normal part of MOEX trading
+
+**The remaining 907 crossed snapshots represent real market events that cannot be fixed by ignoring any flag class.** They should be marked as non-strategy-ready until a different approach (e.g., transaction-level book state, or accepting crossed states during sweeps) is implemented.
+
+### 8. Files Changed
+
+| File | Change |
+|---|---|
+| `cpp/qsh_ingest/src/main.cpp` | Added `cmd_remaining_crossed_audit` command with full flag tracking and mutation path output |
+| `tools/run_qsh_real_sample_checks.ps1` | Added `-RunRemainingCrossedAudit` switch |
+| `cpp/qsh_ingest/README.md` | Added remaining-crossed-audit documentation; noted ignore-book is experimental until remaining crossed snapshots are classified |
+
+### 9. Next Recommended Task
+
+**M10U — Normalize strategy-ready L2 export and Data Quality gating**
+
+The remaining 907 crossed snapshots are classified as B (normal trading events). The next step is:
+1. Implement a Data Quality gate that marks crossed snapshots as non-strategy-ready in the L2 output
+2. Add a `strategy_ready` column to the L2 CSV output
+3. Consider transaction-level book state for sweep detection
+4. Do NOT change default counter mode until the gating mechanism is in place

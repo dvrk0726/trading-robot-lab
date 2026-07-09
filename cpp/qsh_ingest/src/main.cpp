@@ -66,6 +66,9 @@ static void print_help() {
     std::cout << "                        Trace the exact orders causing first crossed book\n";
     std::cout << "  crossed-persistence-audit <OrdLog.qsh> --from N [--max-records N] --out <file.csv>\n";
     std::cout << "                        Audit crossed-state persistence and order lifecycle\n";
+    std::cout << "  remaining-crossed-audit <OrdLog.qsh> --counter-mode ignore-book\n";
+    std::cout << "                        [--out <file.csv>] [--from N] [--to N] [--context N]\n";
+    std::cout << "                        Audit remaining crossed snapshots after counter-ignore-book\n";
     std::cout << "  l3-to-l2 <OrdLog.qsh> [--depth N] [--max-records N] [--max-snapshots N]\n";
     std::cout << "                        [--out <file.csv>] [--diagnostics-out <file.csv>]\n";
     std::cout << "                        [--max-diagnostics N]\n";
@@ -3030,6 +3033,219 @@ static int cmd_counter_flag_audit(const std::string& path, const std::string& ou
     return 0;
 }
 
+// M10T: Remaining crossed audit — classify remaining crossed snapshots after counter-ignore-book
+static int cmd_remaining_crossed_audit(const std::string& path, const std::string& out_path,
+                                        int64_t from_index, int64_t to_index, int context_size,
+                                        int64_t max_records) {
+    auto file = open_qsh_file(path);
+    if (!file.valid) {
+        std::cerr << "Error: " << file.error << std::endl;
+        return 1;
+    }
+
+    if (file.header.stream != StreamType::OrderLog) {
+        std::cerr << "Error: remaining-crossed-audit requires OrdLog stream, got "
+                  << stream_type_name(file.header.stream) << std::endl;
+        return 1;
+    }
+
+    std::cout << "Running remaining-crossed-audit with counter-ignore-book..." << std::endl;
+
+    // Ring buffer for context before each crossing
+    struct ContextEvent {
+        int64_t record_index;
+        int64_t tx_index;
+        Timestamp ts;
+        OLMsgType event_type;
+        UID order_id;
+        Side side;
+        Price price;
+        Volume amount;
+        Volume amount_rest;
+        uint16_t flags;
+        Volume repl_act;
+    };
+    std::deque<ContextEvent> ring;
+
+    std::ofstream csv;
+    bool write_csv = !out_path.empty();
+    if (write_csv) {
+        csv.open(out_path);
+        if (!csv.is_open()) {
+            std::cerr << "Warning: cannot open output file: " << out_path << std::endl;
+            write_csv = false;
+        } else {
+            csv << "record_index,ts,tx_index,event_type,order_id,side,price,amount,amount_rest,"
+                << "flags_hex,entry_flags_hex,repl_act,is_counter,is_cross_trade,is_moved,"
+                << "is_cancel,is_cancel_group,is_remove,is_add,is_fill,is_snapshot,is_new_session,"
+                << "is_txend,is_non_system,is_system,is_non_zero_repl_act,"
+                << "best_bid_before,best_ask_before,best_bid_after,best_ask_after,"
+                << "spread_before,spread_after,mutation_path\n";
+        }
+    }
+
+    OrderBook book;
+    book.set_counter_mode(CounterMode::IgnoreBook);
+    OrdLogReader reader;
+    OrderLogRecord rec;
+    int64_t record_count = 0;
+    int64_t tx_counter = 0;
+    int64_t written = 0;
+
+    // Crossing tracking
+    bool was_crossed = false;
+    int64_t first_crossing_event = 0;
+    int64_t first_crossing_snapshot = 0;
+    int64_t first_crossing_snapshot_idx = 0;
+    int64_t snapshot_count = 0;
+
+    // Mutation path tracking
+    std::string last_mutation_path;
+
+    while (reader.next(file, rec)) {
+        ++record_count;
+
+        if (has_flag(rec.order_flags, OLFlags::TxEnd)) {
+            ++tx_counter;
+        }
+
+        bool is_counter = has_flag(rec.order_flags, OLFlags::Counter);
+        bool is_snapshot = has_flag(rec.order_flags, OLFlags::Snapshot);
+        bool is_new_session = has_flag(rec.order_flags, OLFlags::NewSession);
+        bool is_txend = has_flag(rec.order_flags, OLFlags::TxEnd);
+        bool is_system = is_system_record(rec);
+        bool is_non_system = has_flag(rec.order_flags, OLFlags::NonSystem);
+        bool is_cross_trade = has_flag(rec.order_flags, OLFlags::CrossTrade);
+        bool is_moved = has_flag(rec.order_flags, OLFlags::Moved);
+        bool is_cancel = (rec.event == OLMsgType::Cancel);
+        bool is_cancel_group = has_flag(rec.order_flags, OLFlags::CanceledGroup);
+        bool is_remove = (rec.event == OLMsgType::Remove);
+        bool is_add = (rec.event == OLMsgType::Add);
+        bool is_fill = (rec.event == OLMsgType::Fill);
+        bool is_non_zero_repl_act = has_flag(rec.order_flags, OLFlags::NonZeroReplAct);
+        Volume repl_act = is_non_zero_repl_act ? 1 : 0;
+
+        // Track state before apply
+        Price best_bid_before = book.best_bid();
+        Price best_ask_before = book.best_ask();
+        Price spread_before = (best_bid_before > 0 && best_ask_before > 0) ? (best_ask_before - best_bid_before) : 0;
+
+        // Detect mutation path
+        if (is_add) last_mutation_path = "add";
+        else if (is_fill) last_mutation_path = "fill";
+        else if (is_cancel) last_mutation_path = "cancel";
+        else if (is_remove) last_mutation_path = "remove";
+        else if (is_moved) last_mutation_path = "move";
+        else last_mutation_path = "other";
+
+        // Ring buffer: push current event (before apply)
+        ContextEvent ce;
+        ce.record_index = record_count;
+        ce.tx_index = tx_counter;
+        ce.ts = rec.timestamp;
+        ce.event_type = rec.event;
+        ce.order_id = rec.order_id;
+        ce.side = rec.side;
+        ce.price = rec.price;
+        ce.amount = rec.amount;
+        ce.amount_rest = rec.amount_rest;
+        ce.flags = rec.order_flags;
+        ce.repl_act = repl_act;
+        ring.push_back(ce);
+        while (static_cast<int>(ring.size()) > context_size) {
+            ring.pop_front();
+        }
+
+        // Apply to book
+        book.apply(rec);
+
+        // Track state after apply
+        Price best_bid_after = book.best_bid();
+        Price best_ask_after = book.best_ask();
+        Price spread_after = (best_bid_after > 0 && best_ask_after > 0) ? (best_ask_after - best_bid_after) : 0;
+        bool crossed_after = (best_bid_after > 0 && best_ask_after > 0 && best_bid_after >= best_ask_after);
+
+        // Track snapshot emission (TxEnd mode)
+        if (is_txend && book.bid_depth() > 0 && book.ask_depth() > 0) {
+            ++snapshot_count;
+        }
+
+        // Detect crossing transitions
+        if (crossed_after && !was_crossed) {
+            // Entering crossed state
+            if (first_crossing_event == 0) {
+                first_crossing_event = record_count;
+                first_crossing_snapshot = record_count;
+                first_crossing_snapshot_idx = snapshot_count;
+            }
+        }
+
+        // Emit CSV for crossed events within the requested range
+        if (crossed_after && write_csv && record_count >= from_index &&
+            (to_index <= 0 || record_count <= to_index) &&
+            (max_records <= 0 || written < max_records)) {
+            csv << record_count << ","
+                << rec.timestamp << ","
+                << tx_counter << ","
+                << ol_msg_type_name(rec.event) << ","
+                << rec.order_id << ","
+                << side_name(rec.side) << ","
+                << rec.price << ","
+                << rec.amount << ","
+                << rec.amount_rest << ","
+                << "0x" << std::hex << rec.order_flags << std::dec << ","
+                << "0x" << std::hex << rec.entry_flags << std::dec << ","
+                << repl_act << ","
+                << (is_counter ? 1 : 0) << ","
+                << (is_cross_trade ? 1 : 0) << ","
+                << (is_moved ? 1 : 0) << ","
+                << (is_cancel ? 1 : 0) << ","
+                << (is_cancel_group ? 1 : 0) << ","
+                << (is_remove ? 1 : 0) << ","
+                << (is_add ? 1 : 0) << ","
+                << (is_fill ? 1 : 0) << ","
+                << (is_snapshot ? 1 : 0) << ","
+                << (is_new_session ? 1 : 0) << ","
+                << (is_txend ? 1 : 0) << ","
+                << (is_non_system ? 1 : 0) << ","
+                << (is_system ? 1 : 0) << ","
+                << (is_non_zero_repl_act ? 1 : 0) << ","
+                << best_bid_before << ","
+                << best_ask_before << ","
+                << best_bid_after << ","
+                << best_ask_after << ","
+                << spread_before << ","
+                << spread_after << ","
+                << last_mutation_path
+                << "\n";
+            ++written;
+        }
+
+        was_crossed = crossed_after;
+
+        if (max_records > 0 && record_count >= max_records) break;
+    }
+
+    if (write_csv) {
+        csv.close();
+        std::cout << "Wrote " << written << " crossed events to " << out_path << std::endl;
+    }
+
+    // Print summary
+    std::cout << "\n=== Remaining Crossed Audit Summary ===" << std::endl;
+    std::cout << "counter_mode:                         ignore-book" << std::endl;
+    std::cout << "records_processed:                    " << record_count << std::endl;
+    std::cout << "transactions_seen:                    " << tx_counter << std::endl;
+    std::cout << "crossed_events_written:               " << written << std::endl;
+    std::cout << "first_crossing_event_record_index:    " << first_crossing_event << std::endl;
+    std::cout << "first_crossing_snapshot_record_index: " << first_crossing_snapshot << std::endl;
+    std::cout << "first_crossing_snapshot_index:        " << first_crossing_snapshot_idx << std::endl;
+    std::cout << "counter_records_seen:                 " << book.errors().counter_records_seen << std::endl;
+    std::cout << "counter_records_ignored_for_book:     " << book.errors().counter_records_ignored_for_book << std::endl;
+
+    return 0;
+}
+
 static int cmd_convert(const std::string& path, const std::string& out_dir) {
     auto file = open_qsh_file(path);
     if (!file.valid) {
@@ -4306,6 +4522,34 @@ int main(int argc, char* argv[]) {
             }
         }
         return cmd_crossed_persistence_audit(file_path, from_index, max_records, out_path);
+    }
+
+    if (cmd == "remaining-crossed-audit") {
+        if (argc < 3) {
+            std::cerr << "Usage: qsh-ingest remaining-crossed-audit <OrdLog.qsh> --counter-mode ignore-book\n"
+                      << "  [--out <file.csv>] [--from N] [--to N] [--context N] [--max-records N]" << std::endl;
+            return 1;
+        }
+        std::string file_path = argv[2];
+        std::string out_path = "remaining_crossed_audit.csv";
+        int64_t from_index = 1;
+        int64_t to_index = 0;
+        int context_size = 50;
+        int64_t max_records = 0;
+        for (int i = 3; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+                out_path = argv[++i];
+            } else if (std::strcmp(argv[i], "--from") == 0 && i + 1 < argc) {
+                from_index = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--to") == 0 && i + 1 < argc) {
+                to_index = std::atoll(argv[++i]);
+            } else if (std::strcmp(argv[i], "--context") == 0 && i + 1 < argc) {
+                context_size = std::atoi(argv[++i]);
+            } else if (std::strcmp(argv[i], "--max-records") == 0 && i + 1 < argc) {
+                max_records = std::atoll(argv[++i]);
+            }
+        }
+        return cmd_remaining_crossed_audit(file_path, out_path, from_index, to_index, context_size, max_records);
     }
 
     if (cmd == "l3-to-l2") {

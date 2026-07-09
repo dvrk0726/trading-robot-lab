@@ -12,7 +12,8 @@ param(
     [switch]$RunSnapshotAudit,
     [switch]$RunCrossingWindowAudit,
     [switch]$RunCrossedPersistenceAudit,
-    [switch]$RunCounterFlagAudit
+    [switch]$RunCounterFlagAudit,
+    [switch]$RunRemainingCrossedAudit
 )
 
 $ErrorActionPreference = "Continue"
@@ -381,6 +382,22 @@ if ($RunCounterFlagAudit) {
 } else {
     Write-Host ""
     Write-Host "Tip: run with -RunCounterFlagAudit for Counter flag (0x100) event audit." -ForegroundColor DarkGray
+}
+
+# --- 11e. Remaining-crossed-audit (optional, M10T) ---
+if ($RunRemainingCrossedAudit) {
+    Write-Host ""
+    Write-Host "Running remaining-crossed-audit (counter-ignore-book)..." -ForegroundColor Cyan
+    $remainingCrossedOut = "$ReportDirFull\remaining_crossed_after_counter_ignore.csv"
+    & $ExePath "remaining-crossed-audit" $QshFullPath "--counter-mode" "ignore-book" "--out" $remainingCrossedOut "--from" "16190" "--to" "16220" "--context" "50" 2>&1 | Write-Host
+    if (Test-Path $remainingCrossedOut) {
+        Write-Host "Remaining crossed audit output: $remainingCrossedOut" -ForegroundColor Green
+    } else {
+        Write-Host "Remaining crossed audit output not generated." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Tip: run with -RunRemainingCrossedAudit for remaining crossed snapshot classification after counter-ignore-book." -ForegroundColor DarkGray
 }
 
 # --- 12. Summary ---
