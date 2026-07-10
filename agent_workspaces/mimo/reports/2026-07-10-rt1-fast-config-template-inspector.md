@@ -1,15 +1,27 @@
 # RT-1 Implementation Report — FAST Configuration/Template Inspector
 
-Date: 2026-07-10 (Round 3 corrections)  
+Date: 2026-07-10 (Round 4 corrections)  
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
+Head: `a24cde2ca1f75b0c793897476611c102658c63dc`  
+CI run: #18 (all 5 jobs green)  
 Executor: MiMo Code
 
 ## Summary
 
 Implemented a local C++20/CMake CLI tool that reads MOEX SPECTRA `configuration.xml` and `templates.xml`, validates their structure, and produces a deterministic inspection report. No network access is performed.
 
-## Round 3 Corrections Applied
+## Round 4 Corrections Applied
+
+All blocking corrections from Architecture/Review Round 4 have been addressed:
+
+1. **Portable temp helper.** Replaced Windows-only `std::system("if not exist ... mkdir")` in `test_helpers.hpp` with C++20 `std::filesystem::create_directories`. Added error checks for directory creation, file open, and write failures. Fixes Linux GCC `-Werror=unused-result` build failure (CI run #17 root cause).
+
+2. **Duplicate endpoint test.** `test_true_duplicate_endpoint()` now calls `run_inspector()` instead of only `parse_configuration_xml()`, and asserts that a `Duplicate endpoint` issue is emitted by the validator.
+
+3. **Linux GCC build fix.** Eliminates the `-Werror=unused-result` error on `std::system()` return value compilation on GCC/Linux.
+
+## Round 3 Corrections Applied (retained)
 
 All blocking corrections from Architecture/Review Round 3 have been addressed:
 
@@ -32,14 +44,20 @@ All blocking corrections from Architecture/Review Round 3 have been addressed:
 ## Build Commands
 
 ```powershell
-cmake -S cpp/moex_fast -B cpp/moex_fast/build
-cmake --build cpp/moex_fast/build --config Release
+cmake -S cpp/moex_fast -B build/moex_fast -A x64
+cmake --build build/moex_fast --config Release --parallel 4
 ```
 
 ## Test Commands
 
 ```powershell
-ctest --test-dir cpp/moex_fast/build -C Release --output-on-failure
+ctest --test-dir build/moex_fast -C Release --output-on-failure
+```
+
+## Built Executable
+
+```powershell
+build\moex_fast\Release\moex-fast-inspect.exe --configuration <path\T0-configuration.xml> --templates <path\FAST_9.0-templates.xml> --json-out integration_report.json --strict
 ```
 
 ## Test Results
@@ -182,14 +200,23 @@ cpp/moex_fast/
 - Fetched at build time via CMake FetchContent
 - No runtime dependency; compiled statically
 
+## CI Evidence
+
+CI run #18 on commit `a24cde2ca1f75b0c793897476611c102658c63dc`:
+- C++ MOEX FAST inspector Windows (6 tests): PASS
+- C++ MOEX FAST inspector Linux (6 tests): PASS
+- C++ QSH M10X regression (20 tests): PASS
+- Python tests and contracts: PASS
+- Repository hygiene: PASS
+
 ## Integration Check
 
-No official owner-provided XML available locally. Integration verification against the official T0 configuration.xml was not performed. The synthetic fixture uses the same structural hierarchy as the official file per the review description.
+Status: **pending** — No official owner-provided XML available locally. Integration verification against the official T0 configuration.xml was not performed. The synthetic fixture uses the same structural hierarchy as the official file per the review description.
 
 Owner-run command for integration check:
 
 ```powershell
-moex-fast-inspect --configuration <path-to-T0-configuration.xml> --templates <path-to-FAST_9.0-templates.xml> --json-out integration_report.json --strict
+build\moex_fast\Release\moex-fast-inspect.exe --configuration <path\T0-configuration.xml> --templates <path\FAST_9.0-templates.xml> --json-out integration_report.json --strict
 ```
 
 ## Known Limitations
@@ -209,6 +236,17 @@ moex-fast-inspect --configuration <path-to-T0-configuration.xml> --templates <pa
 ## Main Protection
 
 Option B active. MiMo does not merge PRs or push to main.
+
+## Files Changed (Round 4)
+
+```
+MODIFIED: cpp/moex_fast/tests/test_helpers.hpp (portable temp helper with std::filesystem)
+MODIFIED: cpp/moex_fast/tests/test_config_parser.cpp (duplicate test uses run_inspector)
+MODIFIED: AI_CONTEXT.md
+MODIFIED: PROJECT_STATE.md
+MODIFIED: ROADMAP.md
+MODIFIED: agent_workspaces/mimo/reports/2026-07-10-rt1-fast-config-template-inspector.md
+```
 
 ## Files Changed (Round 3)
 
