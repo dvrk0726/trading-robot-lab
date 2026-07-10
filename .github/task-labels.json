@@ -1,0 +1,102 @@
+[
+  {
+    "name": "DRAFT",
+    "color": "D4C5F9",
+    "description": "Task is being prepared or is blocked by an unmet dependency."
+  },
+  {
+    "name": "READY_FOR_MIMO",
+    "color": "0E8A16",
+    "description": "Specification, constraints and tests are complete; MiMo may start."
+  },
+  {
+    "name": "IN_PROGRESS",
+    "color": "1D76DB",
+    "description": "MiMo is actively working on this single task."
+  },
+  {
+    "name": "READY_FOR_REVIEW",
+    "color": "5319E7",
+    "description": "Pull Request exists; implementation agent has stopped for review."
+  },
+  {
+    "name": "CHANGES_REQUIRED",
+    "color": "D93F0B",
+    "description": "Reviewer requested scoped corrections in the existing Pull Request."
+  },
+  {
+    "name": "OWNER_REVIEW",
+    "color": "FBCA04",
+    "description": "Technical review passed; owner should inspect the visible result."
+  },
+  {
+    "name": "OWNER_APPROVED",
+    "color": "BFDADC",
+    "description": "Owner accepted the result; merge is still a separate reviewed action."
+  },
+  {
+    "name": "DONE",
+    "color": "006B75",
+    "description": "Reviewed change was merged and project state was updated."
+  },
+  {
+    "name": "mimo",
+    "color": "7057FF",
+    "description": "Implementation task assigned to MiMo Code."
+  },
+  {
+    "name": "cpp",
+    "color": "0052CC",
+    "description": "C++ implementation or build work."
+  },
+  {
+    "name": "python",
+    "color": "3572A5",
+    "description": "Python implementation, tests, reports or UI work."
+  },
+  {
+    "name": "architecture",
+    "color": "C5DEF5",
+    "description": "Architecture, contracts, module boundaries or ADR work."
+  },
+  {
+    "name": "docs",
+    "color": "0075CA",
+    "description": "Documentation-only or documentation-dominant work."
+  },
+  {
+    "name": "security",
+    "color": "B60205",
+    "description": "Security rule, secret handling or repository hygiene work."
+  },
+  {
+    "name": "risk",
+    "color": "E99695",
+    "description": "RiskEngine, risk limits, safety gates or kill-switch work."
+  },
+  {
+    "name": "research",
+    "color": "C2E0C6",
+    "description": "Research, replay, backtest or evidence-gathering work."
+  },
+  {
+    "name": "blocked",
+    "color": "000000",
+    "description": "Cannot proceed until an explicit dependency is resolved."
+  },
+  {
+    "name": "needs-clarification",
+    "color": "FEF2C0",
+    "description": "Task requires a precise clarification before implementation."
+  },
+  {
+    "name": "needs-owner-decision",
+    "color": "BFD4F2",
+    "description": "Owner decision is required before the task may proceed."
+  },
+  {
+    "name": "no-live",
+    "color": "E11D21",
+    "description": "No live trading, production order entry or real credentials."
+  }
+]
