@@ -50,6 +50,11 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             opts.profile = argv[++i];
+            if (opts.profile != "auto" && opts.profile != "spectra-1.29" && opts.profile != "spectra-1.30") {
+                std::cerr << "Error: unsupported --profile value '" << opts.profile
+                          << "'. Allowed: auto, spectra-1.29, spectra-1.30\n";
+                return 1;
+            }
         } else if (std::strcmp(argv[i], "--strict") == 0) {
             opts.strict = true;
         } else {

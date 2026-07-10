@@ -24,6 +24,13 @@ std::string filename_from_path(const std::string& path) {
 }
 
 // Detect profile from template ID/name evidence.
+// Returns the detected profile and fills evidence with the detection rationale.
+// spectra-1.29: ID 40 SecurityDefinition present, no conflicting 1.30 identities
+//               (ID 48 SecurityStatus absent, no ID 47 SecurityDefinition).
+// spectra-1.30: ID 47 SecurityDefinition + ID 48 SecurityStatus, no ID 40.
+// ambiguous: internally inconsistent evidence (mixed 1.29/1.30 identities,
+//            wrong-name ID 47/48, partial 1.30 set, etc.).
+// unknown: no distinguishing SecurityDefinition/SecurityStatus evidence.
 std::string detect_profile(const std::vector<FastTemplateDescriptor>& templates,
                            std::string& evidence) {
     // Build lookup by ID
@@ -36,26 +43,83 @@ std::string detect_profile(const std::vector<FastTemplateDescriptor>& templates,
     bool has_47_secdef = (id_to_name.count(47) && id_to_name[47] == "SecurityDefinition");
     bool has_48_secstatus = (id_to_name.count(48) && id_to_name[48] == "SecurityStatus");
 
-    if (has_40_secdef && !has_47_secdef) {
-        evidence = "ID 40 SecurityDefinition present, ID 47 absent";
+    // Any ID 47 present with wrong name is conflicting 1.30 evidence
+    bool has_47_wrong_name = (id_to_name.count(47) && id_to_name[47] != "SecurityDefinition");
+    // Any ID 48 present with wrong name is conflicting evidence
+    bool has_48_wrong_name = (id_to_name.count(48) && id_to_name[48] != "SecurityStatus");
+
+    // Collect inconsistency details
+    std::string inconsistency;
+
+    // spectra-1.29: ID 40 SecurityDefinition, no conflicting 1.30 evidence at all
+    if (has_40_secdef && !has_47_secdef && !has_48_secstatus) {
+        if (has_47_wrong_name || has_48_wrong_name) {
+            // Wrong-name ID 47/48 exist — internally inconsistent
+            std::string details;
+            if (has_47_wrong_name) {
+                details += "ID 47 has wrong name '" + id_to_name[47] + "' (expected SecurityDefinition)";
+            }
+            if (has_48_wrong_name) {
+                if (!details.empty()) details += "; ";
+                details += "ID 48 has wrong name '" + id_to_name[48] + "' (expected SecurityStatus)";
+            }
+            evidence = "ID 40 SecurityDefinition present but " + details + " — ambiguous";
+            return "ambiguous";
+        }
+        evidence = "ID 40 SecurityDefinition present, no conflicting 1.30 identities";
         return "spectra-1.29";
     }
+
+    // spectra-1.30: ID 47 SecurityDefinition + ID 48 SecurityStatus, no ID 40
     if (has_47_secdef && has_48_secstatus && !has_40_secdef) {
+        if (has_47_wrong_name || has_48_wrong_name) {
+            // This branch can't be reached since has_47_secdef/has_48_secstatus are true,
+            // but be defensive.
+        }
         evidence = "ID 47 SecurityDefinition and ID 48 SecurityStatus present, ID 40 absent";
         return "spectra-1.30";
     }
+
+    // Ambiguous: both ID 40 and ID 47 named SecurityDefinition
     if (has_40_secdef && has_47_secdef) {
-        evidence = "Both ID 40 and ID 47 named SecurityDefinition — ambiguous";
+        std::string details = "Both ID 40 and ID 47 named SecurityDefinition";
+        if (has_48_secstatus) details += "; ID 48 SecurityStatus also present";
+        evidence = details + " — ambiguous";
         return "ambiguous";
     }
+
+    // Ambiguous: ID 40 SecurityDefinition + ID 48 SecurityStatus (mixed 1.29/1.30)
+    if (has_40_secdef && has_48_secstatus) {
+        evidence = "ID 40 SecurityDefinition and ID 48 SecurityStatus both present — ambiguous";
+        return "ambiguous";
+    }
+
+    // Ambiguous: ID 47 SecurityDefinition present but ID 48 SecurityStatus missing
     if (has_47_secdef && !has_48_secstatus) {
         evidence = "ID 47 SecurityDefinition present but ID 48 SecurityStatus missing";
         return "ambiguous";
     }
+
+    // Ambiguous: ID 48 SecurityStatus present but ID 47 SecurityDefinition missing
     if (has_48_secstatus && !has_47_secdef) {
         evidence = "ID 48 SecurityStatus present but ID 47 SecurityDefinition missing";
         return "ambiguous";
     }
+
+    // Unknown: wrong-name IDs only, no valid SecurityDefinition/SecurityStatus
+    if (has_47_wrong_name || has_48_wrong_name) {
+        std::string details;
+        if (has_47_wrong_name) {
+            details += "ID 47 has wrong name '" + id_to_name[47] + "'";
+        }
+        if (has_48_wrong_name) {
+            if (!details.empty()) details += "; ";
+            details += "ID 48 has wrong name '" + id_to_name[48] + "'";
+        }
+        evidence = details + " — no valid SecurityDefinition/SecurityStatus evidence";
+        return "unknown";
+    }
+
     evidence = "No distinguishing SecurityDefinition/SecurityStatus ID evidence";
     return "unknown";
 }
@@ -241,46 +305,45 @@ InspectionReport run_inspector(const InspectorOptions& opts) {
     report.configuration_info.parse_ok = parse_configuration_xml(
         opts.configuration_path, report.feed_groups, report.issues);
 
-    // Detect profile
+    // Always run auto-detection — the actual detected profile and evidence
+    // are preserved regardless of CLI override.
+    std::string evidence;
+    std::string detected = detect_profile(report.templates, evidence);
+    report.detected_profile = detected;
+    report.detection_evidence = evidence;
+
+    // Determine requested and selected profile
+    bool is_auto = opts.profile.empty() || opts.profile == "auto";
+    report.requested_profile = is_auto ? "auto" : opts.profile;
+
     std::string profile_to_use;
-    if (opts.profile.empty() || opts.profile == "auto") {
-        std::string evidence;
-        std::string detected = detect_profile(report.templates, evidence);
-        report.profile_evidence = evidence;
-
-        if (detected == "ambiguous") {
-            report.detected_profile = "ambiguous";
-            report.compatibility_status = "mismatch";
-            report.issues.push_back({opts.strict ? Severity::Error : Severity::Warning,
-                IssueSource::Template,
-                "Profile detection ambiguous: " + evidence});
-            // Fall back to spectra-1.29 as default
-            profile_to_use = "spectra-1.29";
-        } else if (detected == "unknown") {
-            report.detected_profile = "unknown";
-            report.compatibility_status = "unknown";
-            profile_to_use = "spectra-1.29";
-        } else {
-            report.detected_profile = detected;
-            report.compatibility_status = "compatible";
-            profile_to_use = detected;
-        }
+    if (is_auto) {
+        profile_to_use = (detected == "spectra-1.29" || detected == "spectra-1.30")
+                         ? detected : "spectra-1.29";
     } else {
-        // Explicit profile override
         profile_to_use = opts.profile;
-        report.detected_profile = opts.profile;
-        report.profile_evidence = "explicit CLI override";
+    }
+    report.selected_profile = profile_to_use;
 
-        // Validate that the override matches the actual template evidence
-        std::string evidence;
-        std::string auto_detected = detect_profile(report.templates, evidence);
-        if (auto_detected != "unknown" && auto_detected != profile_to_use &&
-            auto_detected != "ambiguous") {
+    // Determine compatibility_status based on artifact evidence.
+    // Ambiguous or internally inconsistent artifacts are always mismatch,
+    // regardless of override mode.
+    if (detected == "ambiguous") {
+        report.compatibility_status = "mismatch";
+        report.issues.push_back({opts.strict ? Severity::Error : Severity::Warning,
+            IssueSource::Template,
+            "Profile detection ambiguous: " + evidence});
+    } else if (detected == "unknown") {
+        report.compatibility_status = "unknown";
+    } else {
+        // Clear detection (spectra-1.29 or spectra-1.30)
+        if (!is_auto && detected != profile_to_use) {
+            // Explicit override differs from clear detection
             report.compatibility_status = "mismatch";
             report.issues.push_back({opts.strict ? Severity::Error : Severity::Warning,
                 IssueSource::Template,
                 "Profile mismatch: requested '" + profile_to_use +
-                "' but templates indicate '" + auto_detected + "'"});
+                "' but templates indicate '" + detected + "'"});
         } else {
             report.compatibility_status = "compatible";
         }

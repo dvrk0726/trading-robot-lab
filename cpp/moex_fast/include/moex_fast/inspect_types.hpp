@@ -91,8 +91,10 @@ struct InspectionReport {
     std::vector<RequiredCheckResult> required_feed_results;
     std::string overall_status;  // "valid", "warning", "invalid"
     // Version-aware profile fields
-    std::string detected_profile;       // "spectra-1.29", "spectra-1.30", "unknown"
-    std::string profile_evidence;       // why this profile was selected
+    std::string detected_profile;       // actual auto-detected: "spectra-1.29", "spectra-1.30", "ambiguous", "unknown"
+    std::string detection_evidence;     // actual auto-detection evidence (JSON: "profile_evidence")
+    std::string requested_profile;      // CLI request: "auto", "spectra-1.29", "spectra-1.30"
+    std::string selected_profile;       // profile used for validation (same as detected in auto, or override)
     std::string compatibility_status;   // "compatible", "unknown", "mismatch"
 };
 

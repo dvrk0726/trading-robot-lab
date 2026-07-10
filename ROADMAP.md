@@ -91,13 +91,13 @@ main protection option guide.
 Status:
 
 ```text
-READY_FOR_REVIEW (Round 5 corrections applied)
+READY_FOR_REVIEW (Round 6 corrections applied)
 Issue #14
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Head: 37e13e9 (code: 1d8b12a703ba4860262210ff430cb7ff10c5d2f6)
-CI run #24: all 5 jobs green
-Review cycle: Round 5 CHANGES_REQUIRED → Round 5 corrections applied
+Head: (pending push)
+CI run: (pending)
+Review cycle: Round 6 CHANGES_REQUIRED → Round 6 corrections applied
 ```
 
 Scope:
@@ -228,9 +228,12 @@ production remains disabled by default.
 ## Immediate sequence
 
 ```text
-1. Round 5 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
-2. Commit 1d8b12a703ba4860262210ff430cb7ff10c5d2f6.
-3. CI run #24: all 5 jobs green (Windows 6/6, Linux 6/6, QSH 20/20, Python 3/3, hygiene PASS).
-4. Issue #14 moved to READY_FOR_REVIEW.
-5. Stop — do not merge, do not start RT-2.
+1. Round 6 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
+2. Profile logic hardened: always auto-detect, separate detected/requested/selected/evidence.
+3. spectra-1.29 rejects conflicting 1.30 evidence (ID 48, wrong-name ID 47/48).
+4. CLI validates --profile values; unsupported values rejected.
+5. 6 new Round 6 tests added; all 99 tests pass on Windows.
+6. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
+7. Push to PR #16, Issue #14 moved to READY_FOR_REVIEW.
+8. Stop — do not merge, do not start RT-2.
 ```

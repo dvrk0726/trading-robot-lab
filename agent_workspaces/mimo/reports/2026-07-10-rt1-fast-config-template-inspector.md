@@ -1,10 +1,10 @@
 # RT-1 Implementation Report — FAST Configuration/Template Inspector
 
-Date: 2026-07-10 (Round 5 corrections)  
+Date: 2026-07-10 (Round 6 corrections)  
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
-Head: `1d8b12a703ba4860262210ff430cb7ff10c5d2f6`  
-CI run: #24 (all 5 jobs green)  
+Head: (pending — will be set after push)  
+CI run: (pending — will be set after CI)  
 Executor: MiMo Code
 
 ## Summary
@@ -29,7 +29,36 @@ All blocking corrections from Architecture/Review Round 5 have been addressed:
 
 7. **Profile test fixtures and tests.** Created `synthetic_templates_130.xml` for spectra-1.30 profile. Added 11 new tests: length wire type, strict valid, auto-detection (1.29/1.30), explicit override, mismatch warning/error, text report, mixed profile negative, wrong name negative.
 
-## Round 4 Corrections Applied (retained)
+## Round 6 Corrections Applied
+
+All blocking corrections from Architecture/Review Round 6 have been addressed:
+
+1. **Auto-detection always runs.** `detect_profile()` is called unconditionally. The actual `detected_profile` and `detection_evidence` are always populated from artifact contents, regardless of CLI override.
+
+2. **Separated profile fields.** Report now contains four distinct profile fields:
+   - `detected_profile` — actual auto-detected value from template evidence
+   - `detection_evidence` (JSON: `profile_evidence`) — actual detection rationale
+   - `requested_profile` — CLI request (`"auto"` or explicit)
+   - `selected_profile` — profile used for validation (same as detected in auto, or override)
+
+3. **Explicit override does not hide ambiguity.** Ambiguous or internally inconsistent artifacts always produce `compatibility_status=mismatch` and strict-mode `invalid`, regardless of `--profile` override. The report never claims an artifact was detected as 1.30 merely because the operator requested 1.30.
+
+4. **spectra-1.29 detection rejects conflicting 1.30 evidence.** Requires ID 40 SecurityDefinition AND absence of ID 48 SecurityStatus AND absence of ID 47 SecurityDefinition. Wrong-name ID 47/48 identities are included in inconsistency evidence. Mixed artifacts (ID 40 + ID 48, ID 40 + wrong-name ID 47 + ID 48) are detected as `ambiguous`.
+
+5. **CLI validates `--profile` values.** Unsupported values are rejected with a clear error message and non-zero exit code before inspection runs.
+
+6. **Round 6 test matrix.** Added 6 new tests:
+   - 1.29 templates + ID 48 SecurityStatus => ambiguous/mismatch
+   - ID 40 + wrong-name ID 47 + ID 48 => ambiguous/mismatch
+   - Explicit spectra-1.29 override on ambiguous artifact => mismatch; strict invalid
+   - Explicit spectra-1.30 override on ambiguous artifact => mismatch; strict invalid
+   - Override preserves actual detected profile and evidence separately
+   - Unsupported CLI `--profile` value => CLI failure
+   - CLI test for unsupported `--profile` value
+
+7. **Existing positive tests preserved.** All 1.29, 1.30, and FAST length tests from Round 5 continue to pass.
+
+## Round 5 Corrections Applied (retained)
 
 All blocking corrections from Architecture/Review Round 4 have been addressed:
 
@@ -90,9 +119,9 @@ Platform: Windows 10 x64
   - test_template_parser ............. Passed — 17 tests
   - test_config_parser ............... Passed — 24 tests
   - test_provenance .................. Passed — 7 tests
-  - test_deterministic_report ........ Passed — 25 tests (11 new Round 5)
+  - test_deterministic_report ........ Passed — 31 tests (6 new Round 6)
   - test_resource_safety ............. Passed — 8 tests
-  - test_cli ......................... Passed — 11 tests
+  - test_cli ......................... Passed — 12 tests (1 new Round 6)
 ```
 
 ### Existing QSH/M10X Regression
@@ -142,7 +171,7 @@ Platform: Windows 10 x64
 - No raw XML/credentials in report
 - Independent validation status (template errors don't affect configuration validation_ok)
 
-### Deterministic Report (25 tests)
+### Deterministic Report (31 tests)
 - Deterministic JSON, schema version, status
 - Strict vs non-strict, template ordering
 - JSON valid syntax, text output
@@ -156,23 +185,30 @@ Platform: Windows 10 x64
 - **Round 5:** strict valid synthetic (valid with zero issues)
 - **Round 5:** profile auto-detected spectra-1.29
 - **Round 5:** profile auto-detected spectra-1.30
-- **Round 5:** profile explicit override
+- **Round 5:** profile explicit override (updated for new fields)
 - **Round 5:** profile mismatch warning
 - **Round 5:** profile mismatch strict mode error
 - **Round 5:** profile in text report
 - **Round 5:** mixed profile negative test
 - **Round 5:** wrong name profile negative test
 - **Round 5:** NoMDEntries length — no Unknown wire type issue
+- **Round 6:** 1.29 + ID 48 SecurityStatus => ambiguous/mismatch
+- **Round 6:** ID 40 + wrong-name ID 47 + ID 48 => ambiguous/mismatch
+- **Round 6:** explicit spectra-1.29 on ambiguous => mismatch/invalid
+- **Round 6:** explicit spectra-1.30 on ambiguous => mismatch/invalid
+- **Round 6:** override preserves actual detection evidence
+- **Round 6:** unsupported --profile CLI value rejected
 
 ### Resource Safety (8 tests)
 - Empty/truncated file, large template/field count
 - Output write failure, invalid XML variants
 - JSON escape handling, wire type names
 
-### CLI Integration (11 tests)
+### CLI Integration (12 tests)
 - `--help`, no args, missing configuration/templates/files
 - Valid input with/without JSON, strict/non-strict mode
 - Invalid output path, unknown argument
+- **Round 6:** unsupported `--profile` value exits non-zero
 
 ## JSON Contract
 
@@ -181,7 +217,9 @@ Platform: Windows 10 x64
   "schema_version": "1.0",
   "inspector_version": "0.1.0",
   "detected_profile": "spectra-1.29|spectra-1.30|unknown|ambiguous",
-  "profile_evidence": "why this profile was selected",
+  "profile_evidence": "actual auto-detection evidence from artifact contents",
+  "requested_profile": "auto|spectra-1.29|spectra-1.30",
+  "selected_profile": "spectra-1.29|spectra-1.30 (profile used for validation)",
   "compatibility_status": "compatible|unknown|mismatch",
   "templates_file": { "path", "file_name", "file_size", "sha256", "parse_ok", "validation_ok" },
   "configuration_file": { "path", "file_name", "file_size", "sha256", "parse_ok", "validation_ok" },
@@ -218,7 +256,7 @@ cpp/moex_fast/
     test_template_parser.cpp (17 tests)
     test_config_parser.cpp (24 tests)
     test_provenance.cpp (7 tests)
-    test_deterministic_report.cpp (14 tests)
+    test_deterministic_report.cpp (31 tests)
     test_resource_safety.cpp (8 tests)
     test_cli.cpp (11 tests)
     fixtures/
@@ -268,6 +306,18 @@ build\moex_fast\Release\moex-fast-inspect.exe --configuration <path\T0-configura
 ## Main Protection
 
 Option B active. MiMo does not merge PRs or push to main.
+
+## Files Changed (Round 6)
+
+```
+MODIFIED: cpp/moex_fast/CMakeLists.txt (MOEX_FAST_INSPECT_PATH for test_deterministic_report)
+MODIFIED: cpp/moex_fast/include/moex_fast/inspect_types.hpp (detection_evidence, requested_profile, selected_profile)
+MODIFIED: cpp/moex_fast/src/inspector.cpp (detect_profile: 1.29 rejects ID 48/wrong-name; profile logic: always auto-detect, separate fields)
+MODIFIED: cpp/moex_fast/src/main.cpp (--profile CLI validation)
+MODIFIED: cpp/moex_fast/src/report.cpp (requested_profile, selected_profile in JSON/text)
+MODIFIED: cpp/moex_fast/tests/test_cli.cpp (test_invalid_profile_value)
+MODIFIED: cpp/moex_fast/tests/test_deterministic_report.cpp (6 new Round 6 tests, updated existing override test)
+```
 
 ## Files Changed (Round 5)
 

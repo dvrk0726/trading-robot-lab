@@ -106,6 +106,16 @@ void test_unknown_argument() {
     TEST_PASS("unknown argument exits non-zero");
 }
 
+void test_invalid_profile_value() {
+    int rc = run_cmd(
+        "\"" + cli_path() + "\""
+        " --configuration fixtures/synthetic_configuration.xml"
+        " --templates fixtures/synthetic_templates.xml"
+        " --profile bogus-profile > " + NULL_DEVICE " 2>&1");
+    CHECK(rc != 0);
+    TEST_PASS("unsupported --profile value exits non-zero");
+}
+
 }  // namespace
 
 int main() {
@@ -120,6 +130,7 @@ int main() {
     test_nonstrict_mode();
     test_invalid_output_path();
     test_unknown_argument();
+    test_invalid_profile_value();
 
     std::cout << "\nAll CLI tests PASSED.\n";
     return 0;

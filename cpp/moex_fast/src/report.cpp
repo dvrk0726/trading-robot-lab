@@ -54,7 +54,9 @@ std::string report_to_json(const InspectionReport& r) {
 
     // Profile information
     indent(oss, 1); oss << "\"detected_profile\": "; json_escape(oss, r.detected_profile); oss << ",\n";
-    indent(oss, 1); oss << "\"profile_evidence\": "; json_escape(oss, r.profile_evidence); oss << ",\n";
+    indent(oss, 1); oss << "\"profile_evidence\": "; json_escape(oss, r.detection_evidence); oss << ",\n";
+    indent(oss, 1); oss << "\"requested_profile\": "; json_escape(oss, r.requested_profile); oss << ",\n";
+    indent(oss, 1); oss << "\"selected_profile\": "; json_escape(oss, r.selected_profile); oss << ",\n";
     indent(oss, 1); oss << "\"compatibility_status\": "; json_escape(oss, r.compatibility_status); oss << ",\n";
 
     // Input provenance - templates
@@ -207,7 +209,9 @@ std::string report_to_text(const InspectionReport& r) {
     oss << "Schema version: " << r.schema_version << "\n";
     oss << "Inspector version: " << r.inspector_version << "\n";
     oss << "Detected profile: " << r.detected_profile << "\n";
-    oss << "Profile evidence: " << r.profile_evidence << "\n";
+    oss << "Profile evidence: " << r.detection_evidence << "\n";
+    oss << "Requested profile: " << r.requested_profile << "\n";
+    oss << "Selected profile: " << r.selected_profile << "\n";
     oss << "Compatibility status: " << r.compatibility_status << "\n\n";
 
     oss << "--- Templates file ---\n";

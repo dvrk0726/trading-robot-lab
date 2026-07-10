@@ -397,7 +397,9 @@ void test_profile_explicit_override() {
 
     auto report = moex_fast::run_inspector(opts);
     CHECK(report.detected_profile == "spectra-1.29");
-    CHECK(report.profile_evidence == "explicit CLI override");
+    CHECK(report.requested_profile == "spectra-1.29");
+    CHECK(report.selected_profile == "spectra-1.29");
+    CHECK(report.detection_evidence.find("ID 40 SecurityDefinition") != std::string::npos);
     CHECK(report.compatibility_status == "compatible");
 
     TEST_PASS("profile explicit override");
@@ -522,6 +524,176 @@ void test_length_no_unknown_wire_type_issue() {
     TEST_PASS("NoMDEntries length — no Unknown wire type issue");
 }
 
+// --- Round 6 tests ---
+
+void test_round6_129_plus_id48_negative() {
+    // 1.29 required templates + ID 48 SecurityStatus => mixed/mismatch
+    write_temp_file("r6_129_plus_id48.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='40' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='48' name='SecurityStatus'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = temp_path("r6_129_plus_id48.xml");
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "ambiguous");
+    CHECK(report.compatibility_status == "mismatch");
+
+    TEST_PASS("Round 6: 1.29 + ID 48 => ambiguous/mismatch");
+}
+
+void test_round6_id40_wrong_name_id47_id48_negative() {
+    // ID 40 SecurityDefinition + wrong-name ID 47 + ID 48 SecurityStatus => mixed/mismatch
+    write_temp_file("r6_id40_wrong47_id48.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='40' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='47' name='WrongName'><uInt32 name='X'/></template>"
+        "  <template id='48' name='SecurityStatus'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = temp_path("r6_id40_wrong47_id48.xml");
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "ambiguous");
+    CHECK(report.compatibility_status == "mismatch");
+
+    TEST_PASS("Round 6: ID 40 + wrong-name ID 47 + ID 48 => ambiguous/mismatch");
+}
+
+void test_round6_explicit_129_on_ambiguous() {
+    // explicit 1.29 override on an ambiguous artifact => mismatch; strict invalid
+    write_temp_file("r6_ambiguous.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='40' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='47' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    // Non-strict
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r6_ambiguous.xml");
+        opts.profile = "spectra-1.29";
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.detected_profile == "ambiguous");
+        CHECK(report.requested_profile == "spectra-1.29");
+        CHECK(report.selected_profile == "spectra-1.29");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    // Strict => invalid
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r6_ambiguous.xml");
+        opts.profile = "spectra-1.29";
+        opts.strict = true;
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.overall_status == "invalid");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    TEST_PASS("Round 6: explicit 1.29 on ambiguous => mismatch/invalid");
+}
+
+void test_round6_explicit_130_on_ambiguous() {
+    // explicit 1.30 override on an ambiguous artifact => mismatch; strict invalid
+    // Non-strict
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r6_ambiguous.xml");  // re-use from above
+        opts.profile = "spectra-1.30";
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.detected_profile == "ambiguous");
+        CHECK(report.requested_profile == "spectra-1.30");
+        CHECK(report.selected_profile == "spectra-1.30");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    // Strict => invalid
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r6_ambiguous.xml");
+        opts.profile = "spectra-1.30";
+        opts.strict = true;
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.overall_status == "invalid");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    TEST_PASS("Round 6: explicit 1.30 on ambiguous => mismatch/invalid");
+}
+
+void test_round6_override_preserves_detection_evidence() {
+    // explicit override report preserves actual detected profile and evidence
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+    opts.profile = "spectra-1.29";
+
+    auto report = moex_fast::run_inspector(opts);
+
+    // Actual detection must be preserved
+    CHECK(report.detected_profile == "spectra-1.29");
+    CHECK(report.detection_evidence.find("ID 40 SecurityDefinition") != std::string::npos);
+    CHECK(report.detection_evidence != "explicit CLI override");
+
+    // Requested and selected must be separate
+    CHECK(report.requested_profile == "spectra-1.29");
+    CHECK(report.selected_profile == "spectra-1.29");
+
+    // JSON must contain all profile fields
+    auto json = moex_fast::report_to_json(report);
+    CHECK(json.find("\"detected_profile\"") != std::string::npos);
+    CHECK(json.find("\"profile_evidence\"") != std::string::npos);
+    CHECK(json.find("\"requested_profile\"") != std::string::npos);
+    CHECK(json.find("\"selected_profile\"") != std::string::npos);
+    CHECK(json.find("\"compatibility_status\"") != std::string::npos);
+
+    TEST_PASS("Round 6: override preserves detection evidence");
+}
+
+void test_round6_invalid_profile_cli() {
+    // unsupported CLI profile value => CLI failure with non-zero exit code
+    int rc = std::system(
+        ("\"" + std::string(MOEX_FAST_INSPECT_PATH) +
+         "\" --configuration fixtures/synthetic_configuration.xml"
+         " --templates fixtures/synthetic_templates.xml"
+         " --profile bogus-profile > NUL 2>&1").c_str());
+    CHECK(rc != 0);
+
+    TEST_PASS("Round 6: unsupported --profile CLI value rejected");
+}
+
 }  // namespace
 
 int main() {
@@ -551,6 +723,13 @@ int main() {
     test_mixed_profile_negative();
     test_wrong_name_profile_negative();
     test_length_no_unknown_wire_type_issue();
+    // Round 6 tests
+    test_round6_129_plus_id48_negative();
+    test_round6_id40_wrong_name_id47_id48_negative();
+    test_round6_explicit_129_on_ambiguous();
+    test_round6_explicit_130_on_ambiguous();
+    test_round6_override_preserves_detection_evidence();
+    test_round6_invalid_profile_cli();
 
     std::cout << "\nAll deterministic report tests PASSED.\n";
     return 0;
