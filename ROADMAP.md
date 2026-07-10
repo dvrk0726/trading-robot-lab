@@ -1,16 +1,18 @@
 # Roadmap
 
 Дата обновления: 2026-07-10  
-Статус: gated engineering roadmap
+Статус: gated engineering roadmap  
+Текущий gate: RT-2 specification review — Issue #18 / PR #19
 
 ## Главный порядок
 
 ```text
-repository workflow and protection decision
+repository workflow and protection
 -> local FAST metadata inspection
--> raw capture/replay contracts
+-> raw segment contract and deterministic replay
 -> specialized FAST decoding
--> realtime book/data quality
+-> feed sequencing/recovery
+-> realtime data quality and books
 -> research/backtest/paper
 -> VPTS/certification
 -> owner-approved production only later
@@ -24,17 +26,17 @@ repository workflow and protection decision
 
 ```text
 Trading Lab / Trading Runtime / Shared Contracts architecture;
-ADR-0001 and ADR-0002;
+ADR-0001 through ADR-0004;
 security baseline;
 shared schemas/test vectors;
 Strategy Package standard;
-local Trading Lab demo foundation.
+MiMo/GitHub branch + PR workflow;
+Option B procedural main protection.
 ```
 
 ### Historical C++ data contour
 
 ```text
-ADR-0003;
 QSH/OrdLog ingest;
 L3/order-book reconstruction and data-quality diagnostics;
 M10X complete;
@@ -47,116 +49,124 @@ Remaining 907 crossed snapshots remain gated with `strategy_ready=false`.
 ### MOEX realtime research
 
 ```text
-FAST 1.29.1 studied;
-FAST_9.0 templates and T0 configuration studied;
-FIX SPECTRA and VPTS requirements studied;
-ADR-0004;
-MOEX_REALTIME_ARCHITECTURE documented;
+FAST 1.29.x and FAST_9.0 studied;
+T0 configuration structure studied;
+FIX SPECTRA / Drop Copy and VPTS requirements preserved;
+MOEX realtime architecture documented;
 QuickFAST rejected as production hot-path foundation;
-specialized C++ decoder direction accepted;
-test-access questionnaire sent.
+specialized C++ decoder direction accepted.
 ```
 
-## Gate WF-1 — MiMo/GitHub workflow
-
-Status:
+## WF-1 — DONE
 
 ```text
-DONE
 Issue #1: DONE
-Pull Request #15: merged (82077f6e54e439f27027301ac02813c018d380fc)
+PR #15: merged (82077f6e54e439f27027301ac02813c018d380fc)
 ```
 
-Merged result:
+Delivered workflow:
 
 ```text
-permanent MiMo instruction;
-READY_FOR_MIMO one-line command;
+READY_FOR_MIMO task selection;
 one task at a time;
-dedicated branch and Pull Request;
-no direct implementation in main;
-no auto-merge and no MiMo merge;
-canonical statuses;
-Python/C++/hygiene GitHub Actions;
-existing 20 QSH/M10X regression gate;
-secret/raw-data/large-file checks;
+implementation only in dedicated branch;
+Pull Request and CI required;
+no MiMo merge or auto-merge;
+Python/C++/hygiene checks;
+QSH/M10X 20-test gate;
+secret/raw-data/large-file hygiene;
 Owner Review Package;
-label synchronization;
-current AI_CONTEXT/PROJECT_STATE/ROADMAP;
-main protection option guide.
+canonical statuses and handoff evidence.
 ```
 
-## RT-1 — FAST configuration/templates inspector
-
-Status:
+## RT-1 — DONE
 
 ```text
-READY_FOR_REVIEW (Round 8 corrections applied)
-Issue #14
-Branch: feat/rt-1-fast-config-inspector
-PR: #16
-Head: 3e3e89e (3e3e89e7bbb55853da02a56c8e2edfa666a999b3)
-CI run: 30 (29097918074): all five jobs passed.
-Review cycle: Round 8 CHANGES_REQUIRED → Round 8 corrections applied
+Issue #14: DONE
+PR #16: merged
+Merge commit: ab74f560c1bcf9d09ae7bdfb8552c745928fd022
+Post-merge main CI #32: passed
+Owner Release build and CTest: passed
+Owner strict official-file integration: valid, zero issues
 ```
 
-Scope:
+Delivered:
 
 ```text
-local C++20/CMake CLI;
-parse configuration.xml and templates.xml;
-list ORDERS-LOG/FUT-INFO metadata;
-validate template IDs and ordered fields;
-calculate SHA-256;
-produce human-readable and deterministic JSON;
-synthetic/sanitized fixtures;
-new tests plus existing 20 QSH/M10X regressions.
+offline C++20/CMake inspector;
+configuration.xml and templates.xml parsing;
+MOEX feed-group/endpoint metadata;
+FAST field, sequence and <length> metadata;
+spectra-1.29 / spectra-1.30 detection;
+strict compatibility checks;
+deterministic text and JSON reports;
+Windows/Linux Release-active tests.
 ```
 
-Non-goals:
+RT-1 deliberately excluded network, binary FAST decoding, recovery, books and order entry.
+
+## RT-2 — Raw segment format + synthetic capture/replay
+
+Current status:
 
 ```text
-network;
-UDP/TCP recovery;
-FAST binary decoder;
-FIX/TWIME;
-credentials;
-order sending;
-QuickFAST production dependency;
-official private XML in Git;
-QSH semantic change;
-strategy_ready weakening.
+Issue #18: DRAFT
+Specification branch: docs/issue-18-rt2-raw-capture-replay-spec
+Specification PR: #19
+Implementation: not started
 ```
 
-RT-1 completion:
+Specification package:
 
 ```text
-MiMo branch and PR;
-all CI passed;
-Architecture/Review accepted;
-Owner review if a visible report/UI is included;
-manual merge;
-PROJECT_STATE/ROADMAP updated;
-Issue #14 DONE.
+tasks/RT-2-raw-capture-replay-contract/00_OVERVIEW.md
+tasks/RT-2-raw-capture-replay-contract/01_REQUIREMENTS.md
+tasks/RT-2-raw-capture-replay-contract/02_TEST_PLAN.md
+tasks/RT-2-raw-capture-replay-contract/03_ACCEPTANCE.md
 ```
 
-## RT-2 — Raw capture/replay contract
-
-Blocked by RT-1 acceptance.
-
-Planned scope:
+Planned scope after PR #19 is accepted and merged:
 
 ```text
-capture metadata contract;
-packet timestamp/sequence/source identity;
-local file rotation and provenance;
-deterministic replay input format;
-no production connection credentials in Git.
+versioned immutable .mxraw binary segments;
+fixed-width little-endian manual serialization;
+logical source identity and explicit timestamp domains;
+local capture_index distinct from exchange sequence;
+CRC32C record/footer validation and SHA-256 provenance;
+.partial -> finalized lifecycle;
+deterministic record/byte rotation;
+bounded streaming reader/validator;
+deterministic synthetic replay callback and digest;
+CLI plus Windows/Linux Release-active tests.
+```
+
+RT-2 non-goals:
+
+```text
+no sockets, multicast or real capture;
+no FAST decode;
+no exchange sequence extraction;
+no A/B deduplication;
+no Snapshot/Incremental recovery;
+no books;
+no pcap/pcapng dependency;
+no database, compression or object-storage integration;
+no FIX/TWIME or order sending.
+```
+
+RT-2 gate:
+
+```text
+review PR #19
+-> owner approves specification
+-> merge PR #19
+-> move Issue #18 to READY_FOR_MIMO
+-> MiMo implements in a new branch/PR
 ```
 
 ## RT-3 — Specialized C++ FAST decoder foundation
 
-Blocked by RT-1 and RT-2.
+Blocked by accepted RT-2.
 
 Planned scope:
 
@@ -169,7 +179,7 @@ differential tests against reference tools;
 no full order-entry stack.
 ```
 
-## RT-4 — SPECTRA feed processors
+## RT-4 — SPECTRA feed processors and recovery
 
 Blocked by decoder correctness.
 
@@ -178,7 +188,8 @@ FUT-INFO;
 ORDERS-LOG Snapshot;
 ORDERS-LOG Incremental;
 Snapshot + buffered Incremental bootstrap;
-sequence gap/recovery state;
+A/B sequencing/deduplication;
+gap/recovery state;
 normalized market events.
 ```
 
@@ -197,11 +208,12 @@ replay/live parity evidence.
 
 No strategy-ready claim without measured evidence.
 
-## Research and paper stages
+## Later data and research stages
 
-Only after trustworthy data contour:
+After trustworthy realtime data:
 
 ```text
+normalized Parquet/ClickHouse/PostgreSQL contour;
 research hypotheses;
 deterministic backtests;
 fees/slippage/latency sensitivity;
@@ -217,7 +229,7 @@ Historical results do not authorize live.
 Before any production order entry:
 
 ```text
-VPTS/certification requirements satisfied;
+VPTS/certification satisfied;
 approved access and network architecture;
 RiskEngine and kill switch reviewed;
 monitoring/audit/recovery complete;
@@ -225,15 +237,16 @@ Owner explicitly approves stage, cost and access;
 production remains disabled by default.
 ```
 
+Issue #17 preserves future SPECTRA FIX 4.4 session, order-control and Drop Copy requirements. It does not authorize implementation now.
+
 ## Immediate sequence
 
 ```text
-1. Round 8 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
-2. test_round6_explicit_130_on_ambiguous now creates its own fixture via write_r6_ambiguous_fixture() helper.
-3. All Round 6/7 tests verified independent — no order dependencies.
-4. Portable CLI test for invalid --profile retained only in test_cli.cpp.
-5. State files synchronized to Round 8 with implementation-commit/verified-CI evidence model.
-6. MiMo report: stale run 24 replaced, architecture test counts corrected (39 deterministic, 12 CLI).
-7. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
-8. Stop — do not merge, do not start RT-2.
+1. Complete architecture review of RT-2 specification PR #19.
+2. Owner reviews and approves or requests exact specification changes.
+3. Merge PR #19 only after acceptance.
+4. Move Issue #18 from DRAFT to READY_FOR_MIMO.
+5. Run the universal MiMo command once.
+6. MiMo implements RT-2 in a separate mimo/issue-18-* branch and PR.
+7. Do not start RT-3, network capture or FIX work during RT-2.
 ```
