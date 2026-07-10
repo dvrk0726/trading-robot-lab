@@ -1,0 +1,72 @@
+name: Sync task labels
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/task-labels.json
+      - .github/workflows/sync-task-labels.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    name: Create or update canonical labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Synchronize labels
+        uses: actions/github-script@v9
+        with:
+          retries: 3
+          script: |
+            const fs = require('fs');
+            const labels = JSON.parse(
+              fs.readFileSync('.github/task-labels.json', 'utf8')
+            );
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                });
+
+                await github.rest.issues.updateLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                  new_name: label.name,
+                  color: label.color,
+                  description: label.description,
+                });
+
+                core.info(`Updated label: ${label.name}`);
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                  color: label.color,
+                  description: label.description,
+                });
+
+                core.info(`Created label: ${label.name}`);
+              }
+            }
+
+            core.info(`Synchronized ${labels.length} labels.`);
