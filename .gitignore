@@ -1,34 +1,29 @@
 # ==========================================================
 # trading-robot-lab .gitignore
-# Purpose: protect secrets, live trading configs, binaries,
-# logs, private data and local development artifacts.
+# Protect secrets, private market data, binaries, databases,
+# logs and generated development artifacts.
 # ==========================================================
 
-# ----------------------------------------------------------
-# Secrets and local environment files
-# ----------------------------------------------------------
+# Secrets and local environment
 .env
 .env.*
 !.env.example
 secrets/
 private/
 credentials/
-
 *.key
 *.pem
 *.pfx
 *.p12
 *.crt
 *.cer
+*.ppk
 id_rsa
 id_rsa.*
 id_ed25519
 id_ed25519.*
-*.ppk
 
-# ----------------------------------------------------------
-# Tokens / session / auth artifacts
-# ----------------------------------------------------------
+# Tokens / sessions / authentication
 *.token
 *.session
 *.cookies
@@ -36,9 +31,7 @@ cookies.txt
 session.json
 sessions/
 
-# ----------------------------------------------------------
 # Logs and runtime output
-# ----------------------------------------------------------
 *.log
 logs/
 runtime/
@@ -46,9 +39,7 @@ output/
 tmp/
 temp/
 
-# ----------------------------------------------------------
-# Trading data and private market data
-# ----------------------------------------------------------
+# Trading and private data
 data/raw/
 data/private/
 data/live/
@@ -56,7 +47,9 @@ data/broker/
 data/reports/
 data/ticks/
 data/orderbook/
-
+*.qsh
+*.pcap
+*.pcapng
 *.db
 *.sqlite
 *.sqlite3
@@ -65,20 +58,15 @@ data/orderbook/
 *.feather
 *.h5
 *.hdf5
-
-# CSV files are ignored by default because they may contain
-# real trades, broker reports, account identifiers or large datasets.
 *.csv
 
-# Allow safe documentation placeholders and sample data only.
+# Safe sample data exceptions
 !data/README.md
 !data/sample/
 !data/sample/**
 !*.sample.csv
 
-# ----------------------------------------------------------
-# Archives and compressed files
-# ----------------------------------------------------------
+# Archives
 *.zip
 *.rar
 *.7z
@@ -87,25 +75,29 @@ data/orderbook/
 *.tgz
 *.gz
 
-# ----------------------------------------------------------
 # Executables and binary artifacts
-# ----------------------------------------------------------
 *.exe
 *.dll
 *.msi
-*.bat
-*.cmd
-*.ps1
-!tools/*.ps1
 *.so
 *.dylib
 *.jar
 *.bin
 *.dat
 
-# ----------------------------------------------------------
+# Scripts are denied by default.
+*.bat
+*.cmd
+*.ps1
+
+# Reviewed repository script exceptions.
+!tools/*.ps1
+!owner_review_packages/
+!owner_review_packages/**/
+!owner_review_packages/**/START_DEMO.cmd
+!owner_review_packages/**/STOP_DEMO.cmd
+
 # Python
-# ----------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
@@ -123,20 +115,15 @@ dist/
 build/
 *.egg-info/
 
-# ----------------------------------------------------------
-# Node / frontend tooling, if used later
-# ----------------------------------------------------------
+# Node / frontend
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .next/
-dist/
 
-# ----------------------------------------------------------
-# C# / Visual Studio / .NET, for old robot analysis if needed
-# ----------------------------------------------------------
+# Visual Studio / .NET
 .vs/
 [Bb]in/
 [Oo]bj/
@@ -147,9 +134,7 @@ dist/
 TestResults/
 packages/
 
-# ----------------------------------------------------------
-# C/C++ / low latency experiments, if used later
-# ----------------------------------------------------------
+# C / C++
 *.o
 *.obj
 *.a
@@ -161,27 +146,21 @@ CMakeFiles/
 CMakeCache.txt
 compile_commands.json
 
-# ----------------------------------------------------------
-# IDE and editor files
-# ----------------------------------------------------------
+# IDE and editor
 .vscode/
 .idea/
 *.swp
 *.swo
 *.swn
 
-# ----------------------------------------------------------
-# OS files
-# ----------------------------------------------------------
+# OS
 .DS_Store
 .AppleDouble
 .LSOverride
 Thumbs.db
 desktop.ini
 
-# ----------------------------------------------------------
-# Keep folder placeholders when needed
-# ----------------------------------------------------------
+# Keep placeholders
 !.gitkeep
 !README.md
 
