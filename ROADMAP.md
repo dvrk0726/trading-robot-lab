@@ -113,7 +113,7 @@ Current status:
 Issue #18: READY_FOR_REVIEW (Round 2 corrections complete)
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-CI: Windows/MSVC 15/15 + Linux/GCC (awaiting new run)
+CI #43 (run 29107532103): ALL GREEN (7/7 jobs)
 ```
 
 Delivered:

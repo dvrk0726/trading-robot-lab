@@ -3,7 +3,7 @@
 Date: 2026-07-10  
 Branch: mimo/issue-18-rt2-raw-capture-replay  
 Pull Request: #20  
-Implementation commit: (Round 2 — pending push)  
+Implementation commit: `110360bb756e5b1f7f8bc37c6dc1aab536c077b2`  
 Executor: MiMo Code
 
 ## Summary
@@ -182,8 +182,14 @@ C++20 / Release / x64
 ## GitHub Actions
 
 ```text
-CI #42: failed in Linux/GCC build (sign-compare) — fixed in Round 2
-Awaiting new CI run after push
+CI #43 (run 29107532103): ALL GREEN
+  C++ MOEX RAW Linux/GCC (15 tests): PASSED
+  C++ MOEX RAW Windows/MSVC (15 tests): PASSED
+  C++ MOEX FAST inspector Linux (6 tests): PASSED
+  C++ MOEX FAST inspector Windows (6 tests): PASSED
+  C++ QSH M10X regression (20 tests): PASSED
+  Python tests and contracts: PASSED
+  Repository hygiene: PASSED
 ```
 
 ## Repository Hygiene Evidence
