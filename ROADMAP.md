@@ -6,7 +6,7 @@
 ## Главный порядок
 
 ```text
-repository workflow and protection
+repository workflow and protection decision
 -> local FAST metadata inspection
 -> raw capture/replay contracts
 -> specialized FAST decoding
@@ -62,13 +62,14 @@ test-access questionnaire sent.
 Status:
 
 ```text
-IN_PROGRESS
+IMPLEMENTED IN PR / OWNER REVIEW GATE
 Issue #1
 Pull Request #15
 RT-1 blocked
+Merge not performed
 ```
 
-Required result:
+Implemented result:
 
 ```text
 permanent MiMo instruction;
@@ -84,24 +85,45 @@ secret/raw-data/large-file checks;
 Owner Review Package;
 label synchronization;
 current AI_CONTEXT/PROJECT_STATE/ROADMAP;
-Protect main ruleset.
+main protection option guide.
 ```
 
-WF-1 acceptance:
+Verified full CI run #8:
 
 ```text
-PR #15 CI passes;
-Architecture/Review Agent accepts diff;
+Repository hygiene: PASS
+Python tests and contracts: PASS
+C++ QSH M10X regression: PASS
+CTest inventory: exactly 20
+All 20 tests: PASS
+```
+
+Any later PR head must repeat these checks before merge.
+
+WF-1 remaining acceptance:
+
+```text
+current PR #15 head passes all required checks;
+Architecture/Review accepts final diff;
 Owner accepts process;
+Owner chooses main protection option;
 PR #15 merged manually;
 labels synchronized;
-required checks configured;
-Protect main ruleset active;
 auto-merge disabled;
+selected protection mode recorded;
 Issue #1 DONE.
 ```
 
-Until all acceptance items are complete, Issue #14 remains `DRAFT`.
+Main protection options:
+
+```text
+A. Enable server-side ruleset/branch protection if available on the GitHub plan.
+B. Owner decides on upgrade or explicitly accepts temporary procedural protection.
+```
+
+No purchase or plan change is automatic. Procedural protection still requires branch, PR, CI, review, manual merge and no direct main work by MiMo.
+
+Until all WF-1 acceptance items are complete, Issue #14 remains `DRAFT`.
 
 ## RT-1 — FAST configuration/templates inspector
 
@@ -241,12 +263,14 @@ production remains disabled by default.
 ## Immediate sequence
 
 ```text
-1. Complete and review PR #15.
-2. Merge only after CI and Owner acceptance.
-3. Configure labels and Protect main ruleset.
-4. Mark Issue #1 DONE.
-5. Move Issue #14 to READY_FOR_MIMO.
-6. Owner runs the universal MiMo command once.
-7. MiMo implements RT-1 in a separate branch and stops at PR.
-8. Review RT-1 before any RT-2 work.
+1. Confirm final CI on current PR #15 head.
+2. Complete Architecture/Review and Owner review.
+3. Owner selects main protection option without automatic spending.
+4. Merge PR #15 manually only after acceptance.
+5. Synchronize labels and apply/record selected protection mode.
+6. Mark Issue #1 DONE.
+7. Move Issue #14 to READY_FOR_MIMO.
+8. Owner runs the universal MiMo command once.
+9. MiMo implements RT-1 in a separate branch and stops at PR.
+10. Review RT-1 before any RT-2 work.
 ```
