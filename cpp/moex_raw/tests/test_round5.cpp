@@ -261,13 +261,12 @@ private:
         Value v;
         v.type = Value::Number;
         std::string num;
-        bool is_float = false;
         if (peek() == '-') num += advance();
         while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9') num += advance();
-        if (peek() == '.') { is_float = true; num += advance();
+        if (peek() == '.') { num += advance();
             while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9') num += advance();
         }
-        if (peek() == 'e' || peek() == 'E') { is_float = true; num += advance();
+        if (peek() == 'e' || peek() == 'E') { num += advance();
             if (peek() == '+' || peek() == '-') num += advance();
             while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9') num += advance();
         }
