@@ -1,6 +1,6 @@
 ---
 name: AI Agent Task
-about: Task, question, handoff, or review request for an AI agent or developer
+about: Compact implementation, research, review, or owner-decision task
 title: "[ROLE] Short task title"
 labels: "no-live"
 assignees: ""
@@ -10,54 +10,64 @@ assignees: ""
 
 Choose one:
 
-- [ ] Task Request
+- [ ] Implementation Task
+- [ ] Research Task
+- [ ] Review Request
 - [ ] Clarification Request
 - [ ] Result / Handoff
-- [ ] Review Request
 - [ ] Owner Decision Request
 - [ ] Blocker
 
-## From
-
-Agent / developer who creates the issue:
+## From / To
 
 ```text
-Strategy Master Agent / Python Research Agent / C++ Core Agent / Architecture Agent / Owner
+From: Owner / Architecture-Review Agent / MiMo Code / Research Agent
+To:   Owner / Architecture-Review Agent / MiMo Code / Research Agent
 ```
 
-## To
-
-Target agent / developer:
-
-```text
-Strategy Master Agent / Python Research Agent / C++ Core Agent / Architecture Agent / Owner
-```
-
-## Context read
-
-Before working, confirm that required context was read:
+## Required context read
 
 - [ ] `AI_CONTEXT.md`
 - [ ] `PROJECT_STATE.md`
-- [ ] `SECURITY.md`
-- [ ] `README.md`
 - [ ] `ROADMAP.md`
-- [ ] `docs/ai_team_workflow.md`
-- [ ] `docs/ai_agent_communication_protocol.md`
+- [ ] `SECURITY.md`
+- [ ] `docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md`
+- [ ] relevant architecture document and ADR
+- [ ] task specification files listed below
 
-If strategy-related:
+For MOEX realtime work:
 
-- [ ] `strategy_knowledge_base/README.md`
-- [ ] `strategy_knowledge_base/strategy_master_agent/STRATEGY_MASTER_PROMPT.md`
-
-If architecture-related:
-
-- [ ] `docs/01_hybrid_architecture.md`
-- [ ] `decisions/ADR-0001-hybrid-python-cpp-architecture.md`
+- [ ] `docs/moex/MOEX_REALTIME_ARCHITECTURE.md`
+- [ ] `docs/moex/MOEX_SOURCE_INDEX.md`
 
 ## Objective
 
-Describe the exact task or question.
+One exact, bounded objective:
+
+```text
+TBD
+```
+
+## Task specification
+
+For a small task, keep the specification in this Issue.
+
+For a large task, keep this Issue compact and link files:
+
+```text
+tasks/<task-id>/00_OVERVIEW.md
+tasks/<task-id>/01_REQUIREMENTS.md
+tasks/<task-id>/02_TEST_PLAN.md
+tasks/<task-id>/03_ACCEPTANCE.md
+```
+
+Spec paths:
+
+```text
+TBD
+```
+
+## Existing behavior that must remain working
 
 ```text
 TBD
@@ -65,33 +75,43 @@ TBD
 
 ## Inputs
 
-List files, data, formulas, assumptions, or previous decisions used as input.
+```text
+TBD
+```
+
+## Expected changes
+
+Files/modules allowed to change:
 
 ```text
 TBD
 ```
 
-## Expected output
-
-What should be created or changed?
+Expected output:
 
 ```text
 TBD
 ```
 
-## Constraints
+## Explicit non-goals
 
-Mandatory constraints:
+```text
+TBD
+```
 
-- no broker connection unless explicitly approved by Owner;
+## Mandatory constraints
+
 - no live trading;
-- no real API keys;
-- no `.env` with secrets;
-- no real order sending code;
-- do not bypass risk engine;
-- do not claim strategy profitability without tests.
+- no production order sending;
+- no real credentials or `.env` in Git;
+- no bypass of RiskEngine;
+- no silent architecture expansion;
+- no raw market data or binaries in Git;
+- no claims of profitability without evidence;
+- do not modify unrelated files;
+- do not commit generated/build directories.
 
-Additional constraints for this task:
+Additional constraints:
 
 ```text
 TBD
@@ -99,44 +119,64 @@ TBD
 
 ## Done criteria
 
-How to verify that the task is complete?
+```text
+TBD
+```
+
+## Tests and checks required
+
+Include exact commands where possible:
 
 ```text
 TBD
 ```
 
-## Tests / checks required
+## Performance / correctness evidence
+
+```text
+TBD or not applicable
+```
+
+## Risks and open questions
 
 ```text
 TBD
 ```
 
-## Risks / open questions
+## Required handoff
+
+Agent must report:
 
 ```text
-TBD
+commit SHA;
+changed files;
+what was implemented;
+build/test commands;
+test results;
+known limitations;
+what was intentionally not done;
+recommended next step;
+whether PROJECT_STATE/ROADMAP need update.
 ```
 
-## Handoff after done
+## Review gate
 
-Who should review or continue after this task?
+- [ ] MiMo implementation completed
+- [ ] build/tests passed
+- [ ] Architecture-Review Agent reviewed diff and evidence
+- [ ] Owner decision obtained where required
 
-```text
-TBD
-```
+## Labels
 
-## Labels to add
+Recommended:
 
-Recommended labels:
-
-- `strategy`
-- `research`
-- `backtest`
-- `python`
+- `mimo`
 - `cpp`
-- `risk`
+- `python`
+- `research`
 - `architecture`
 - `docs`
+- `risk`
 - `security`
 - `blocked`
 - `needs-clarification`
