@@ -204,6 +204,16 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
         return "Writer not in Open state";
     }
 
+    // Validate record flags — only known bits allowed
+    if (rec.record_flags & ~kRecordFlagUtcValid) {
+        return "Unknown record flag bit";
+    }
+
+    // Validate non-decreasing capture_monotonic_ns
+    if (record_count_ > 0 && rec.capture_monotonic_ns < last_monotonic_ns_) {
+        return "capture_monotonic_ns decreased";
+    }
+
     // Validate payload size
     if (rec.payload.size() > kMaxPayloadSize) {
         return "Payload exceeds 1 MiB";
@@ -258,9 +268,26 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
     auto err = write_record(rec);
     if (!err.empty()) return err;
 
-    next_capture_index_++;
-    record_count_++;
-    total_payload_bytes_ += rec.payload.size();
+    // Checked arithmetic for index/count advancement
+    std::uint64_t next_idx;
+    if (!checked_add_u64(next_capture_index_, 1, next_idx)) {
+        return "capture_index overflow";
+    }
+    next_capture_index_ = next_idx;
+
+    std::uint64_t next_count;
+    if (!checked_add_u64(record_count_, 1, next_count)) {
+        return "record_count overflow";
+    }
+    record_count_ = next_count;
+
+    std::uint64_t next_payload;
+    if (!checked_add_u64(total_payload_bytes_, rec.payload.size(), next_payload)) {
+        return "total_payload_bytes overflow";
+    }
+    total_payload_bytes_ = next_payload;
+
+    last_monotonic_ns_ = rec.capture_monotonic_ns;
 
     return "";
 }
@@ -367,13 +394,18 @@ std::string RawSegmentWriter::finalize_current() {
     current_file_bytes_ = 0;
     record_count_ = 0;
     total_payload_bytes_ = 0;
+    last_monotonic_ns_ = 0;
 
     state_ = WriterState::Finalized;
     return "";
 }
 
 std::string RawSegmentWriter::start_new_segment() {
-    current_segment_index_++;
+    std::uint64_t next_seg;
+    if (!checked_add_u64(current_segment_index_, 1, next_seg)) {
+        return "segment_index overflow";
+    }
+    current_segment_index_ = next_seg;
     metadata_.segment_index = current_segment_index_;
     metadata_.start_capture_index = next_capture_index_;
 

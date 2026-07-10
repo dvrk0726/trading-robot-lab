@@ -73,8 +73,7 @@ bool parse_segment_index_from_filename(const std::string& filename, std::uint64_
 
 bool parse_canonical_filename(const std::string& filename, ParsedFilename& parsed) {
     // Expected: <session-32hex>_src<source-16hex>_ch<channel-16hex>_seg<index-16hex>.mxraw
-    // Positions: 0-31 session | 32 _ | 33-35 src | 36-51 source | 52 _ | 53-54 ch | 55-70 channel | 71 _ | 72-74 seg | 75-90 index | 91-96 .mxraw
-    // Total length: 97
+    // All hex must be lowercase. Total length: 97
     if (filename.size() != 97) return false;
     if (filename.substr(91) != ".mxraw") return false;
 
@@ -85,6 +84,15 @@ bool parse_canonical_filename(const std::string& filename, ParsedFilename& parse
     if (filename.substr(53, 2) != "ch") return false;
     if (filename[71] != '_') return false;
     if (filename.substr(72, 3) != "seg") return false;
+
+    // Reject uppercase hex digits in the entire filename (except separators already checked)
+    for (std::size_t i = 0; i < 91; ++i) {
+        // Skip separator positions: 32, 33-35, 52, 53-54, 71, 72-74
+        if (i == 32 || (i >= 33 && i <= 35) || i == 52 ||
+            (i >= 53 && i <= 54) || i == 71 || (i >= 72 && i <= 74)) continue;
+        char c = filename[i];
+        if (c >= 'A' && c <= 'F') return false;
+    }
 
     // Parse session_id (32 hex chars)
     if (!parse_session_id_hex(filename.substr(0, 32), parsed.session_id)) return false;
@@ -306,6 +314,14 @@ bool deserialize_header(const std::uint8_t* data, std::size_t len, RawSegmentMet
         return false;
     }
     p += consumed;
+    remaining -= consumed;
+
+    // Reject trailing bytes inside header_size
+    if (remaining != 0) {
+        add_issue(issues, ValidationSeverity::Error, "TRAILING_HEADER_BYTES",
+                  "Trailing bytes inside declared header_size");
+        return false;
+    }
 
     return true;
 }

@@ -91,6 +91,7 @@ private:
     std::uint64_t current_segment_index_ = 0;
     std::uint64_t next_capture_index_ = 0;
     std::uint64_t current_file_bytes_ = 0;
+    std::uint64_t last_monotonic_ns_ = 0;
     std::vector<std::uint8_t> content_buffer_;  // for SHA-256
     SHA256Ctx content_sha_ctx_;                  // incremental content SHA-256
     bool content_sha_initialized_ = false;
@@ -112,12 +113,15 @@ struct StreamSetInfo {
 };
 
 // Validate a single segment file. Returns status and issues.
+// first_monotonic_ns / last_monotonic_ns are populated from actual record data.
 SegmentStatus validate_segment(const std::string& path,
                                RawSegmentMetadata& meta,
                                RawFooter& footer,
                                std::vector<RawValidationIssue>& issues,
                                std::string& content_sha256_hex,
-                               std::string& file_sha256_hex);
+                               std::string& file_sha256_hex,
+                               std::uint64_t* first_monotonic_ns = nullptr,
+                               std::uint64_t* last_monotonic_ns = nullptr);
 
 // Validate a stream set (multiple segments for one source).
 SegmentStatus validate_stream_set(const std::vector<std::string>& paths,

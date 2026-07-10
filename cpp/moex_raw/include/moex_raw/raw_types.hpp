@@ -108,6 +108,8 @@ struct RawValidationIssue {
     ValidationSeverity severity;
     std::string code;
     std::string message;
+    std::string source;  // stream key or file path that produced this issue
+    std::string path;    // concrete file path, if applicable
 };
 
 struct RawStreamSummary {
@@ -126,8 +128,10 @@ struct RawStreamSummary {
     std::string stream_key;
     std::vector<std::uint64_t> segment_indexes;
     std::vector<std::uint64_t> segment_sizes;
-    std::string content_sha256;
-    std::string file_sha256;
+    std::vector<std::string> segment_content_sha256;  // per-segment content SHA-256
+    std::vector<std::string> segment_file_sha256;      // per-segment file SHA-256
+    std::string content_sha256;  // aggregate (empty for multi-segment)
+    std::string file_sha256;     // aggregate (empty for multi-segment)
     std::uint64_t record_count = 0;
     std::uint64_t total_payload_bytes = 0;
     std::uint64_t first_capture_index = 0;
@@ -144,9 +148,17 @@ struct RawSegmentReport {
     std::string operation;
     std::vector<std::string> input_paths;
     std::string session_id_hex;
+    std::uint64_t source_id = 0;
+    std::uint64_t channel_id = 0;
     std::string feed_group;
     std::string endpoint_role;
     std::string source_label;
+    std::string clock_domain;
+    std::string transport;
+    std::string source_side;
+    std::string configuration_sha256;
+    std::string templates_sha256;
+    std::string endpoint_fingerprint_sha256;
     std::string stream_key;
     std::vector<std::uint64_t> segment_indexes;
     std::vector<std::uint64_t> segment_sizes;

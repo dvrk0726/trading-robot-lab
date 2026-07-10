@@ -22,7 +22,9 @@ SegmentStatus validate_segment(const std::string& path,
                                RawFooter& footer,
                                std::vector<RawValidationIssue>& issues,
                                std::string& content_sha256_hex,
-                               std::string& file_sha256_hex) {
+                               std::string& file_sha256_hex,
+                               std::uint64_t* first_monotonic_ns,
+                               std::uint64_t* last_monotonic_ns) {
     // Open file for reading
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) {
@@ -203,7 +205,8 @@ SegmentStatus validate_segment(const std::string& path,
     }
 
     std::uint64_t expected_capture_index = meta.start_capture_index;
-    std::uint64_t last_monotonic_ns = 0;
+    std::uint64_t local_last_monotonic = 0;
+    std::uint64_t local_first_monotonic = 0;
     std::uint64_t actual_record_count = 0;
     std::uint64_t actual_payload_bytes = 0;
     std::uint64_t actual_first_capture = 0;
@@ -277,16 +280,17 @@ SegmentStatus validate_segment(const std::string& path,
         }
 
         // Validate monotonic timestamp
-        if (rec.capture_monotonic_ns < last_monotonic_ns) {
+        if (rec.capture_monotonic_ns < local_last_monotonic) {
             std::fclose(f);
             add_issue(issues, ValidationSeverity::Error, "MONOTONIC_DECREASE",
                       "capture_monotonic_ns decreased");
             return SegmentStatus::Corrupt;
         }
-        last_monotonic_ns = rec.capture_monotonic_ns;
+        local_last_monotonic = rec.capture_monotonic_ns;
 
         if (first_record) {
             actual_first_capture = rec.capture_index;
+            local_first_monotonic = rec.capture_monotonic_ns;
             first_record = false;
         }
         actual_last_capture = rec.capture_index;
@@ -329,6 +333,10 @@ SegmentStatus validate_segment(const std::string& path,
         return SegmentStatus::Corrupt;
     }
 
+    // Output first/last monotonic timestamps
+    if (first_monotonic_ns) *first_monotonic_ns = local_first_monotonic;
+    if (last_monotonic_ns) *last_monotonic_ns = local_last_monotonic;
+
     return SegmentStatus::ValidFinalized;
 }
 
@@ -348,6 +356,10 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
         RawSegmentMetadata meta;
         RawFooter footer;
         std::uint64_t file_size;
+        std::string content_sha256_hex;
+        std::string file_sha256_hex;
+        std::uint64_t first_monotonic;
+        std::uint64_t last_monotonic;
     };
 
     std::vector<SegmentEntry> entries;
@@ -356,6 +368,8 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
     for (const auto& path : paths) {
         SegmentEntry entry;
         entry.path = path;
+        entry.first_monotonic = 0;
+        entry.last_monotonic = 0;
 
         // Parse canonical filename
         auto filename = std::filesystem::path(path).filename().string();
@@ -374,10 +388,11 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
             return SegmentStatus::IoError;
         }
 
-        // Validate the segment
+        // Validate the segment — collect first/last monotonic during the main pass
         std::vector<RawValidationIssue> seg_issues;
-        std::string content_hex, file_hex;
-        auto status = validate_segment(path, entry.meta, entry.footer, seg_issues, content_hex, file_hex);
+        auto status = validate_segment(path, entry.meta, entry.footer, seg_issues,
+                                       entry.content_sha256_hex, entry.file_sha256_hex,
+                                       &entry.first_monotonic, &entry.last_monotonic);
         issues.insert(issues.end(), seg_issues.begin(), seg_issues.end());
 
         if (status != SegmentStatus::ValidFinalized) {
@@ -457,7 +472,6 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
                       "Different channel_id in stream set");
             return SegmentStatus::Corrupt;
         }
-        // Compare all source metadata fields
         if (b.session.feed_group != a.session.feed_group) {
             add_issue(issues, ValidationSeverity::Error, "MIXED_FEED_GROUP",
                       "Different feed_group in stream set");
@@ -488,7 +502,6 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
                       "Different source_side in stream set");
             return SegmentStatus::Corrupt;
         }
-        // Compare all three provenance hashes
         if (std::memcmp(b.source.configuration_sha256, a.source.configuration_sha256, 32) != 0) {
             add_issue(issues, ValidationSeverity::Error, "MIXED_CONFIGURATION_HASH",
                       "Different configuration_sha256 in stream set");
@@ -506,89 +519,19 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
         }
     }
 
-    // Phase 6: Check contiguous capture indexes and monotonic timestamps across segments
+    // Phase 6: Check contiguous capture indexes and cross-segment monotonic timestamps
     for (std::size_t i = 1; i < entries.size(); ++i) {
         if (entries[i].footer.first_capture_index != entries[i - 1].footer.last_capture_index + 1) {
             add_issue(issues, ValidationSeverity::Error, "NONCONTIGUOUS_CAPTURE_INDEX",
                       "capture_index not contiguous across segments");
             return SegmentStatus::Corrupt;
         }
-    }
-
-    // Extract the last monotonic timestamp from each segment for cross-segment check.
-    // We need to re-read the last record's monotonic timestamp from each segment.
-    // Since we already validated each segment, we know the footer is correct.
-    // We need to read the actual last record's monotonic_ns.
-    std::uint64_t prev_last_monotonic = 0;
-    for (std::size_t i = 0; i < entries.size(); ++i) {
-        std::FILE* f = std::fopen(entries[i].path.c_str(), "rb");
-        if (!f) {
-            add_issue(issues, ValidationSeverity::Error, "IO_ERROR",
-                      "Cannot reopen segment for monotonic check");
-            return SegmentStatus::IoError;
-        }
-
-        // Seek to footer offset to find footer
-        std::uint64_t footer_offset = entries[i].file_size - kFooterSize;
-
-        // We need to find the last record. The data region is from header_size to footer_offset.
-        // Read header to get header_size
-        std::uint8_t preamble[14];
-        if (std::fread(preamble, 1, 14, f) != 14) {
-            std::fclose(f);
-            add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read preamble");
-            return SegmentStatus::IoError;
-        }
-        std::size_t hdr_size = read_u32_le(preamble + 10);
-
-        // Read the footer to get last_capture_index
-        std::uint8_t footer_buf[kFooterSize];
-        if (fseek64(f, static_cast<std::int64_t>(footer_offset), SEEK_SET) != 0) {
-            std::fclose(f);
-            return SegmentStatus::IoError;
-        }
-        if (std::fread(footer_buf, 1, kFooterSize, f) != kFooterSize) {
-            std::fclose(f);
-            return SegmentStatus::IoError;
-        }
-
-        // Walk records to find the last one's monotonic timestamp
-        if (fseek64(f, static_cast<std::int64_t>(hdr_size), SEEK_SET) != 0) {
-            std::fclose(f);
-            return SegmentStatus::IoError;
-        }
-
-        std::uint64_t last_mono = 0;
-        std::uint64_t pos = hdr_size;
-        while (pos < footer_offset) {
-            std::uint8_t rec_hdr[kRecordHeaderSize];
-            if (std::fread(rec_hdr, 1, kRecordHeaderSize, f) != kRecordHeaderSize) {
-                std::fclose(f);
-                return SegmentStatus::Corrupt;
-            }
-            std::uint32_t rec_size = read_u32_le(rec_hdr + 8);
-
-            // Read monotonic from header at offset 28
-            last_mono = read_u64_le(rec_hdr + 28);
-
-            // Skip to next record
-            std::size_t tail = rec_size - kRecordHeaderSize;
-            std::vector<std::uint8_t> skip(tail);
-            if (std::fread(skip.data(), 1, tail, f) != tail) {
-                std::fclose(f);
-                return SegmentStatus::Corrupt;
-            }
-            pos += rec_size;
-        }
-        std::fclose(f);
-
-        // Check monotonic across boundary
-        if (i > 0 && last_mono < prev_last_monotonic) {
+        // Cross-segment monotonic: first(current) must be >= last(previous)
+        if (entries[i].first_monotonic < entries[i - 1].last_monotonic) {
             add_issue(issues, ValidationSeverity::Error, "MONOTONIC_DECREASE_CROSS_SEGMENT",
                       "capture_monotonic_ns decreased across segment boundary");
             return SegmentStatus::Corrupt;
         }
-        prev_last_monotonic = last_mono;
     }
 
     // Phase 7: Populate output vectors

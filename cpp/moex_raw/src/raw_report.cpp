@@ -65,6 +65,21 @@ static void emit_stream_summary_json(std::ostringstream& oss, const RawStreamSum
     }
     oss << "]" << sep;
 
+    // Per-segment hashes
+    oss << indent(il + 1) << json_escape("segment_content_sha256") << ": [";
+    for (std::size_t i = 0; i < ss.segment_content_sha256.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << json_escape(ss.segment_content_sha256[i]);
+    }
+    oss << "]" << sep;
+
+    oss << indent(il + 1) << json_escape("segment_file_sha256") << ": [";
+    for (std::size_t i = 0; i < ss.segment_file_sha256.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << json_escape(ss.segment_file_sha256[i]);
+    }
+    oss << "]" << sep;
+
     oss << indent(il + 1) << json_escape("content_sha256") << ": " << json_escape(ss.content_sha256) << sep;
     oss << indent(il + 1) << json_escape("file_sha256") << ": " << json_escape(ss.file_sha256) << sep;
     oss << indent(il + 1) << json_escape("record_count") << ": " << ss.record_count << sep;
@@ -103,9 +118,17 @@ std::string generate_json_report(const RawSegmentReport& report, bool pretty) {
 
     // Session/source metadata
     oss << indent(il) << json_escape("session_id") << ": " << json_escape(report.session_id_hex) << sep;
+    oss << indent(il) << json_escape("source_id") << ": " << report.source_id << sep;
+    oss << indent(il) << json_escape("channel_id") << ": " << report.channel_id << sep;
     oss << indent(il) << json_escape("feed_group") << ": " << json_escape(report.feed_group) << sep;
     oss << indent(il) << json_escape("endpoint_role") << ": " << json_escape(report.endpoint_role) << sep;
     oss << indent(il) << json_escape("source_label") << ": " << json_escape(report.source_label) << sep;
+    oss << indent(il) << json_escape("clock_domain") << ": " << json_escape(report.clock_domain) << sep;
+    oss << indent(il) << json_escape("transport") << ": " << json_escape(report.transport) << sep;
+    oss << indent(il) << json_escape("source_side") << ": " << json_escape(report.source_side) << sep;
+    oss << indent(il) << json_escape("configuration_sha256") << ": " << json_escape(report.configuration_sha256) << sep;
+    oss << indent(il) << json_escape("templates_sha256") << ": " << json_escape(report.templates_sha256) << sep;
+    oss << indent(il) << json_escape("endpoint_fingerprint_sha256") << ": " << json_escape(report.endpoint_fingerprint_sha256) << sep;
     oss << indent(il) << json_escape("stream_key") << ": " << json_escape(report.stream_key) << sep;
 
     // Segment indexes
@@ -145,6 +168,12 @@ std::string generate_json_report(const RawSegmentReport& report, bool pretty) {
             << json_escape(report.issues[i].severity == ValidationSeverity::Warning ? "warning" : "error") << ",";
         oss << nl << indent(il + 2) << json_escape("code") << ": " << json_escape(report.issues[i].code) << ",";
         oss << nl << indent(il + 2) << json_escape("message") << ": " << json_escape(report.issues[i].message);
+        if (!report.issues[i].source.empty()) {
+            oss << "," << nl << indent(il + 2) << json_escape("source") << ": " << json_escape(report.issues[i].source);
+        }
+        if (!report.issues[i].path.empty()) {
+            oss << "," << nl << indent(il + 2) << json_escape("path") << ": " << json_escape(report.issues[i].path);
+        }
         oss << nl << indent(il + 1) << "}";
     }
     if (!report.issues.empty()) oss << nl << indent(il);
@@ -177,9 +206,17 @@ std::string generate_text_report(const RawSegmentReport& report) {
     oss << "Format Version: " << report.format_version << "\n";
     oss << "Operation: " << report.operation << "\n";
     oss << "Session ID: " << report.session_id_hex << "\n";
+    oss << "Source ID: " << report.source_id << "\n";
+    oss << "Channel ID: " << report.channel_id << "\n";
     oss << "Feed Group: " << report.feed_group << "\n";
     oss << "Endpoint Role: " << report.endpoint_role << "\n";
     oss << "Source Label: " << report.source_label << "\n";
+    oss << "Clock Domain: " << report.clock_domain << "\n";
+    oss << "Transport: " << report.transport << "\n";
+    oss << "Source Side: " << report.source_side << "\n";
+    oss << "Configuration SHA-256: " << report.configuration_sha256 << "\n";
+    oss << "Templates SHA-256: " << report.templates_sha256 << "\n";
+    oss << "Endpoint Fingerprint SHA-256: " << report.endpoint_fingerprint_sha256 << "\n";
     oss << "Stream Key: " << report.stream_key << "\n\n";
 
     oss << "Segments: " << report.segment_indexes.size() << "\n";

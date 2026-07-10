@@ -12,6 +12,13 @@
 
 namespace fs = std::filesystem;
 
+// Portable null device redirect for stderr suppression
+#ifdef _WIN32
+static const char* kNullRedirect = " 2>NUL";
+#else
+static const char* kNullRedirect = " 2>/dev/null";
+#endif
+
 static std::string run_cmd(const std::string& cmd) {
     std::string result;
 #ifdef _MSC_VER
@@ -64,13 +71,13 @@ int main() {
 
     // no args => non-zero
     {
-        int rc = run_cmd_exit(exe + " 2>NUL");
+        int rc = run_cmd_exit(exe + kNullRedirect);
         CHECK(rc != 0);
     }
 
     // unknown command => non-zero
     {
-        int rc = run_cmd_exit(exe + " unknown 2>NUL");
+        int rc = run_cmd_exit(exe + " unknown" + kNullRedirect);
         CHECK(rc != 0);
     }
 
@@ -83,7 +90,7 @@ int main() {
 
     // synth: missing --out
     {
-        int rc = run_cmd_exit(exe + " synth 2>NUL");
+        int rc = run_cmd_exit(exe + " synth" + kNullRedirect);
         CHECK(rc != 0);
     }
 
@@ -127,7 +134,7 @@ int main() {
 
     // inspect: missing --input
     {
-        int rc = run_cmd_exit(exe + " inspect 2>NUL");
+        int rc = run_cmd_exit(exe + " inspect" + kNullRedirect);
         CHECK(rc != 0);
     }
 
@@ -198,7 +205,7 @@ int main() {
 
     // replay: missing --input
     {
-        int rc = run_cmd_exit(exe + " replay 2>NUL");
+        int rc = run_cmd_exit(exe + " replay" + kNullRedirect);
         CHECK(rc != 0);
     }
 
@@ -231,7 +238,7 @@ int main() {
             }
         }
 
-        int rc = run_cmd_exit(exe + " replay --input " + out_dir + " 2>NUL");
+        int rc = run_cmd_exit(exe + " replay --input " + out_dir + kNullRedirect);
         CHECK(rc != 0);
     }
 
@@ -254,7 +261,7 @@ int main() {
             }
         }
 
-        int rc = run_cmd_exit(exe + " inspect --input " + out_dir + " --strict 2>NUL");
+        int rc = run_cmd_exit(exe + " inspect --input " + out_dir + " --strict" + kNullRedirect);
         CHECK(rc != 0);
     }
 
@@ -271,7 +278,7 @@ int main() {
             ofs << "NOT_A_VALID_MXRAW_FILE";
         }
 
-        int rc = run_cmd_exit(exe + " inspect --input " + out_dir + " 2>NUL");
+        int rc = run_cmd_exit(exe + " inspect --input " + out_dir + kNullRedirect);
         CHECK(rc != 0);
     }
 
@@ -306,7 +313,7 @@ int main() {
             ofs << "NOT_A_VALID_MXRAW_FILE";
         }
 
-        int rc = run_cmd_exit(exe + " replay --input " + out_dir + " 2>NUL");
+        int rc = run_cmd_exit(exe + " replay --input " + out_dir + kNullRedirect);
         CHECK(rc != 0);
     }
 
@@ -323,7 +330,7 @@ int main() {
         run_cmd_exit(exe + " synth --out " + out_dir +
                      " --session fedcba9876543210fedcba9876543210 --records 3");
 
-        int rc = run_cmd_exit(exe + " replay --input " + out_dir + " 2>NUL");
+        int rc = run_cmd_exit(exe + " replay --input " + out_dir + kNullRedirect);
         CHECK(rc != 0);
     }
 

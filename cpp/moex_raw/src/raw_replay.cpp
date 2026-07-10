@@ -51,6 +51,7 @@ static void build_record_framing(const RawPacketRecord& rec, std::vector<std::ui
 ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                            const RawSegmentMetadata& meta,
                            ReplayCallback callback) {
+    (void)meta;  // metadata is derived from validated entries, not caller-supplied
     ReplayResult result;
 
     if (sorted_paths.empty()) {
@@ -60,7 +61,7 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
         return result;
     }
 
-    // Validate the stream set first
+    // Validate the stream set — this sorts entries by numeric segment_index
     std::vector<RawSegmentMetadata> metas;
     std::vector<RawFooter> footers;
     auto status = validate_stream_set(sorted_paths, metas, footers, result.issues);
@@ -69,50 +70,74 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
         return result;
     }
 
+    // Build the sorted path list from validated entries (numeric order, not input order)
+    // validate_stream_set sorted metas/footers by segment_index, so we need to rebuild
+    // the path list in the same order. We do this by re-parsing the sorted entries.
+    // Since validate_stream_set validated and sorted by segment_index, and metas[i]
+    // corresponds to the i-th entry in sorted order, we reconstruct paths from metas.
+    // However, we don't have direct access to the sorted paths from validate_stream_set.
+    // The simplest approach: re-validate to get sorted entries, but that's wasteful.
+    // Instead, we sort our own copy of paths by parsing filenames.
+    struct PathWithIndex {
+        std::string path;
+        std::uint64_t segment_index;
+    };
+    std::vector<PathWithIndex> sorted_paths_vec;
+    sorted_paths_vec.reserve(sorted_paths.size());
+    for (const auto& p : sorted_paths) {
+        ParsedFilename pf;
+        auto fn = std::filesystem::path(p).filename().string();
+        if (!parse_canonical_filename(fn, pf)) {
+            result.status = ReplayStatus::ValidationFailed;
+            return result;
+        }
+        sorted_paths_vec.push_back({p, pf.segment_index});
+    }
+    std::sort(sorted_paths_vec.begin(), sorted_paths_vec.end(),
+              [](const PathWithIndex& a, const PathWithIndex& b) {
+                  return a.segment_index < b.segment_index;
+                });
+
     // Initialize single SHA-256 context with canonical MXREPLAY1 metadata prefix
+    // Use validated metas[0] (from sorted entries), not caller-supplied meta
     SHA256Ctx replay_sha_ctx;
     sha256_init(replay_sha_ctx);
     std::vector<std::uint8_t> prefix;
-    build_replay_prefix(meta, prefix);
+    build_replay_prefix(metas[0], prefix);
     sha256_update(replay_sha_ctx, prefix.data(), prefix.size());
 
-    // Replay records in order — bounded streaming per segment
+    // Replay records in validated numeric segment order
     std::uint64_t total_records = 0;
     std::uint64_t total_payload = 0;
     std::uint64_t first_index = 0;
     std::uint64_t last_index = 0;
     bool first = true;
 
-    for (std::size_t si = 0; si < sorted_paths.size(); ++si) {
-        std::FILE* f = std::fopen(sorted_paths[si].c_str(), "rb");
+    for (std::size_t si = 0; si < sorted_paths_vec.size(); ++si) {
+        std::FILE* f = std::fopen(sorted_paths_vec[si].path.c_str(), "rb");
         if (!f) {
             result.status = ReplayStatus::IoError;
             return result;
         }
 
-        // Get file size using std::filesystem (supports > 4 GiB on all platforms)
         std::error_code ec;
-        auto file_size = static_cast<std::uint64_t>(std::filesystem::file_size(sorted_paths[si], ec));
+        auto file_size = static_cast<std::uint64_t>(std::filesystem::file_size(sorted_paths_vec[si].path, ec));
         if (ec) {
             std::fclose(f);
             result.status = ReplayStatus::IoError;
             return result;
         }
 
-        // Read header size (bounded: first 14 bytes)
         std::uint8_t preamble[14];
         if (std::fread(preamble, 1, 14, f) != 14) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
         std::size_t header_size = read_u32_le(preamble + 10);
 
-        // Seek past header
         if (fseek64(f, static_cast<std::int64_t>(header_size), SEEK_SET) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
 
         std::uint64_t data_end = file_size - kFooterSize;
         std::uint64_t pos = header_size;
 
-        // Read records one at a time (bounded streaming)
         while (pos < data_end) {
-            // Read record header
             std::uint8_t rec_hdr[kRecordHeaderSize];
             if (std::fread(rec_hdr, 1, kRecordHeaderSize, f) != kRecordHeaderSize) {
                 std::fclose(f);
@@ -120,7 +145,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                 return result;
             }
 
-            // Parse record size
             std::uint32_t record_size = read_u32_le(rec_hdr + 8);
             std::uint32_t payload_size = read_u32_le(rec_hdr + 36);
 
@@ -132,7 +156,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                 return result;
             }
 
-            // Read remaining record bytes
             std::size_t tail_bytes = record_size - kRecordHeaderSize;
             std::vector<std::uint8_t> rec_tail(tail_bytes);
             if (std::fread(rec_tail.data(), 1, tail_bytes, f) != tail_bytes) {
@@ -141,7 +164,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                 return result;
             }
 
-            // Build full record buffer for deserialization
             std::vector<std::uint8_t> full_rec(rec_hdr, rec_hdr + kRecordHeaderSize);
             full_rec.insert(full_rec.end(), rec_tail.begin(), rec_tail.end());
 
@@ -157,7 +179,7 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                 return result;
             }
 
-            // Call callback with bounded payload (rec.payload lifetime = callback scope)
+            // Use validated metas[si] for callback (sorted order)
             if (!callback(metas[si], rec)) {
                 std::fclose(f);
                 result.status = ReplayStatus::Aborted;
@@ -170,7 +192,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                 return result;
             }
 
-            // Update streaming SHA-256 with this record
             std::vector<std::uint8_t> rec_framing;
             build_record_framing(rec, rec_framing);
             sha256_update(replay_sha_ctx, rec_framing.data(), rec_framing.size());
@@ -189,7 +210,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
         std::fclose(f);
     }
 
-    // Finalize streaming SHA-256
     std::uint8_t hash[32];
     sha256_final(replay_sha_ctx, hash);
 
@@ -204,7 +224,7 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
 }
 
 // Deprecated: use replay_from_stream_set with fully resolved StreamSetInfo instead.
-// This API is kept as a safe convenience wrapper that fails on any ambiguity.
+// Directory replay rejects any partial candidates because completeness is unknown.
 ReplayResult replay_from_directory(const std::string& directory,
                                    std::uint64_t source_id,
                                    std::uint64_t channel_id,
@@ -217,10 +237,21 @@ ReplayResult replay_from_directory(const std::string& directory,
     // Propagate discovery issues
     result.issues.insert(result.issues.end(), discovery_issues.begin(), discovery_issues.end());
 
-    // Check for discovery errors
+    // Check for discovery errors and partial files
     bool has_discovery_errors = false;
+    bool has_partial = false;
     for (const auto& issue : discovery_issues) {
         if (issue.severity == ValidationSeverity::Error) has_discovery_errors = true;
+        if (issue.code == "PARTIAL_FILE") has_partial = true;
+    }
+
+    // Partial files block directory replay — completeness is unknown
+    if (has_partial) {
+        result.status = ReplayStatus::ValidationFailed;
+        add_replay_issue(result.issues, ValidationSeverity::Error,
+                         "PARTIAL_FILE",
+                         "Partial files present; completeness unknown");
+        return result;
     }
 
     // Find matching stream sets by (source_id, channel_id)
@@ -239,7 +270,7 @@ ReplayResult replay_from_directory(const std::string& directory,
         return result;
     }
 
-    // Any matches.size() != 1 is ambiguous (same-session different source/channel too)
+    // Any matches.size() != 1 is ambiguous
     if (matches.size() != 1) {
         result.status = ReplayStatus::AmbiguousStream;
         add_replay_issue(result.issues, ValidationSeverity::Error,
@@ -255,7 +286,6 @@ ReplayResult replay_from_directory(const std::string& directory,
 
     StreamSetInfo* target = matches[0];
 
-    // Build metadata from first segment
     std::vector<RawSegmentMetadata> metas;
     std::vector<RawFooter> footers;
     std::vector<RawValidationIssue> issues;

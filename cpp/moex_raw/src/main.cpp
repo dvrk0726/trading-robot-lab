@@ -131,7 +131,9 @@ static RawStreamSummary build_stream_summary(const StreamSetInfo& ss,
                                               const std::vector<RawSegmentMetadata>& metas,
                                               const std::vector<RawFooter>& footers,
                                               const std::vector<std::string>& paths,
-                                              const std::string& status) {
+                                              const std::string& status,
+                                              const std::vector<std::string>& content_hashes = {},
+                                              const std::vector<std::string>& file_hashes = {}) {
     RawStreamSummary summary;
     summary.session_id_hex = session_id_hex(ss.session_id);
     summary.source_id = ss.source_id;
@@ -159,6 +161,10 @@ static RawStreamSummary build_stream_summary(const StreamSetInfo& ss,
         summary.segment_sizes.push_back(ec ? 0 : sz);
     }
 
+    // Per-segment hashes
+    summary.segment_content_sha256 = content_hashes;
+    summary.segment_file_sha256 = file_hashes;
+
     for (const auto& f : footers) {
         summary.record_count += f.record_count;
         summary.total_payload_bytes += f.total_payload_bytes;
@@ -166,6 +172,13 @@ static RawStreamSummary build_stream_summary(const StreamSetInfo& ss,
     if (!footers.empty()) {
         summary.first_capture_index = footers.front().first_capture_index;
         summary.last_capture_index = footers.back().last_capture_index;
+    }
+
+    // UTC bounds from metadata (created_utc_ns is the segment creation time;
+    // for synthetic data, monotonic and utc are correlated)
+    if (!metas.empty()) {
+        summary.first_capture_utc_ns = metas.front().created_utc_ns;
+        summary.last_capture_utc_ns = metas.back().created_utc_ns;
     }
 
     return summary;
@@ -330,13 +343,32 @@ static int cmd_synth(int argc, char* argv[]) {
         return 1;
     }
 
-    std::uint64_t total_records = records_per_seg * num_segments;
+    // Checked arithmetic for total records
+    std::uint64_t total_records;
+    if (!checked_mul_u64(records_per_seg, num_segments, total_records)) {
+        std::cerr << "Error: records * segments overflow\n";
+        return 1;
+    }
+
     for (std::uint64_t i = 0; i < total_records; ++i) {
         RawPacketRecord packet;
         packet.record_flags = kRecordFlagUtcValid;
         packet.capture_index = i;
-        packet.capture_utc_ns = meta.created_utc_ns + i * 1000000;
-        packet.capture_monotonic_ns = i * 1000000;
+
+        // Checked arithmetic for synthetic timestamps
+        std::uint64_t ts_offset;
+        if (!checked_mul_u64(i, 1000000, ts_offset)) {
+            std::cerr << "Error: timestamp overflow\n";
+            return 1;
+        }
+        std::uint64_t utc_ns;
+        if (!checked_add_u64(meta.created_utc_ns, ts_offset, utc_ns)) {
+            std::cerr << "Error: timestamp overflow\n";
+            return 1;
+        }
+        packet.capture_utc_ns = utc_ns;
+        packet.capture_monotonic_ns = ts_offset;
+
         packet.payload = make_synthetic_payload(seed + i, static_cast<std::size_t>(payload_size));
 
         err = writer.append(packet);
@@ -411,6 +443,15 @@ static int cmd_inspect(int argc, char* argv[]) {
             report.issues.push_back({ValidationSeverity::Error, "NO_STREAMS", "No valid streams found"});
             has_errors = true;
         } else {
+            // Sort stream_sets deterministically by (session_id, source_id, channel_id)
+            std::sort(stream_sets.begin(), stream_sets.end(),
+                      [](const StreamSetInfo& a, const StreamSetInfo& b) {
+                          int cmp = std::memcmp(a.session_id, b.session_id, 16);
+                          if (cmp != 0) return cmp < 0;
+                          if (a.source_id != b.source_id) return a.source_id < b.source_id;
+                          return a.channel_id < b.channel_id;
+                      });
+
             // Process each stream set independently with separate summaries
             for (const auto& ss : stream_sets) {
                 std::vector<RawSegmentMetadata> metas;
@@ -419,7 +460,18 @@ static int cmd_inspect(int argc, char* argv[]) {
 
                 auto status = validate_stream_set(ss.segment_paths, metas, footers, issues);
 
-                // Build per-stream summary
+                // Collect per-segment hashes
+                std::vector<std::string> content_hashes, file_hashes;
+                for (const auto& path : ss.segment_paths) {
+                    RawSegmentMetadata tmp_meta;
+                    RawFooter tmp_footer;
+                    std::vector<RawValidationIssue> tmp_issues;
+                    std::string ch, fh;
+                    validate_segment(path, tmp_meta, tmp_footer, tmp_issues, ch, fh);
+                    content_hashes.push_back(ch);
+                    file_hashes.push_back(fh);
+                }
+
                 std::string stream_status;
                 if (status == SegmentStatus::ValidFinalized) {
                     bool stream_has_issues = false;
@@ -431,16 +483,29 @@ static int cmd_inspect(int argc, char* argv[]) {
                     stream_status = "invalid";
                 }
 
-                auto summary = build_stream_summary(ss, metas, footers, ss.segment_paths, stream_status);
+                auto summary = build_stream_summary(ss, metas, footers, ss.segment_paths,
+                                                    stream_status, content_hashes, file_hashes);
                 report.stream_sets.push_back(summary);
 
-                // Set top-level report from first stream (for backward compatibility)
-                if (report.session_id_hex.empty()) {
+                // For single-stream reports, set top-level fields
+                if (stream_sets.size() == 1) {
                     report.session_id_hex = summary.session_id_hex;
                     report.feed_group = summary.feed_group;
                     report.endpoint_role = summary.endpoint_role;
                     report.source_label = summary.source_label;
                     report.stream_key = summary.stream_key;
+                    report.source_id = summary.source_id;
+                    report.channel_id = summary.channel_id;
+                    report.configuration_sha256 = summary.configuration_sha256;
+                    report.templates_sha256 = summary.templates_sha256;
+                    report.endpoint_fingerprint_sha256 = summary.endpoint_fingerprint_sha256;
+                    report.clock_domain = summary.clock_domain;
+                    report.transport = summary.transport;
+                    report.source_side = summary.source_side;
+                    report.content_sha256 = summary.content_sha256;
+                    report.file_sha256 = summary.file_sha256;
+                    report.first_capture_utc_ns = summary.first_capture_utc_ns;
+                    report.last_capture_utc_ns = summary.last_capture_utc_ns;
                 }
 
                 for (std::size_t i = 0; i < metas.size(); ++i) {
@@ -459,6 +524,12 @@ static int cmd_inspect(int argc, char* argv[]) {
                     report.last_capture_index = footers.back().last_capture_index;
                 }
 
+                // Add source info to issues
+                auto stream_key = summary.stream_key;
+                for (auto& issue : issues) {
+                    issue.source = stream_key;
+                    if (!ss.segment_paths.empty()) issue.path = ss.segment_paths[0];
+                }
                 report.issues.insert(report.issues.end(), issues.begin(), issues.end());
 
                 if (status != SegmentStatus::ValidFinalized) {
@@ -490,9 +561,17 @@ static int cmd_inspect(int argc, char* argv[]) {
         auto status = validate_segment(input_path, meta, footer, issues, content_hex, file_hex);
 
         report.session_id_hex = session_id_hex(meta.session.session_id);
+        report.source_id = meta.source.source_id;
+        report.channel_id = meta.source.channel_id;
         report.feed_group = meta.session.feed_group;
         report.endpoint_role = meta.session.endpoint_role;
         report.source_label = meta.session.source_label;
+        report.clock_domain = clock_domain_name(meta.source.clock_domain);
+        report.transport = transport_name(meta.source.transport);
+        report.source_side = source_side_name(meta.source.source_side);
+        report.configuration_sha256 = sha256_bytes_to_hex(meta.source.configuration_sha256);
+        report.templates_sha256 = sha256_bytes_to_hex(meta.source.templates_sha256);
+        report.endpoint_fingerprint_sha256 = sha256_bytes_to_hex(meta.source.endpoint_fingerprint_sha256);
         report.stream_key = report.session_id_hex + "_src" + source_id_hex(meta.source.source_id) +
                             "_ch" + channel_id_hex(meta.source.channel_id);
         report.segment_indexes.push_back(meta.segment_index);
@@ -507,7 +586,14 @@ static int cmd_inspect(int argc, char* argv[]) {
         report.total_payload_bytes = footer.total_payload_bytes;
         report.first_capture_index = footer.first_capture_index;
         report.last_capture_index = footer.last_capture_index;
+        report.first_capture_utc_ns = meta.created_utc_ns;
+        report.last_capture_utc_ns = meta.created_utc_ns;
 
+        // Add source/path to issues
+        for (auto& issue : issues) {
+            issue.source = report.stream_key;
+            issue.path = input_path;
+        }
         report.issues = std::move(issues);
 
         for (const auto& issue : report.issues) {
@@ -666,9 +752,17 @@ static int cmd_replay(int argc, char* argv[]) {
     report.format_version = "1";
     report.input_paths.push_back(input_dir);
     report.session_id_hex = session_id_hex(replay_meta.session.session_id);
+    report.source_id = replay_meta.source.source_id;
+    report.channel_id = replay_meta.source.channel_id;
     report.feed_group = replay_meta.session.feed_group;
     report.endpoint_role = replay_meta.session.endpoint_role;
     report.source_label = replay_meta.session.source_label;
+    report.clock_domain = clock_domain_name(replay_meta.source.clock_domain);
+    report.transport = transport_name(replay_meta.source.transport);
+    report.source_side = source_side_name(replay_meta.source.source_side);
+    report.configuration_sha256 = sha256_bytes_to_hex(replay_meta.source.configuration_sha256);
+    report.templates_sha256 = sha256_bytes_to_hex(replay_meta.source.templates_sha256);
+    report.endpoint_fingerprint_sha256 = sha256_bytes_to_hex(replay_meta.source.endpoint_fingerprint_sha256);
     report.stream_key = report.session_id_hex + "_src" + source_id_hex(replay_meta.source.source_id) +
                        "_ch" + channel_id_hex(replay_meta.source.channel_id);
 
@@ -677,9 +771,14 @@ static int cmd_replay(int argc, char* argv[]) {
     report.first_capture_index = result.summary.first_capture_index;
     report.last_capture_index = result.summary.last_capture_index;
 
-    // Merge discovery issues + replay issues
+    // Merge discovery issues + replay issues with source info
+    auto stream_key = report.stream_key;
+    for (auto& issue : discovery_issues) {
+        issue.source = stream_key;
+    }
     report.issues = std::move(discovery_issues);
     for (auto& issue : result.issues) {
+        issue.source = stream_key;
         report.issues.push_back(std::move(issue));
     }
 
