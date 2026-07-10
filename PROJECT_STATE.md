@@ -111,9 +111,10 @@ main protection option guide.
 
 ```text
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: IN_PROGRESS
+Status: READY_FOR_REVIEW
 Branch: feat/rt-1-fast-config-inspector
-Implementation: active
+PR: #16
+Review cycle: CHANGES_REQUIRED → corrections applied
 ```
 
 RT-1 task package:

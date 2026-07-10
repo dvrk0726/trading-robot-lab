@@ -1,0 +1,3 @@
+#pragma once
+// Configured by CMake — provides the path to the moex-fast-inspect binary.
+#define MOEX_FAST_INSPECT_PATH "@MOEX_FAST_INSPECT_PATH@"

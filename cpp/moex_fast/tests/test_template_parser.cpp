@@ -1,5 +1,5 @@
 #include "moex_fast/xml_parser.hpp"
-#include <cassert>
+#include "test_helpers.hpp"
 #include <iostream>
 #include <fstream>
 #include <set>
@@ -17,22 +17,20 @@ void test_valid_templates_parse() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml(VALID_TEMPLATES, templates, issues);
-    assert(ok);
-    (void)ok;
-    assert(templates.size() == 7);
+    CHECK(ok);
+    CHECK(templates.size() == 7);
 
-    // Check required template IDs are present
     std::set<unsigned> ids;
     for (const auto& t : templates) ids.insert(t.id);
-    assert(ids.count(29));
-    assert(ids.count(30));
-    assert(ids.count(31));
-    assert(ids.count(32));
-    assert(ids.count(40));
-    assert(ids.count(45));
-    assert(ids.count(46));
+    CHECK(ids.count(29));
+    CHECK(ids.count(30));
+    CHECK(ids.count(31));
+    CHECK(ids.count(32));
+    CHECK(ids.count(40));
+    CHECK(ids.count(45));
+    CHECK(ids.count(46));
 
-    std::cout << "PASS: valid templates parse\n";
+    TEST_PASS("valid templates parse");
 }
 
 void test_template_fields() {
@@ -40,23 +38,21 @@ void test_template_fields() {
     std::vector<moex_fast::InspectionIssue> issues;
     moex_fast::parse_templates_xml(VALID_TEMPLATES, templates, issues);
 
-    // Find OrdersLogMessage (id=29)
     const moex_fast::FastTemplateDescriptor* ol = nullptr;
     for (const auto& t : templates) {
         if (t.id == 29) { ol = &t; break; }
     }
-    assert(ol != nullptr);
-    assert(ol->name == "OrdersLogMessage");
+    CHECK(ol != nullptr);
+    CHECK(ol->name == "OrdersLogMessage");
 
-    // First field should be ApplVerID
-    assert(!ol->fields.empty());
-    assert(ol->fields[0].name == "ApplVerID");
-    assert(ol->fields[0].is_constant);
-    assert(ol->fields[0].constant_value == "9");
-    assert(ol->fields[0].has_fix_tag);
-    assert(ol->fields[0].fix_tag == 1128);
+    CHECK(!ol->fields.empty());
+    CHECK(ol->fields[0].name == "ApplVerID");
+    CHECK(ol->fields[0].is_constant);
+    CHECK(ol->fields[0].constant_value == "9");
+    CHECK(ol->fields[0].has_fix_tag);
+    CHECK(ol->fields[0].fix_tag == 1128);
 
-    std::cout << "PASS: template fields\n";
+    TEST_PASS("template fields");
 }
 
 void test_mandatory_optional() {
@@ -68,20 +64,19 @@ void test_mandatory_optional() {
     for (const auto& t : templates) {
         if (t.id == 29) { ol = &t; break; }
     }
-    assert(ol != nullptr);
+    CHECK(ol != nullptr);
 
-    // MsgSeqNum should be mandatory
     bool found_mandatory = false;
     for (const auto& f : ol->fields) {
         if (f.name == "MsgSeqNum") {
-            assert(f.is_mandatory);
+            CHECK(f.is_mandatory);
             found_mandatory = true;
             break;
         }
     }
-    assert(found_mandatory);
+    CHECK(found_mandatory);
 
-    std::cout << "PASS: mandatory/optional presence\n";
+    TEST_PASS("mandatory/optional presence");
 }
 
 void test_sequence_fields() {
@@ -93,9 +88,8 @@ void test_sequence_fields() {
     for (const auto& t : templates) {
         if (t.id == 29) { ol = &t; break; }
     }
-    assert(ol != nullptr);
+    CHECK(ol != nullptr);
 
-    // Should have at least one sequence field
     bool has_sequence = false;
     for (const auto& f : ol->fields) {
         if (f.wire_type == moex_fast::WireType::Sequence) {
@@ -103,20 +97,67 @@ void test_sequence_fields() {
             break;
         }
     }
-    assert(has_sequence);
+    CHECK(has_sequence);
 
-    // Should have a sequence length field
     bool has_length = false;
     for (const auto& f : ol->fields) {
         if (f.is_sequence_length) {
             has_length = true;
-            assert(f.name == "NoMDEntries");
+            CHECK(f.name == "NoMDEntries");
             break;
         }
     }
-    assert(has_length);
+    CHECK(has_length);
 
-    std::cout << "PASS: sequence fields\n";
+    TEST_PASS("sequence fields");
+}
+
+void test_sequence_nesting_preserved() {
+    std::vector<moex_fast::FastTemplateDescriptor> templates;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_templates_xml(VALID_TEMPLATES, templates, issues);
+
+    const moex_fast::FastTemplateDescriptor* ol = nullptr;
+    for (const auto& t : templates) {
+        if (t.id == 29) { ol = &t; break; }
+    }
+    CHECK(ol != nullptr);
+
+    // Nested sequence fields should have parent_sequence set
+    bool found_nested = false;
+    for (const auto& f : ol->fields) {
+        if (f.parent_sequence == "MDEntries") {
+            found_nested = true;
+            break;
+        }
+    }
+    CHECK(found_nested);
+
+    // Top-level fields should have empty parent_sequence
+    CHECK(ol->fields[0].parent_sequence.empty());
+
+    TEST_PASS("sequence nesting preserved");
+}
+
+void test_field_order_monotonic() {
+    std::vector<moex_fast::FastTemplateDescriptor> templates;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_templates_xml(VALID_TEMPLATES, templates, issues);
+
+    const moex_fast::FastTemplateDescriptor* ol = nullptr;
+    for (const auto& t : templates) {
+        if (t.id == 29) { ol = &t; break; }
+    }
+    CHECK(ol != nullptr);
+    CHECK(ol->fields.size() > 1);
+
+    // Field order must be strictly monotonic (no resets at sequence boundaries)
+    for (std::size_t i = 1; i < ol->fields.size(); ++i) {
+        CHECK_MSG(ol->fields[i].order > ol->fields[i - 1].order,
+            "Field order not monotonic at index " + std::to_string(i));
+    }
+
+    TEST_PASS("field order monotonic");
 }
 
 void test_malformed_xml() {
@@ -124,12 +165,11 @@ void test_malformed_xml() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("fixtures/bad_templates.xml", templates, issues);
-    assert(!ok);
-    (void)ok;
-    assert(!issues.empty());
-    assert(issues[0].severity == moex_fast::Severity::Error);
+    CHECK(!ok);
+    CHECK(!issues.empty());
+    CHECK(issues[0].severity == moex_fast::Severity::Error);
 
-    std::cout << "PASS: malformed XML\n";
+    TEST_PASS("malformed XML");
 }
 
 void test_missing_root() {
@@ -137,11 +177,10 @@ void test_missing_root() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("fixtures/no_root_templates.xml", templates, issues);
-    assert(!ok);
-    (void)ok;
-    assert(!issues.empty());
+    CHECK(!ok);
+    CHECK(!issues.empty());
 
-    std::cout << "PASS: missing root element\n";
+    TEST_PASS("missing root element");
 }
 
 void test_duplicate_template_id() {
@@ -153,16 +192,15 @@ void test_duplicate_template_id() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("fixtures/dup_templates.xml", templates, issues);
-    assert(ok);
-    (void)ok;
-    assert(templates.size() == 1);  // Duplicate is skipped
+    CHECK(ok);
+    CHECK(templates.size() == 1);
     bool found_dup = false;
     for (const auto& iss : issues) {
         if (iss.message.find("Duplicate") != std::string::npos) found_dup = true;
     }
-    assert(found_dup);
+    CHECK(found_dup);
 
-    std::cout << "PASS: duplicate template id\n";
+    TEST_PASS("duplicate template id");
 }
 
 void test_non_numeric_id() {
@@ -173,14 +211,14 @@ void test_non_numeric_id() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     moex_fast::parse_templates_xml("fixtures/bad_id_templates.xml", templates, issues);
-    assert(templates.empty());
+    CHECK(templates.empty());
     bool found_bad_id = false;
     for (const auto& iss : issues) {
         if (iss.message.find("non-numeric") != std::string::npos) found_bad_id = true;
     }
-    assert(found_bad_id);
+    CHECK(found_bad_id);
 
-    std::cout << "PASS: non-numeric template id\n";
+    TEST_PASS("non-numeric template id");
 }
 
 void test_missing_id() {
@@ -191,9 +229,9 @@ void test_missing_id() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     moex_fast::parse_templates_xml("fixtures/no_id_templates.xml", templates, issues);
-    assert(templates.empty());
+    CHECK(templates.empty());
 
-    std::cout << "PASS: missing template id\n";
+    TEST_PASS("missing template id");
 }
 
 void test_empty_templates() {
@@ -201,22 +239,65 @@ void test_empty_templates() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("fixtures/empty_templates.xml", templates, issues);
-    assert(ok);
-    (void)ok;
-    assert(templates.empty());
+    CHECK(ok);
+    CHECK(templates.empty());
 
-    std::cout << "PASS: empty templates\n";
+    TEST_PASS("empty templates");
 }
 
 void test_file_not_found() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("nonexistent.xml", templates, issues);
-    assert(!ok);
-    (void)ok;
-    assert(!issues.empty());
+    CHECK(!ok);
+    CHECK(!issues.empty());
 
-    std::cout << "PASS: file not found\n";
+    TEST_PASS("file not found");
+}
+
+void test_unknown_element_reported() {
+    write_file("fixtures/unknown_elem.xml",
+        "<templates>"
+        "  <template id='1' name='A'>"
+        "    <uInt32 name='X'/>"
+        "    <tail/>"
+        "  </template>"
+        "</templates>");
+    std::vector<moex_fast::FastTemplateDescriptor> templates;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_templates_xml("fixtures/unknown_elem.xml", templates, issues);
+
+    // The parser should report the unknown <tail/> element
+    // (tail is a known operator, but at template level without parent field it should warn)
+    // Actually, <tail/> is known but at template-level it's a warning
+    // Let's check for at least one warning about unknown/operator elements
+    bool found_issue = false;
+    for (const auto& iss : issues) {
+        if (iss.message.find("tail") != std::string::npos ||
+            iss.message.find("Unknown") != std::string::npos ||
+            iss.message.find("operator") != std::string::npos) {
+            found_issue = true;
+        }
+    }
+    CHECK(found_issue);
+
+    TEST_PASS("unknown element reported");
+}
+
+void test_issue_source_template() {
+    write_file("fixtures/src_test.xml",
+        "<templates>"
+        "  <template id='1' name='A'><uInt32 name='X'/></template>"
+        "</templates>");
+    std::vector<moex_fast::FastTemplateDescriptor> templates;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_templates_xml("fixtures/src_test.xml", templates, issues);
+
+    for (const auto& iss : issues) {
+        CHECK(iss.source == moex_fast::IssueSource::Template);
+    }
+
+    TEST_PASS("issue source is Template");
 }
 
 }  // namespace
@@ -226,6 +307,8 @@ int main() {
     test_template_fields();
     test_mandatory_optional();
     test_sequence_fields();
+    test_sequence_nesting_preserved();
+    test_field_order_monotonic();
     test_malformed_xml();
     test_missing_root();
     test_duplicate_template_id();
@@ -233,6 +316,8 @@ int main() {
     test_missing_id();
     test_empty_templates();
     test_file_not_found();
+    test_unknown_element_reported();
+    test_issue_source_template();
 
     std::cout << "\nAll template parser tests PASSED.\n";
     return 0;

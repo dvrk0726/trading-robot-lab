@@ -91,9 +91,11 @@ main protection option guide.
 Status:
 
 ```text
-IN_PROGRESS
+READY_FOR_REVIEW
 Issue #14
 Branch: feat/rt-1-fast-config-inspector
+PR: #16
+Review cycle: CHANGES_REQUIRED → corrections applied
 ```
 
 Scope:

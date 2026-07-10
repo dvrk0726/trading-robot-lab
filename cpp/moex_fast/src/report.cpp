@@ -26,6 +26,22 @@ void indent(std::ostringstream& oss, int depth) {
     for (int i = 0; i < depth; ++i) oss << "  ";
 }
 
+void emit_required_results(std::ostringstream& oss, int depth,
+                           const std::vector<RequiredCheckResult>& results) {
+    for (std::size_t i = 0; i < results.size(); ++i) {
+        const auto& r = results[i];
+        indent(oss, depth); oss << "{\n";
+        indent(oss, depth + 1); oss << "\"name\": "; json_escape(oss, r.name); oss << ",\n";
+        indent(oss, depth + 1); oss << "\"present\": " << (r.present ? "true" : "false") << ",\n";
+        indent(oss, depth + 1); oss << "\"severity\": ";
+        json_escape(oss, r.severity == Severity::Error ? "error" : "warning");
+        oss << "\n";
+        indent(oss, depth); oss << "}";
+        if (i + 1 < results.size()) oss << ",";
+        oss << "\n";
+    }
+}
+
 }  // namespace
 
 std::string report_to_json(const InspectionReport& r) {
@@ -55,6 +71,16 @@ std::string report_to_json(const InspectionReport& r) {
     indent(oss, 2); oss << "\"parse_ok\": " << (r.configuration_info.parse_ok ? "true" : "false") << ",\n";
     indent(oss, 2); oss << "\"validation_ok\": " << (r.configuration_info.validation_ok ? "true" : "false") << "\n";
     indent(oss, 1); oss << "},\n";
+
+    // Required template results
+    indent(oss, 1); oss << "\"required_templates\": [\n";
+    emit_required_results(oss, 2, r.required_template_results);
+    indent(oss, 1); oss << "],\n";
+
+    // Required feed results
+    indent(oss, 1); oss << "\"required_feeds\": [\n";
+    emit_required_results(oss, 2, r.required_feed_results);
+    indent(oss, 1); oss << "],\n";
 
     // Templates summary
     indent(oss, 1); oss << "\"templates\": [\n";
@@ -100,6 +126,10 @@ std::string report_to_json(const InspectionReport& r) {
                 oss << ",\n";
                 indent(oss, 5); oss << "\"charset\": "; json_escape(oss, f.charset);
             }
+            if (!f.parent_sequence.empty()) {
+                oss << ",\n";
+                indent(oss, 5); oss << "\"parent_sequence\": "; json_escape(oss, f.parent_sequence);
+            }
             oss << "\n";
             indent(oss, 4); oss << "}";
             if (fi + 1 < field_order.size()) oss << ",";
@@ -112,18 +142,18 @@ std::string report_to_json(const InspectionReport& r) {
     }
     indent(oss, 1); oss << "],\n";
 
-    // Feed groups
+    // Feed groups — feed_type is now per endpoint, not per group
     indent(oss, 1); oss << "\"feed_groups\": [\n";
     for (std::size_t gi = 0; gi < r.feed_groups.size(); ++gi) {
         const auto& g = r.feed_groups[gi];
         indent(oss, 2); oss << "{\n";
         indent(oss, 3); oss << "\"name\": "; json_escape(oss, g.name); oss << ",\n";
         indent(oss, 3); oss << "\"market_id\": "; json_escape(oss, g.market_id); oss << ",\n";
-        indent(oss, 3); oss << "\"feed_type\": "; json_escape(oss, g.feed_type); oss << ",\n";
         indent(oss, 3); oss << "\"endpoints\": [\n";
         for (std::size_t ei = 0; ei < g.endpoints.size(); ++ei) {
             const auto& ep = g.endpoints[ei];
             indent(oss, 4); oss << "{\n";
+            indent(oss, 5); oss << "\"feed_type\": "; json_escape(oss, ep.feed_type); oss << ",\n";
             indent(oss, 5); oss << "\"protocol\": "; json_escape(oss, ep.protocol); oss << ",\n";
             indent(oss, 5); oss << "\"source_ip\": "; json_escape(oss, ep.source_ip); oss << ",\n";
             indent(oss, 5); oss << "\"multicast_group\": "; json_escape(oss, ep.multicast_group); oss << ",\n";
@@ -147,6 +177,9 @@ std::string report_to_json(const InspectionReport& r) {
         indent(oss, 2); oss << "{\n";
         indent(oss, 3); oss << "\"severity\": ";
         json_escape(oss, iss.severity == Severity::Error ? "error" : "warning");
+        oss << ",\n";
+        indent(oss, 3); oss << "\"source\": ";
+        json_escape(oss, iss.source == IssueSource::Template ? "template" : "configuration");
         oss << ",\n";
         indent(oss, 3); oss << "\"message\": "; json_escape(oss, iss.message); oss << "\n";
         indent(oss, 2); oss << "}";
@@ -190,14 +223,33 @@ std::string report_to_text(const InspectionReport& r) {
 
     oss << "\n--- Feed Groups (" << r.feed_groups.size() << ") ---\n";
     for (const auto& g : r.feed_groups) {
-        oss << "  " << g.name << " (" << g.feed_type << ", "
-            << g.endpoints.size() << " endpoints)\n";
+        oss << "  " << g.name << " (" << g.endpoints.size() << " endpoints)\n";
+        for (const auto& ep : g.endpoints) {
+            oss << "    " << ep.feed_type << " " << ep.feed_id
+                << " " << ep.protocol << " " << ep.multicast_group
+                << ":" << ep.port << "\n";
+        }
+    }
+
+    if (!r.required_template_results.empty()) {
+        oss << "\n--- Required Templates ---\n";
+        for (const auto& rt : r.required_template_results) {
+            oss << "  " << rt.name << ": " << (rt.present ? "FOUND" : "MISSING") << "\n";
+        }
+    }
+
+    if (!r.required_feed_results.empty()) {
+        oss << "\n--- Required Feeds ---\n";
+        for (const auto& rf : r.required_feed_results) {
+            oss << "  " << rf.name << ": " << (rf.present ? "FOUND" : "MISSING") << "\n";
+        }
     }
 
     if (!r.issues.empty()) {
         oss << "\n--- Issues (" << r.issues.size() << ") ---\n";
         for (const auto& iss : r.issues) {
             oss << "  [" << (iss.severity == Severity::Error ? "ERROR" : "WARN ")
+                << "][" << (iss.source == IssueSource::Template ? "TMPL" : "CONF")
                 << "] " << iss.message << "\n";
         }
     }

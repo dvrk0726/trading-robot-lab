@@ -27,6 +27,7 @@ add_library(moex_inspect STATIC
     src/xml_parser.cpp
     src/inspector.cpp
     src/report.cpp
+    src/sha256.cpp
 )
 target_include_directories(moex_inspect PUBLIC include)
 target_link_libraries(moex_inspect PUBLIC pugixml)
@@ -59,3 +60,11 @@ add_test(NAME test_deterministic_report COMMAND test_deterministic_report WORKIN
 add_executable(test_resource_safety tests/test_resource_safety.cpp)
 target_link_libraries(test_resource_safety PRIVATE moex_inspect)
 add_test(NAME test_resource_safety COMMAND test_resource_safety WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+
+# CLI integration tests need to find the moex-fast-inspect binary.
+add_executable(test_cli tests/test_cli.cpp)
+target_link_libraries(test_cli PRIVATE moex_inspect)
+target_compile_definitions(test_cli PRIVATE
+    MOEX_FAST_INSPECT_PATH="$<TARGET_FILE:moex-fast-inspect>"
+)
+add_test(NAME test_cli COMMAND test_cli WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})

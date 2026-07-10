@@ -1,7 +1,7 @@
 #include "moex_fast/inspector.hpp"
 #include "moex_fast/xml_parser.hpp"
 #include "moex_fast/report.hpp"
-#include <cassert>
+#include "test_helpers.hpp"
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -19,11 +19,10 @@ void test_empty_file() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("fixtures/empty_file.xml", templates, issues);
-    assert(!ok);
-    (void)ok;
-    assert(!issues.empty());
+    CHECK(!ok);
+    CHECK(!issues.empty());
 
-    std::cout << "PASS: empty file\n";
+    TEST_PASS("empty file");
 }
 
 void test_truncated_file() {
@@ -33,10 +32,9 @@ void test_truncated_file() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("fixtures/truncated.xml", templates, issues);
-    // pugixml may partially parse or fail; either way no crash
-    (void)ok;
+    (void)ok;  // pugixml may partially parse or fail; no crash is the test
 
-    std::cout << "PASS: truncated file (no crash)\n";
+    TEST_PASS("truncated file (no crash)");
 }
 
 void test_large_template_count() {
@@ -52,11 +50,10 @@ void test_large_template_count() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("fixtures/large_templates.xml", templates, issues);
-    assert(ok);
-    (void)ok;
-    assert(templates.size() == 100);
+    CHECK(ok);
+    CHECK(templates.size() == 100);
 
-    std::cout << "PASS: large template count\n";
+    TEST_PASS("large template count");
 }
 
 void test_large_field_count() {
@@ -70,12 +67,11 @@ void test_large_field_count() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     bool ok = moex_fast::parse_templates_xml("fixtures/large_fields.xml", templates, issues);
-    assert(ok);
-    (void)ok;
-    assert(templates.size() == 1);
-    assert(templates[0].fields.size() == 50);
+    CHECK(ok);
+    CHECK(templates.size() == 1);
+    CHECK(templates[0].fields.size() == 50);
 
-    std::cout << "PASS: large field count\n";
+    TEST_PASS("large field count");
 }
 
 void test_output_write_failure() {
@@ -86,13 +82,12 @@ void test_output_write_failure() {
 
     auto report = moex_fast::run_inspector(opts);
     auto err = moex_fast::write_json_report(report, opts.json_out_path);
-    assert(!err.empty());
+    CHECK(!err.empty());
 
-    std::cout << "PASS: output write failure\n";
+    TEST_PASS("output write failure");
 }
 
 void test_no_crash_on_invalid_xml() {
-    // Various malformed XML inputs
     const char* cases[] = {
         "<",
         "<templates><template/></templates>",
@@ -105,10 +100,9 @@ void test_no_crash_on_invalid_xml() {
         std::vector<moex_fast::FastTemplateDescriptor> templates;
         std::vector<moex_fast::InspectionIssue> issues;
         moex_fast::parse_templates_xml("fixtures/invalid_case.xml", templates, issues);
-        // No crash is the test
     }
 
-    std::cout << "PASS: no crash on invalid XML variants\n";
+    TEST_PASS("no crash on invalid XML variants");
 }
 
 void test_report_json_escape() {
@@ -119,8 +113,6 @@ void test_report_json_escape() {
     auto report = moex_fast::run_inspector(opts);
     auto json = moex_fast::report_to_json(report);
 
-    // JSON should not have unescaped special characters in string values
-    // Check that the JSON is well-formed by verifying string boundaries
     bool in_string = false;
     bool escaped = false;
     for (char c : json) {
@@ -134,22 +126,21 @@ void test_report_json_escape() {
         }
         if (c == '"') in_string = !in_string;
     }
-    // Should end with strings properly closed
-    assert(!in_string);
+    CHECK(!in_string);
 
-    std::cout << "PASS: JSON escape handling\n";
+    TEST_PASS("JSON escape handling");
 }
 
 void test_wire_type_names() {
-    assert(std::string(moex_fast::wire_type_name(moex_fast::WireType::uInt32)) == "uInt32");
-    assert(std::string(moex_fast::wire_type_name(moex_fast::WireType::Sequence)) == "Sequence");
-    assert(std::string(moex_fast::wire_type_name(moex_fast::WireType::Unknown)) == "Unknown");
+    CHECK(std::string(moex_fast::wire_type_name(moex_fast::WireType::uInt32)) == "uInt32");
+    CHECK(std::string(moex_fast::wire_type_name(moex_fast::WireType::Sequence)) == "Sequence");
+    CHECK(std::string(moex_fast::wire_type_name(moex_fast::WireType::Unknown)) == "Unknown");
 
-    assert(moex_fast::parse_wire_type("uInt32") == moex_fast::WireType::uInt32);
-    assert(moex_fast::parse_wire_type("sequence") == moex_fast::WireType::Sequence);
-    assert(moex_fast::parse_wire_type("unknown_type") == moex_fast::WireType::Unknown);
+    CHECK(moex_fast::parse_wire_type("uInt32") == moex_fast::WireType::uInt32);
+    CHECK(moex_fast::parse_wire_type("sequence") == moex_fast::WireType::Sequence);
+    CHECK(moex_fast::parse_wire_type("unknown_type") == moex_fast::WireType::Unknown);
 
-    std::cout << "PASS: wire type names\n";
+    TEST_PASS("wire type names");
 }
 
 }  // namespace

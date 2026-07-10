@@ -7,8 +7,12 @@ namespace moex_fast {
 
 enum class Severity { Warning, Error };
 
+// Tracks the source of an issue so validation_ok can be computed independently.
+enum class IssueSource { Template, Configuration };
+
 struct InspectionIssue {
     Severity severity;
+    IssueSource source;
     std::string message;
 };
 
@@ -39,6 +43,8 @@ struct FastFieldDescriptor {
     std::string constant_value;
     bool is_sequence_length{};
     std::string charset;
+    // Name of the enclosing sequence, empty for top-level fields.
+    std::string parent_sequence;
 };
 
 struct FastTemplateDescriptor {
@@ -54,13 +60,20 @@ struct FeedEndpoint {
     std::uint16_t port{};
     std::string feed_id;
     bool is_tcp{};
+    // Role carried by this specific feed/source (Incremental, Snapshot, etc.)
+    std::string feed_type;
 };
 
 struct FeedGroup {
     std::string name;
     std::string market_id;
-    std::string feed_type;
     std::vector<FeedEndpoint> endpoints;
+};
+
+struct RequiredCheckResult {
+    std::string name;        // e.g. "ORDERS-LOG", "template-29"
+    bool present{};
+    Severity severity;       // Error in strict, Warning in non-strict
 };
 
 struct InspectionReport {
@@ -71,6 +84,8 @@ struct InspectionReport {
     std::vector<FastTemplateDescriptor> templates;
     std::vector<FeedGroup> feed_groups;
     std::vector<InspectionIssue> issues;
+    std::vector<RequiredCheckResult> required_template_results;
+    std::vector<RequiredCheckResult> required_feed_results;
     std::string overall_status;  // "valid", "warning", "invalid"
 };
 

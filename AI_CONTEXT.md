@@ -112,18 +112,10 @@ main branch protection decision guide.
 
 ```text
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: IN_PROGRESS
-Implementation: active
+Status: READY_FOR_REVIEW
 Branch: feat/rt-1-fast-config-inspector
-```
-
-## RT-1
-
-```text
-Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: IN_PROGRESS
-Branch: feat/rt-1-fast-config-inspector
-Implementation: active
+PR: #16
+Review cycle: CHANGES_REQUIRED → corrections applied
 ```
 
 Task package:

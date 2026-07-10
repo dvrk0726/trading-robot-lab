@@ -1,6 +1,6 @@
 #include "moex_fast/inspector.hpp"
 #include "moex_fast/report.hpp"
-#include <cassert>
+#include "test_helpers.hpp"
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -22,10 +22,10 @@ void test_sha256_stable() {
     auto r1 = moex_fast::run_inspector(opts);
     auto r2 = moex_fast::run_inspector(opts);
 
-    assert(!r1.templates_info.sha256.empty());
-    assert(r1.templates_info.sha256 == r2.templates_info.sha256);
+    CHECK(!r1.templates_info.sha256.empty());
+    CHECK(r1.templates_info.sha256 == r2.templates_info.sha256);
 
-    std::cout << "PASS: SHA-256 stable for identical bytes\n";
+    TEST_PASS("SHA-256 stable for identical bytes");
 }
 
 void test_sha256_changes() {
@@ -43,9 +43,9 @@ void test_sha256_changes() {
     auto r1 = moex_fast::run_inspector(opts1);
     auto r2 = moex_fast::run_inspector(opts2);
 
-    assert(r1.templates_info.sha256 != r2.templates_info.sha256);
+    CHECK(r1.templates_info.sha256 != r2.templates_info.sha256);
 
-    std::cout << "PASS: SHA-256 changes with different content\n";
+    TEST_PASS("SHA-256 changes with different content");
 }
 
 void test_file_size_correct() {
@@ -57,11 +57,10 @@ void test_file_size_correct() {
     opts.templates_path = "fixtures/size_test.xml";
 
     auto report = moex_fast::run_inspector(opts);
-    // File size should match the content length (approximately, may vary with line endings)
-    assert(report.templates_info.file_size > 0);
-    assert(report.templates_info.file_size < 1000);
+    CHECK(report.templates_info.file_size > 0);
+    CHECK(report.templates_info.file_size < 1000);
 
-    std::cout << "PASS: file size correct\n";
+    TEST_PASS("file size correct");
 }
 
 void test_path_recorded() {
@@ -70,12 +69,12 @@ void test_path_recorded() {
     opts.templates_path = "fixtures/synthetic_templates.xml";
 
     auto report = moex_fast::run_inspector(opts);
-    assert(!report.templates_info.path.empty());
-    assert(!report.configuration_info.path.empty());
-    assert(report.templates_info.path == opts.templates_path);
-    assert(report.configuration_info.path == opts.configuration_path);
+    CHECK(!report.templates_info.path.empty());
+    CHECK(!report.configuration_info.path.empty());
+    CHECK(report.templates_info.path == opts.templates_path);
+    CHECK(report.configuration_info.path == opts.configuration_path);
 
-    std::cout << "PASS: path recorded\n";
+    TEST_PASS("path recorded");
 }
 
 void test_no_xml_in_report() {
@@ -86,12 +85,11 @@ void test_no_xml_in_report() {
     auto report = moex_fast::run_inspector(opts);
     auto json = moex_fast::report_to_json(report);
 
-    // Report should not contain raw XML tags
-    assert(json.find("<template") == std::string::npos);
-    assert(json.find("<configuration") == std::string::npos);
-    assert(json.find("<source") == std::string::npos);
+    CHECK(json.find("<template") == std::string::npos);
+    CHECK(json.find("<configuration") == std::string::npos);
+    CHECK(json.find("<source") == std::string::npos);
 
-    std::cout << "PASS: no raw XML in report\n";
+    TEST_PASS("no raw XML in report");
 }
 
 void test_no_credentials_in_report() {
@@ -102,12 +100,30 @@ void test_no_credentials_in_report() {
     auto report = moex_fast::run_inspector(opts);
     auto json = moex_fast::report_to_json(report);
 
-    // Report should not contain credential-like strings
-    assert(json.find("password") == std::string::npos);
-    assert(json.find("secret") == std::string::npos);
-    assert(json.find("api_key") == std::string::npos);
+    CHECK(json.find("password") == std::string::npos);
+    CHECK(json.find("secret") == std::string::npos);
+    CHECK(json.find("api_key") == std::string::npos);
 
-    std::cout << "PASS: no credentials in report\n";
+    TEST_PASS("no credentials in report");
+}
+
+void test_independent_validation_status() {
+    // A configuration-only error should not mark templates validation failed
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/nonexistent.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+
+    auto report = moex_fast::run_inspector(opts);
+
+    // Templates parsed OK
+    CHECK(report.templates_info.parse_ok);
+    // Configuration failed to parse
+    CHECK(!report.configuration_info.parse_ok);
+
+    // Templates validation should be independent of configuration errors
+    CHECK(report.templates_info.validation_ok);
+
+    TEST_PASS("independent validation status");
 }
 
 }  // namespace
@@ -119,6 +135,7 @@ int main() {
     test_path_recorded();
     test_no_xml_in_report();
     test_no_credentials_in_report();
+    test_independent_validation_status();
 
     std::cout << "\nAll provenance tests PASSED.\n";
     return 0;
