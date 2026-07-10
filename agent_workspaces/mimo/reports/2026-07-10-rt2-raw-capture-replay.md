@@ -3,7 +3,7 @@
 Date: 2026-07-10  
 Branch: mimo/issue-18-rt2-raw-capture-replay  
 Pull Request: #20  
-Implementation commit: `8e9a61ef26d99a2b47b2d05fa354952797e46ec2`  
+Implementation commit: `d303d74` (code) / `395cfd4` (GCC fix)  
 Executor: MiMo Code
 
 ## Summary
@@ -33,6 +33,26 @@ All 10 Round 3 blockers addressed:
 9. **Replay summary digest**: `ReplayResult.summary.replay_sha256` populated via single streaming SHA-256 context in `replay_stream()`. Hard-coded independently derived MXREPLAY1 golden digest test. Rotation-invariance and metadata/payload change detection tests.
 
 10. **Fault/resource tests**: Filename mismatch, metadata/hash mismatch, duplicate/missing indexes, cross-segment monotonic, same-session multiple channels/sources, valid+partial semantics, 64 GiB rejection, checked arithmetic, callback stop, portable handling.
+
+## Round 4 Corrections
+
+All 8 Round 4 blockers addressed:
+
+1. **Cross-segment monotonic**: `validate_segment()` now returns first/last monotonic timestamps collected during the main validation pass (no second unsafe walk). `validate_stream_set()` compares `first_monotonic(current) >= last_monotonic(previous)`. Real negative fixture uses two separate writers to create decreasing boundary.
+
+2. **replay_stream numeric order**: Iterates validated sorted entries (not original input order). Derives digest from validated `metas[0]` (not caller-supplied meta). Reversed-input replay test proves callback order and digest are unchanged.
+
+3. **Partial blocks directory replay**: `replay_from_directory()` rejects any partial candidates. `replay_from_stream_set()` remains for explicitly resolved sets. Library valid+partial negative test.
+
+4. **Writer validates record_flags and monotonic**: Rejects unknown record flag bits. Rejects non-decreasing `capture_monotonic_ns`. Checked arithmetic for `next_capture_index_`, `current_segment_index_`, `record_count_`, `total_payload_bytes_`. CLI checked arithmetic for `records*segments` and synthetic timestamps.
+
+5. **Exact header and canonical filename**: `deserialize_header()` rejects trailing bytes inside `header_size`. `parse_canonical_filename()` rejects uppercase hex digits. Exact negative tests for both.
+
+6. **Report completeness**: Added source_id/channel_id/clock_domain/transport/source_side/configuration/templates/fingerprint SHA-256 to single-file and replay reports. Per-segment content/file hashes in stream summaries. Populated first/last UTC bounds. Added source/path to `RawValidationIssue`. Deterministic sort stream_sets by (session_id, source_id, channel_id). JSON tests parse actual values.
+
+7. **Real tests replace placeholders**: Hard-coded literal MXREPLAY1 SHA-256 (`2817df...`). Two real differently rotated segment sets with same digest. Real negative cross-segment monotonic fixture. Injectable rename failure via IFileSystem mock. Library valid+partial rejection. Uppercase/trailing-header rejection. Portable NUL vs /dev/null.
+
+8. **GCC -Werror fix**: Initialize all `RawValidationIssue` fields for `-Werror=missing-field-initializers`.
 
 ## Context Read
 

@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-2 Round 3 corrections — Issue #18 / PR #20
+Статус: RT-2 Round 4 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Архитектура
 
@@ -120,14 +120,14 @@ deterministic text/JSON reports;
 Windows/Linux Release-active tests.
 ```
 
-## RT-2 — Round 3 corrections complete
+## RT-2 — Round 4 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `8e9a61ef26d99a2b47b2d05fa354952797e46ec2`
-CI #51 (run 29111638220): ALL GREEN (7/7 jobs)
+Implementation commit: `d303d74` (code) / `395cfd4` (GCC fix)
+CI #53 (run 29115120530): ALL GREEN (7/7 jobs)
 ```
 
 Delivered:

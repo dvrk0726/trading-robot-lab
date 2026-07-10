@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Статус: gated engineering roadmap  
-Текущий gate: RT-2 Round 3 corrections — Issue #18 / PR #20
+Текущий gate: RT-2 Round 4 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Главный порядок
 
@@ -110,11 +110,11 @@ RT-1 deliberately excluded network, binary FAST decoding, recovery, books and or
 Current status:
 
 ```text
-Issue #18: READY_FOR_REVIEW (Round 3 corrections complete)
+Issue #18: READY_FOR_REVIEW (Round 4 corrections complete)
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `8e9a61ef26d99a2b47b2d05fa354952797e46ec2`
-CI #51 (run 29111638220): ALL GREEN (7/7 jobs)
+Implementation commit: `d303d74` (code) / `395cfd4` (GCC fix)
+CI #53 (run 29115120530): ALL GREEN (7/7 jobs)
 ```
 
 Delivered:
