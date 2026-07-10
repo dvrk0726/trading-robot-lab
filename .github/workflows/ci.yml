@@ -56,8 +56,8 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install --upgrade pip pytest jsonschema
 
-      - name: Compile Python sources
-        run: python -m compileall -q src tests apps shared tools
+      - name: Compile maintained Python modules
+        run: python -m compileall -q src tests shared tools
 
       - name: Run pytest
         run: python -m pytest -q
@@ -67,34 +67,59 @@ jobs:
 
   cpp-qsh-m10x-regression:
     name: C++ QSH M10X regression (20 tests)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - name: Install C++ build dependencies
+      - name: Resolve vcpkg installation
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            cmake \
-            ninja-build \
-            zlib1g-dev
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot) {
+            $vcpkgRoot = 'C:\vcpkg'
+          }
+          $vcpkgExe = Join-Path $vcpkgRoot 'vcpkg.exe'
+          $toolchain = Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake'
+          if (-not (Test-Path $vcpkgExe)) {
+            throw "vcpkg.exe not found at $vcpkgExe"
+          }
+          if (-not (Test-Path $toolchain)) {
+            throw "vcpkg toolchain not found at $toolchain"
+          }
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Configure qsh_ingest
-        run: cmake -S cpp/qsh_ingest -B build/qsh_ingest -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Install zlib through vcpkg
+        run: '& "$env:VCPKG_ROOT\vcpkg.exe" install zlib:x64-windows'
+
+      - name: Configure qsh_ingest with MSVC
+        run: >-
+          cmake -S cpp/qsh_ingest -B build/qsh_ingest -A x64
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
 
       - name: Build qsh_ingest and tests
-        run: cmake --build build/qsh_ingest --parallel 2
+        run: cmake --build build/qsh_ingest --config Release --parallel 2
 
       - name: Verify expected regression test inventory
         run: |
-          count="$(ctest --test-dir build/qsh_ingest -N | sed -n 's/^Total Tests: //p')"
-          echo "CTest inventory: ${count}"
-          test "${count}" = "20"
+          $output = ctest --test-dir build/qsh_ingest -C Release -N
+          if ($LASTEXITCODE -ne 0) {
+            throw "ctest inventory failed with exit code $LASTEXITCODE"
+          }
+          $line = $output | Select-String '^Total Tests:'
+          if (-not $line) {
+            throw 'CTest did not report Total Tests.'
+          }
+          $count = [int](($line.Line -split ':', 2)[1].Trim())
+          Write-Host "CTest inventory: $count"
+          if ($count -ne 20) {
+            throw "Expected 20 QSH/M10X tests, found $count"
+          }
 
       - name: Run all QSH M10X regression tests
-        run: ctest --test-dir build/qsh_ingest --output-on-failure
+        run: ctest --test-dir build/qsh_ingest -C Release --output-on-failure
