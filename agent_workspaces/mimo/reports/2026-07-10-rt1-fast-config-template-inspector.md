@@ -1,10 +1,10 @@
 # RT-1 Implementation Report — FAST Configuration/Template Inspector
 
-Date: 2026-07-10 (Round 7 corrections)  
+Date: 2026-07-10 (Round 8 corrections)  
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
-Implementation commit: `8d8e7f5234448fe1f8accb14888fda4697774d92`  
-CI run: 28 (run id `29096554638`): all five jobs passed.  
+Implementation commit: (pending — will be recorded in evidence commit after CI)  
+CI run: (pending)  
 Executor: MiMo Code
 
 ## Summary
@@ -29,7 +29,21 @@ All blocking corrections from Architecture/Review Round 5 have been addressed:
 
 7. **Profile test fixtures and tests.** Created `synthetic_templates_130.xml` for spectra-1.30 profile. Added 11 new tests: length wire type, strict valid, auto-detection (1.29/1.30), explicit override, mismatch warning/error, text report, mixed profile negative, wrong name negative.
 
-## Round 7 Corrections Applied
+## Round 8 Corrections Applied
+
+All blocking corrections from Architecture/Review Round 8 have been addressed:
+
+1. **Self-contained test fixtures.** `test_round6_explicit_130_on_ambiguous()` no longer depends on `r6_ambiguous.xml` created by the preceding test. Extracted `write_r6_ambiguous_fixture()` helper called by both `test_round6_explicit_129_on_ambiguous()` and `test_round6_explicit_130_on_ambiguous()`. Every Round 6/7 test now creates its own fixture independently — no test depends on execution order or side effects of another test.
+
+2. **Retained portable CLI test.** The dedicated `test_invalid_profile_value` in `test_cli.cpp` remains the sole portable CLI test for invalid `--profile` values. No duplicate in `test_deterministic_report.cpp`.
+
+3. **All other Round 6/7 tests verified independent.** Each Round 6 and Round 7 test creates its own temp file with a unique filename. No additional order dependencies found.
+
+4. **Project state files synchronized.** `AI_CONTEXT.md`, `PROJECT_STATE.md`, and `ROADMAP.md` updated to Round 8 with implementation-commit/verified-CI evidence model.
+
+5. **Report evidence corrected.** Stale CI run 24 reference replaced. Architecture test counts corrected to match actual codebase (39 deterministic report tests, 12 CLI tests).
+
+## Round 7 Corrections Applied (retained)
 
 All blocking corrections from Architecture/Review Round 7 have been addressed:
 
@@ -291,9 +305,9 @@ cpp/moex_fast/
     test_template_parser.cpp (17 tests)
     test_config_parser.cpp (24 tests)
     test_provenance.cpp (7 tests)
-    test_deterministic_report.cpp (31 tests)
+    test_deterministic_report.cpp (39 tests)
     test_resource_safety.cpp (8 tests)
-    test_cli.cpp (11 tests)
+    test_cli.cpp (12 tests)
     fixtures/
       synthetic_configuration.xml  — Authored deterministic fixture
       synthetic_templates.xml      — Authored deterministic fixture
@@ -307,12 +321,8 @@ cpp/moex_fast/
 
 ## CI Evidence
 
-CI run #24 on commit `37e13e9` (code `1d8b12a703ba4860262210ff430cb7ff10c5d2f6`):
-- C++ MOEX FAST inspector Windows (6 tests): PASS
-- C++ MOEX FAST inspector Linux (6 tests): PASS
-- C++ QSH M10X regression (20 tests): PASS
-- Python tests and contracts: PASS
-- Repository hygiene: PASS
+Implementation commit: (pending — recorded in evidence commit after CI verification)  
+CI run: (pending)
 
 ## Integration Check
 
@@ -341,6 +351,16 @@ build\moex_fast\Release\moex-fast-inspect.exe --configuration <path\T0-configura
 ## Main Protection
 
 Option B active. MiMo does not merge PRs or push to main.
+
+## Files Changed (Round 8)
+
+```
+MODIFIED: cpp/moex_fast/tests/test_deterministic_report.cpp (extracted write_r6_ambiguous_fixture helper, both 129/130 tests self-contained)
+MODIFIED: agent_workspaces/mimo/reports/2026-07-10-rt1-fast-config-template-inspector.md
+MODIFIED: AI_CONTEXT.md
+MODIFIED: PROJECT_STATE.md
+MODIFIED: ROADMAP.md
+```
 
 ## Files Changed (Round 7)
 

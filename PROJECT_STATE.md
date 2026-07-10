@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-1 Round 7 corrections applied, READY_FOR_REVIEW
+Статус: RT-1 Round 8 corrections applied, READY_FOR_REVIEW
 
 ## Архитектура
 
@@ -113,12 +113,12 @@ Main protection: Option B active.
 
 ```text
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: READY_FOR_REVIEW (Round 7 corrections applied)
+Status: READY_FOR_REVIEW (Round 8 corrections applied)
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Implementation commit: 8d8e7f5 (8d8e7f5234448fe1f8accb14888fda4697774d92)
-CI run: 28 (29096554638): all five jobs passed.
-Review cycle: Round 7 CHANGES_REQUIRED → Round 7 corrections applied
+Implementation commit: (pending — recorded in evidence commit after CI)
+CI run: (pending)
+Review cycle: Round 8 CHANGES_REQUIRED → Round 8 corrections applied
 ```
 
 RT-1 task package:
@@ -150,15 +150,14 @@ No second MiMo task starts while the previous task is in progress, review or cha
 ## Immediate next actions
 
 ```text
-1. Round 7 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
-2. auto+ambiguous/unknown => selected_profile=none; no version-specific checks without evidence.
-3. Wrong-name ID 47/48 => ambiguous (not unknown); mismatch under all modes.
-4. Strict mode + unresolved compatibility => invalid.
-5. Shared template checks separated from version-specific required pairs.
-6. 9 new Round 7 tests added; 107 total tests pass on Windows and Linux.
-7. CI run 28 (29096554638): all five jobs passed.
-8. Issue #14 and PR #16 updated with actual head SHA and CI run, moved to READY_FOR_REVIEW.
-9. Stop — do not merge, do not start RT-2.
+1. Round 8 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
+2. test_round6_explicit_130_on_ambiguous now creates its own fixture via write_r6_ambiguous_fixture() helper.
+3. All Round 6/7 tests verified independent — no order dependencies.
+4. Portable CLI test for invalid --profile retained only in test_cli.cpp.
+5. State files synchronized to Round 8 with implementation-commit/verified-CI evidence model.
+6. MiMo report: stale run 24 replaced, architecture test counts corrected (39 deterministic, 12 CLI).
+7. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
+8. Stop — do not merge, do not start RT-2.
 ```
 
 ## Explicit non-goals now

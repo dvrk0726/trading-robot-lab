@@ -91,13 +91,13 @@ main protection option guide.
 Status:
 
 ```text
-READY_FOR_REVIEW (Round 6 corrections applied)
+READY_FOR_REVIEW (Round 8 corrections applied)
 Issue #14
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Head: f4ecf9a (code: f4ecf9a1478bbdbc7a8b7931caa82f7bff9b8e90)
+Head: (pending — implementation commit SHA recorded in evidence commit after CI)
 CI run: (pending)
-Review cycle: Round 6 CHANGES_REQUIRED → Round 6 corrections applied
+Review cycle: Round 8 CHANGES_REQUIRED → Round 8 corrections applied
 ```
 
 Scope:
@@ -228,12 +228,12 @@ production remains disabled by default.
 ## Immediate sequence
 
 ```text
-1. Round 6 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
-2. Profile logic hardened: always auto-detect, separate detected/requested/selected/evidence.
-3. spectra-1.29 rejects conflicting 1.30 evidence (ID 48, wrong-name ID 47/48).
-4. CLI validates --profile values; unsupported values rejected.
-5. 6 new Round 6 tests added; all 99 tests pass on Windows.
-6. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
-7. Push to PR #16, Issue #14 moved to READY_FOR_REVIEW.
+1. Round 8 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
+2. test_round6_explicit_130_on_ambiguous now creates its own fixture via write_r6_ambiguous_fixture() helper.
+3. All Round 6/7 tests verified independent — no order dependencies.
+4. Portable CLI test for invalid --profile retained only in test_cli.cpp.
+5. State files synchronized to Round 8 with implementation-commit/verified-CI evidence model.
+6. MiMo report: stale run 24 replaced, architecture test counts corrected (39 deterministic, 12 CLI).
+7. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
 8. Stop — do not merge, do not start RT-2.
 ```

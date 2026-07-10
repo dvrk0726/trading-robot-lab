@@ -526,6 +526,22 @@ void test_length_no_unknown_wire_type_issue() {
 
 // --- Round 6 tests ---
 
+// Self-contained fixture helper: ambiguous artifact with both ID 40 and ID 47 SecurityDefinition.
+// Called by each test that needs this fixture so no test depends on another's side effects.
+static void write_r6_ambiguous_fixture() {
+    write_temp_file("r6_ambiguous.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='40' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='47' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "</templates>");
+}
+
 void test_round6_129_plus_id48_negative() {
     // 1.29 required templates + ID 48 SecurityStatus => mixed/mismatch
     write_temp_file("r6_129_plus_id48.xml",
@@ -579,17 +595,7 @@ void test_round6_id40_wrong_name_id47_id48_negative() {
 
 void test_round6_explicit_129_on_ambiguous() {
     // explicit 1.29 override on an ambiguous artifact => mismatch; strict invalid
-    write_temp_file("r6_ambiguous.xml",
-        "<templates>"
-        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
-        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
-        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
-        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
-        "  <template id='40' name='SecurityDefinition'><uInt32 name='X'/></template>"
-        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
-        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
-        "  <template id='47' name='SecurityDefinition'><uInt32 name='X'/></template>"
-        "</templates>");
+    write_r6_ambiguous_fixture();
 
     // Non-strict
     {
@@ -623,11 +629,13 @@ void test_round6_explicit_129_on_ambiguous() {
 
 void test_round6_explicit_130_on_ambiguous() {
     // explicit 1.30 override on an ambiguous artifact => mismatch; strict invalid
+    write_r6_ambiguous_fixture();
+
     // Non-strict
     {
         moex_fast::InspectorOptions opts;
         opts.configuration_path = "fixtures/synthetic_configuration.xml";
-        opts.templates_path = temp_path("r6_ambiguous.xml");  // re-use from above
+        opts.templates_path = temp_path("r6_ambiguous.xml");
         opts.profile = "spectra-1.30";
 
         auto report = moex_fast::run_inspector(opts);
