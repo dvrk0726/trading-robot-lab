@@ -110,9 +110,37 @@ struct RawValidationIssue {
     std::string message;
 };
 
+struct RawStreamSummary {
+    std::string session_id_hex;
+    std::uint64_t source_id = 0;
+    std::uint64_t channel_id = 0;
+    std::string feed_group;
+    std::string endpoint_role;
+    std::string source_label;
+    std::string clock_domain;
+    std::string transport;
+    std::string source_side;
+    std::string configuration_sha256;
+    std::string templates_sha256;
+    std::string endpoint_fingerprint_sha256;
+    std::string stream_key;
+    std::vector<std::uint64_t> segment_indexes;
+    std::vector<std::uint64_t> segment_sizes;
+    std::string content_sha256;
+    std::string file_sha256;
+    std::uint64_t record_count = 0;
+    std::uint64_t total_payload_bytes = 0;
+    std::uint64_t first_capture_index = 0;
+    std::uint64_t last_capture_index = 0;
+    std::uint64_t first_capture_utc_ns = 0;
+    std::uint64_t last_capture_utc_ns = 0;
+    std::string status;
+};
+
 struct RawSegmentReport {
     std::string schema_version = "1.0";
     std::string tool_version = "0.1.0";
+    std::string format_version = "1";
     std::string operation;
     std::vector<std::string> input_paths;
     std::string session_id_hex;
@@ -133,6 +161,7 @@ struct RawSegmentReport {
     std::vector<RawValidationIssue> issues;
     std::string replay_sha256;
     std::string overall_status;  // valid, warning, invalid
+    std::vector<RawStreamSummary> stream_sets;
 };
 
 // --- Serialization helpers ---
@@ -174,6 +203,17 @@ std::string canonical_filename(const std::uint8_t session_id[16], std::uint64_t 
 
 // Parse segment index from filename
 bool parse_segment_index_from_filename(const std::string& filename, std::uint64_t& segment_index);
+
+// Parsed canonical filename components
+struct ParsedFilename {
+    std::uint8_t session_id[16]{};
+    std::uint64_t source_id = 0;
+    std::uint64_t channel_id = 0;
+    std::uint64_t segment_index = 0;
+};
+
+// Parse full canonical filename. Returns false on any malformed input.
+bool parse_canonical_filename(const std::string& filename, ParsedFilename& parsed);
 
 // SHA-256 hex from 32 bytes
 std::string sha256_bytes_to_hex(const std::uint8_t hash[32]);

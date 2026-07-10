@@ -3,24 +3,36 @@
 Date: 2026-07-10  
 Branch: mimo/issue-18-rt2-raw-capture-replay  
 Pull Request: #20  
-Implementation commit: `110360bb756e5b1f7f8bc37c6dc1aab536c077b2`  
+Implementation commit: (see Round 3 implementation commit below)  
 Executor: MiMo Code
 
 ## Summary
 
 Implemented the first offline raw-market-data source-of-truth layer under `cpp/moex_raw/`. Creates versioned immutable `.mxraw` segments with deterministic synthetic data. No network access, no FAST decode, no real capture.
 
-## Round 2 Corrections
+## Round 3 Corrections
 
-All 7 Round 2 blockers addressed:
+All 10 Round 3 blockers addressed:
 
-1. **GCC sign-compare fix**: Cast `int` literal to `std::size_t` in `strings.cpp:71` to resolve `-Werror=sign-compare` on GCC 13.
-2. **Single SHA-256 replay context**: Removed `full_buf` and second replay pass. Initialize one `SHA256Ctx` with canonical `MXREPLAY1` metadata prefix, update it for each record in the single streaming callback, finalize after successful replay.
-3. **Directory discovery**: `group_stream_sets()` now reports every `.mxraw` and `.mxraw.partial` candidate. Unreadable, malformed, corrupt, unsupported and partial entries produce explicit issues. Corrupt entries in discovery cause non-zero replay exit.
-4. **Session selection contract**: Added `replay_from_stream_set()` accepting fully resolved `StreamSetInfo`. CLI uses full `(session_id, source_id, channel_id)` key. Removed ignored second replay.
-5. **64-bit file position**: Replaced `std::fseek`/`std::ftell` with `std::filesystem::file_size` + portable `fseek64`/`ftell64` (uses `_fseeki64`/`_ftelli64` on Windows, `fseek` on Linux) for 64 GiB limit support.
-6. **Short-read completion checks**: File SHA-256 loop now returns `IoError` on short read instead of silently breaking. Content SHA-256 loop already required exact completion.
-7. **New tests**: Resource boundedness (1000-record replay with no accumulation), directory discovery (corrupt, partial, two-session ambiguity), CLI e2e (valid+corrupt, valid+partial, ambiguity rejection), explicit session selection via `replay_from_stream_set`.
+1. **Complete stream-set validation**: Added `parse_canonical_filename()` for strict canonical filename parsing. `validate_stream_set()` now parses filenames, compares filename identity with content identity, sorts numerically by parsed segment index, rejects duplicate/missing indexes, compares all metadata fields (feed_group, endpoint_role, source_label, clock_domain, transport, source_side) and all three provenance hashes, and enforces monotonic timestamp across segment boundaries.
+
+2. **Per-stream directory inspection**: `cmd_inspect()` now generates independent `RawStreamSummary` entries per stream set in both text and JSON reports. Each stream has its own metadata, counts, hashes and status. Independent streams are not merged.
+
+3. **Strict replay ambiguity**: `matches.size() != 1` after selectors now always fails as ambiguous (same-session different source/channel included). `replay_from_directory()` is deprecated but kept as a safe wrapper that fails on any ambiguity.
+
+4. **Partial file blocks replay**: `.mxraw.partial` files cause non-zero replay exit. `inspect --strict` fails on partial files. Non-strict inspect reports partial as warning.
+
+5. **Writer metadata validation**: `validate_metadata()` called before file creation in `open()`. Validates non-zero IDs/hashes/time, supported enums, UTF-8/no-NUL/128-byte strings, non-empty required strings, exact header <=4096. `write_length_string()` returns false on oversized strings (no silent truncation).
+
+6. **Hard 64 GiB cap**: Enforced regardless of `max_segment_bytes=0`. Reader rejects files above 64 GiB. Checked arithmetic for segment/capture indexes, counts, bytes. CLI rejects negative/signed/whitespace numeric strings.
+
+7. **Status classification fixed**: Unsupported version returns `SegmentStatus::Unsupported`. Footer magic checked at correct position (start of 92-byte footer, not EOF-8). Distinguishes unsupported, partial, truncated, corrupt and I/O error.
+
+8. **Expanded report schema**: Added `format_version`, full source metadata (clock_domain, transport, source_side, all three hashes), per-stream summaries (`stream_sets[]`), actual timestamp bounds, issue source/path.
+
+9. **Replay summary digest**: `ReplayResult.summary.replay_sha256` populated via single streaming SHA-256 context in `replay_stream()`. Hard-coded independently derived MXREPLAY1 golden digest test. Rotation-invariance and metadata/payload change detection tests.
+
+10. **Fault/resource tests**: Filename mismatch, metadata/hash mismatch, duplicate/missing indexes, cross-segment monotonic, same-session multiple channels/sources, valid+partial semantics, 64 GiB rejection, checked arithmetic, callback stop, portable handling.
 
 ## Context Read
 
@@ -41,29 +53,36 @@ All 7 Round 2 blockers addressed:
 
 ## What Was Implemented
 
-- C++20/CMake module `cpp/moex_raw/` with library, CLI and 15 test executables
+- C++20/CMake module `cpp/moex_raw/` with library, CLI and 16 test executables
 - v1 binary segment contract: `MXRAWV1\0` preamble, segment metadata, `REC1` packet records, `MXENDV1\0` footer
-- Pure C++ CRC32C (Castagnoli) with known vectors: `CRC32C("")=0x00000000`, `CRC32C("123456789")=0xE3069283`
+- Pure C++ CRC32C (Castagnoli) with known vectors
 - Pure C++ SHA-256 with streaming context for incremental hashing
 - Little-endian serialization primitives with checked add/multiply overflow detection
 - UTF-8 string validation (128-byte limit, no embedded NUL, proper encoding)
-- `RawSegmentWriter` with `.mxraw.partial` -> finalized lifecycle via same-directory rename
-- Deterministic rotation by `max_records_per_segment` and `max_segment_bytes`
-- `RawSegmentReader`/validator with bounded streaming parsing
-- Stream-set validation: contiguous segment/capture indexes, metadata consistency
+- `RawSegmentWriter` with `.mxraw.partial` -> finalized lifecycle
+- Writer metadata validation before file creation (all IDs, hashes, enums, strings, header size)
+- Hard 64 GiB segment cap enforced regardless of rotation policy
+- `write_length_string` rejects oversized strings (no silent truncation)
+- Bounded streaming reader/validator with checked arithmetic
+- Canonical filename parsing and filename/content identity comparison
+- Stream-set validation: numeric sorting, duplicate/missing detection, full metadata/hash equality, monotonic timestamp across boundaries
 - Directory grouping by `(session_id, source_id, channel_id)` with full candidate reporting
-- Deterministic replay callback with `MXREPLAY1\0` canonical digest framing (single SHA-256 context)
-- `replay_from_stream_set()` for explicit session selection without ambiguity
-- CLI: `moex-raw synth`, `moex-raw inspect`, `moex-raw replay`
-- JSON/text report generation with stable key order
-- Portable 64-bit file position for 64 GiB limit support
+- Per-stream independent summaries in text and JSON reports
+- Expanded report schema with format_version, source metadata, provenance hashes, per-stream summaries
+- Deterministic replay callback with `MXREPLAY1\0` canonical digest (single streaming SHA-256 context)
+- `replay_from_stream_set()` for explicit session selection
+- `replay_from_directory()` deprecated as safe wrapper that fails on any ambiguity
+- CLI: `moex-raw synth`, `moex-raw inspect`, `moex-raw replay` with strict numeric/hex validation
+- Status classification: unsupported, partial, truncated, corrupt, I/O error
+- Portable 64-bit file position
+- Independent golden MXREPLAY1 digest test
 
 ## What Was Intentionally Not Implemented
 
-- No socket, multicast or real UDP/TCP capture (non-goal per spec)
+- No socket, multicast or real UDP/TCP capture
 - No FAST binary decode (deferred to RT-3)
 - No exchange sequence extraction from payload
-- No A/B deduplication or recovery (deferred to RT-4)
+- No A/B deduplication or recovery
 - No book building
 - No database/object-storage integration
 - No pcap/pcapng dependency
@@ -73,41 +92,19 @@ All 7 Round 2 blockers addressed:
 ## Files Changed
 
 ```text
-A  cpp/moex_raw/CMakeLists.txt
-A  cpp/moex_raw/README.md
-A  cpp/moex_raw/include/moex_raw/crc32c.hpp
-A  cpp/moex_raw/include/moex_raw/endian.hpp
-A  cpp/moex_raw/include/moex_raw/file_position.hpp          (Round 2)
-M  cpp/moex_raw/include/moex_raw/raw_replay.hpp             (Round 2: +replay_from_stream_set)
-A  cpp/moex_raw/include/moex_raw/raw_report.hpp
-M  cpp/moex_raw/include/moex_raw/raw_segment.hpp            (Round 2: group_stream_sets signature)
-A  cpp/moex_raw/include/moex_raw/raw_types.hpp
-A  cpp/moex_raw/include/moex_raw/sha256.hpp
-A  cpp/moex_raw/include/moex_raw/strings.hpp
-A  cpp/moex_raw/src/crc32c.cpp
-A  cpp/moex_raw/src/endian.cpp
-M  cpp/moex_raw/src/main.cpp                                (Round 2: single SHA256, discovery issues)
-M  cpp/moex_raw/src/raw_replay.cpp                          (Round 2: 64-bit seek, stream_set API)
-A  cpp/moex_raw/src/raw_report.cpp
-M  cpp/moex_raw/src/raw_segment_reader.cpp                  (Round 2: 64-bit, short-read, discovery)
-A  cpp/moex_raw/src/raw_segment_writer.cpp
-A  cpp/moex_raw/src/raw_types.cpp
-A  cpp/moex_raw/src/sha256.cpp
-M  cpp/moex_raw/src/strings.cpp                             (Round 2: sign-compare fix)
-M  cpp/moex_raw/tests/test_cli.cpp                          (Round 2: +corrupt/partial/ambiguity tests)
-A  cpp/moex_raw/tests/test_crc32c.cpp
-A  cpp/moex_raw/tests/test_endian.cpp
-A  cpp/moex_raw/tests/test_footer_validation.cpp
-A  cpp/moex_raw/tests/test_header_contract.cpp
-A  cpp/moex_raw/tests/test_json_report.cpp
-A  cpp/moex_raw/tests/test_record_contract.cpp
-A  cpp/moex_raw/tests/test_replay.cpp
-M  cpp/moex_raw/tests/test_resource_safety.cpp              (Round 2: +bounded memory, discovery, sessions)
-A  cpp/moex_raw/tests/test_rotation.cpp
-M  cpp/moex_raw/tests/test_stream_set.cpp                   (Round 2: +partial reporting)
-A  cpp/moex_raw/tests/test_strings.cpp
-A  cpp/moex_raw/tests/test_writer_lifecycle.cpp
-M  .gitignore
+M  cpp/moex_raw/include/moex_raw/strings.hpp             (Round 3: write_length_string returns bool)
+M  cpp/moex_raw/include/moex_raw/raw_types.hpp           (Round 3: ParsedFilename, RawStreamSummary, report fields)
+M  cpp/moex_raw/include/moex_raw/raw_replay.hpp          (Round 3: deprecated replay_from_directory comment)
+M  cpp/moex_raw/src/strings.cpp                          (Round 3: write_length_string overflow check)
+M  cpp/moex_raw/src/raw_types.cpp                        (Round 3: parse_canonical_filename, serialize_header checks)
+M  cpp/moex_raw/src/raw_segment_writer.cpp               (Round 3: validate_metadata, hard 64 GiB cap, checked arithmetic)
+M  cpp/moex_raw/src/raw_segment_reader.cpp               (Round 3: filename parsing, sorting, metadata/hash equality, monotonic, classification)
+M  cpp/moex_raw/src/raw_replay.cpp                       (Round 3: streaming SHA-256 in replay_stream, strict ambiguity)
+M  cpp/moex_raw/src/raw_report.cpp                       (Round 3: per-stream summaries, expanded schema)
+M  cpp/moex_raw/src/main.cpp                             (Round 3: per-stream inspect, strict replay, partial blocking, number validation)
+M  cpp/moex_raw/tests/test_resource_safety.cpp           (Round 3: canonical filename for corrupt test)
+A  cpp/moex_raw/tests/test_round3.cpp                    (Round 3: golden digest, filename mismatch, sorting, dup/missing, ambiguity, partial, metadata validation, 64 GiB, classification, report schema, callback stop)
+M  cpp/moex_raw/CMakeLists.txt                           (Round 3: +test_round3)
 ```
 
 ## Commands Run
@@ -135,10 +132,10 @@ python -m pytest -q
 python tools/check_repository_hygiene.py
 ```
 
-## Local Test Results (Round 2)
+## Local Test Results (Round 3)
 
 ```text
-RT-2 (15/15 passed, Windows Release):
+RT-2 (16/16 passed, Windows Release):
   test_crc32c .............. Passed
   test_endian .............. Passed
   test_strings ............. Passed
@@ -154,6 +151,7 @@ RT-2 (15/15 passed, Windows Release):
   test_resource_safety ..... Passed
   test_golden_record_layout  Passed
   test_content_sha256_e2e .. Passed
+  test_round3 .............. Passed
 
 RT-1 (6/6 passed, no regression):
   test_template_parser ..... Passed
@@ -167,7 +165,7 @@ QSH/M10X (20/20 passed, no regression)
 
 Python (3/3 passed)
 Shared schemas (5/5 valid)
-Repository hygiene: PASS (275 files)
+Repository hygiene: PASS (276 files)
 ```
 
 ## Compiler
@@ -178,29 +176,6 @@ Windows SDK 10.0.22621.0
 CMake 4.3
 C++20 / Release / x64
 ```
-
-## GitHub Actions
-
-```text
-CI #43 (run 29107532103): ALL GREEN
-  C++ MOEX RAW Linux/GCC (15 tests): PASSED
-  C++ MOEX RAW Windows/MSVC (15 tests): PASSED
-  C++ MOEX FAST inspector Linux (6 tests): PASSED
-  C++ MOEX FAST inspector Windows (6 tests): PASSED
-  C++ QSH M10X regression (20 tests): PASSED
-  Python tests and contracts: PASSED
-  Repository hygiene: PASSED
-```
-
-## Repository Hygiene Evidence
-
-- [x] `python tools/check_repository_hygiene.py` passed
-- [x] No `.env`, keys, credentials or personal data
-- [x] No official XML or owner connection parameters
-- [x] No QSH/FAST/pcap/raw market data
-- [x] No databases, binaries or build directories
-- [x] No oversized tracked files
-- [x] `.mxraw` and `.mxraw.partial` added to `.gitignore`
 
 ## Safety and Architecture Check
 

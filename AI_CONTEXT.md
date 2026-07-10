@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-2 Round 2 corrections — Issue #18 / PR #20
+Текущий gate: RT-2 Round 3 corrections — Issue #18 / PR #20
 
 ## Назначение проекта
 
@@ -134,36 +134,45 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — Round 2 corrections complete
+## RT-2 — Round 3 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `110360bb756e5b1f7f8bc37c6dc1aab536c077b2`
-CI #44 (run 29107791559): ALL GREEN (7/7 jobs)
+Implementation commit: (pending — see PR #20 for final head)
+CI: pending
 ```
 
-Round 2 corrections delivered:
+Round 3 corrections delivered:
 
 ```text
-GCC sign-compare fix (strings.cpp:71);
-single SHA-256 replay context (no full_buf, no second replay);
-directory discovery reports all .mxraw/.mxraw.partial candidates;
-replay_from_stream_set() for explicit session selection;
-portable 64-bit file position (fseek64/ftell64 for 64 GiB limit);
-short-read completion checks (IoError on premature EOF);
-new tests: resource boundedness, directory discovery, two-session, ambiguity rejection.
+complete stream-set validation (filename parsing, content identity, numeric sorting,
+  duplicate/missing indexes, full metadata/hash equality, cross-segment monotonic);
+per-stream independent summaries in directory inspection;
+strict replay ambiguity (matches.size() != 1 always fails);
+partial file blocks replay;
+writer metadata validation before file creation (UTF-8/NUL/128-byte strings, IDs,
+  timestamps, hashes, enums, header <=4096);
+write_length_string rejects oversized strings;
+hard 64 GiB cap regardless of max_segment_bytes=0;
+checked arithmetic for indexes, counts, bytes;
+reject negative/signed/whitespace numbers in CLI;
+status classification fixed (Unsupported, footer magic at correct position);
+expanded report schema (format_version, source metadata, provenance hashes, per-stream summaries);
+ReplayResult.summary.replay_sha256 via single streaming SHA-256 context;
+independent golden MXREPLAY1 digest test;
+16/16 Release tests (Windows + Linux).
 ```
 
 Test results:
 
 ```text
-RT-2:         15/15 tests passed (Windows Release)
+RT-2:         16/16 tests passed (Windows Release)
 RT-1:          6/6  tests passed (no regression)
 QSH/M10X:     20/20 tests passed (no regression)
 Python:         3/3  passed
-Hygiene:        PASS (275 files checked)
+Hygiene:        PASS (276 files checked)
 ```
 
 ## Future FIX architecture
@@ -186,7 +195,7 @@ DONE
 ## Immediate actions
 
 ```text
-1. Owner reviews RT-2 Round 1 corrections in PR #20.
+1. Owner reviews RT-2 Round 3 corrections in PR #20.
 2. If accepted, merge PR #20.
 3. Move Issue #18 to DONE.
 4. Do not start RT-3 until RT-2 is DONE.

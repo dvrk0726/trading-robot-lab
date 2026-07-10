@@ -34,6 +34,76 @@ std::string indent(int level) {
     return std::string(level * 2, ' ');
 }
 
+std::string clock_domain_str(ClockDomain cd) {
+    switch (cd) {
+        case ClockDomain::Synthetic: return "synthetic";
+        case ClockDomain::SystemMonotonicReceive: return "system_monotonic_receive";
+        case ClockDomain::HardwareReceive: return "hardware_receive";
+        default: return "unknown";
+    }
+}
+
+std::string transport_str(Transport t) {
+    switch (t) {
+        case Transport::Synthetic: return "synthetic";
+        case Transport::Udp: return "udp";
+        case Transport::Tcp: return "tcp";
+        default: return "unknown";
+    }
+}
+
+std::string source_side_str(SourceSide s) {
+    switch (s) {
+        case SourceSide::None: return "none";
+        case SourceSide::A: return "A";
+        case SourceSide::B: return "B";
+        default: return "unknown";
+    }
+}
+
+void emit_stream_summary_json(std::ostringstream& oss, const RawStreamSummary& ss, int il,
+                              const std::string& nl, const std::string& sep) {
+    oss << indent(il) << "{" << nl;
+    oss << indent(il + 1) << json_escape("session_id") << ": " << json_escape(ss.session_id_hex) << sep;
+    oss << indent(il + 1) << json_escape("source_id") << ": " << ss.source_id << sep;
+    oss << indent(il + 1) << json_escape("channel_id") << ": " << ss.channel_id << sep;
+    oss << indent(il + 1) << json_escape("feed_group") << ": " << json_escape(ss.feed_group) << sep;
+    oss << indent(il + 1) << json_escape("endpoint_role") << ": " << json_escape(ss.endpoint_role) << sep;
+    oss << indent(il + 1) << json_escape("source_label") << ": " << json_escape(ss.source_label) << sep;
+    oss << indent(il + 1) << json_escape("clock_domain") << ": " << json_escape(ss.clock_domain) << sep;
+    oss << indent(il + 1) << json_escape("transport") << ": " << json_escape(ss.transport) << sep;
+    oss << indent(il + 1) << json_escape("source_side") << ": " << json_escape(ss.source_side) << sep;
+    oss << indent(il + 1) << json_escape("configuration_sha256") << ": " << json_escape(ss.configuration_sha256) << sep;
+    oss << indent(il + 1) << json_escape("templates_sha256") << ": " << json_escape(ss.templates_sha256) << sep;
+    oss << indent(il + 1) << json_escape("endpoint_fingerprint_sha256") << ": " << json_escape(ss.endpoint_fingerprint_sha256) << sep;
+    oss << indent(il + 1) << json_escape("stream_key") << ": " << json_escape(ss.stream_key) << sep;
+
+    oss << indent(il + 1) << json_escape("segment_indexes") << ": [";
+    for (std::size_t i = 0; i < ss.segment_indexes.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << ss.segment_indexes[i];
+    }
+    oss << "]" << sep;
+
+    oss << indent(il + 1) << json_escape("segment_sizes") << ": [";
+    for (std::size_t i = 0; i < ss.segment_sizes.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << ss.segment_sizes[i];
+    }
+    oss << "]" << sep;
+
+    oss << indent(il + 1) << json_escape("content_sha256") << ": " << json_escape(ss.content_sha256) << sep;
+    oss << indent(il + 1) << json_escape("file_sha256") << ": " << json_escape(ss.file_sha256) << sep;
+    oss << indent(il + 1) << json_escape("record_count") << ": " << ss.record_count << sep;
+    oss << indent(il + 1) << json_escape("total_payload_bytes") << ": " << ss.total_payload_bytes << sep;
+    oss << indent(il + 1) << json_escape("first_capture_index") << ": " << ss.first_capture_index << sep;
+    oss << indent(il + 1) << json_escape("last_capture_index") << ": " << ss.last_capture_index << sep;
+    oss << indent(il + 1) << json_escape("first_capture_utc_ns") << ": " << ss.first_capture_utc_ns << sep;
+    oss << indent(il + 1) << json_escape("last_capture_utc_ns") << ": " << ss.last_capture_utc_ns << sep;
+    oss << indent(il + 1) << json_escape("status") << ": " << json_escape(ss.status);
+    oss << nl << indent(il) << "}";
+}
+
 }  // namespace
 
 std::string generate_json_report(const RawSegmentReport& report, bool pretty) {
@@ -47,6 +117,7 @@ std::string generate_json_report(const RawSegmentReport& report, bool pretty) {
     // Schema/tool/format versions
     oss << indent(il) << json_escape("schema_version") << ": " << json_escape(report.schema_version) << sep;
     oss << indent(il) << json_escape("tool_version") << ": " << json_escape(report.tool_version) << sep;
+    oss << indent(il) << json_escape("format_version") << ": " << json_escape(report.format_version) << sep;
     oss << indent(il) << json_escape("operation") << ": " << json_escape(report.operation) << sep;
 
     // Input paths
@@ -109,6 +180,16 @@ std::string generate_json_report(const RawSegmentReport& report, bool pretty) {
     // Replay digest
     oss << indent(il) << json_escape("replay_sha256") << ": " << json_escape(report.replay_sha256) << sep;
 
+    // Per-stream summaries
+    oss << indent(il) << json_escape("stream_sets") << ": [";
+    for (std::size_t i = 0; i < report.stream_sets.size(); ++i) {
+        if (i > 0) oss << ",";
+        oss << nl;
+        emit_stream_summary_json(oss, report.stream_sets[i], il + 1, nl, sep);
+    }
+    if (!report.stream_sets.empty()) oss << nl << indent(il);
+    oss << "]" << sep;
+
     // Overall status
     oss << indent(il) << json_escape("overall_status") << ": " << json_escape(report.overall_status);
 
@@ -120,6 +201,7 @@ std::string generate_text_report(const RawSegmentReport& report) {
     std::ostringstream oss;
 
     oss << "=== MXRaw Segment Report ===\n";
+    oss << "Format Version: " << report.format_version << "\n";
     oss << "Operation: " << report.operation << "\n";
     oss << "Session ID: " << report.session_id_hex << "\n";
     oss << "Feed Group: " << report.feed_group << "\n";
@@ -138,11 +220,45 @@ std::string generate_text_report(const RawSegmentReport& report) {
     oss << "Payload Bytes: " << report.total_payload_bytes << "\n";
     oss << "First Capture Index: " << report.first_capture_index << "\n";
     oss << "Last Capture Index: " << report.last_capture_index << "\n";
+    oss << "First Capture UTC ns: " << report.first_capture_utc_ns << "\n";
+    oss << "Last Capture UTC ns: " << report.last_capture_utc_ns << "\n";
     oss << "Content SHA-256: " << report.content_sha256 << "\n";
     oss << "File SHA-256: " << report.file_sha256 << "\n";
 
     if (!report.replay_sha256.empty()) {
         oss << "Replay SHA-256: " << report.replay_sha256 << "\n";
+    }
+
+    // Per-stream summaries
+    if (!report.stream_sets.empty()) {
+        oss << "\n=== Stream Sets ===\n";
+        for (std::size_t si = 0; si < report.stream_sets.size(); ++si) {
+            const auto& ss = report.stream_sets[si];
+            oss << "\nStream " << si << ": " << ss.stream_key << "\n";
+            oss << "  Session ID: " << ss.session_id_hex << "\n";
+            oss << "  Source ID: " << ss.source_id << "  Channel ID: " << ss.channel_id << "\n";
+            oss << "  Feed Group: " << ss.feed_group << "\n";
+            oss << "  Endpoint Role: " << ss.endpoint_role << "\n";
+            oss << "  Source Label: " << ss.source_label << "\n";
+            oss << "  Clock Domain: " << ss.clock_domain << "\n";
+            oss << "  Transport: " << ss.transport << "\n";
+            oss << "  Source Side: " << ss.source_side << "\n";
+            oss << "  Configuration SHA-256: " << ss.configuration_sha256 << "\n";
+            oss << "  Templates SHA-256: " << ss.templates_sha256 << "\n";
+            oss << "  Endpoint Fingerprint SHA-256: " << ss.endpoint_fingerprint_sha256 << "\n";
+            oss << "  Segments: " << ss.segment_indexes.size() << "\n";
+            for (std::size_t i = 0; i < ss.segment_indexes.size(); ++i) {
+                oss << "    [" << i << "] index=" << ss.segment_indexes[i]
+                    << " size=" << ss.segment_sizes[i] << "\n";
+            }
+            oss << "  Records: " << ss.record_count << "\n";
+            oss << "  Payload Bytes: " << ss.total_payload_bytes << "\n";
+            oss << "  First Capture Index: " << ss.first_capture_index << "\n";
+            oss << "  Last Capture Index: " << ss.last_capture_index << "\n";
+            oss << "  Content SHA-256: " << ss.content_sha256 << "\n";
+            oss << "  File SHA-256: " << ss.file_sha256 << "\n";
+            oss << "  Status: " << ss.status << "\n";
+        }
     }
 
     oss << "\nIssues: " << report.issues.size() << "\n";

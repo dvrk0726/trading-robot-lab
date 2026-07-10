@@ -3,6 +3,7 @@
 #include "moex_raw/endian.hpp"
 #include "moex_raw/crc32c.hpp"
 #include "moex_raw/sha256.hpp"
+#include "moex_raw/strings.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <cstring>
@@ -24,6 +25,74 @@ bool DefaultFileSystem::rename(const std::string& from, const std::string& to) {
 bool DefaultFileSystem::remove(const std::string& path) {
     std::error_code ec;
     return std::filesystem::remove(path, ec);
+}
+
+// --- Metadata validation ---
+
+static bool is_all_zero(const std::uint8_t* data, std::size_t len) {
+    for (std::size_t i = 0; i < len; ++i) {
+        if (data[i] != 0) return false;
+    }
+    return true;
+}
+
+static std::string validate_metadata(const RawSegmentMetadata& meta) {
+    // session_id must not be all zero
+    if (is_all_zero(meta.session.session_id, 16))
+        return "session_id must not be all zero";
+
+    // created_utc_ns must be non-zero
+    if (meta.created_utc_ns == 0)
+        return "created_utc_ns must be non-zero";
+
+    // source_id and channel_id must be non-zero
+    if (meta.source.source_id == 0)
+        return "source_id must be non-zero";
+    if (meta.source.channel_id == 0)
+        return "channel_id must be non-zero";
+
+    // All three SHA-256 values must not be all zero
+    if (is_all_zero(meta.source.configuration_sha256, 32))
+        return "configuration_sha256 must not be all zero";
+    if (is_all_zero(meta.source.templates_sha256, 32))
+        return "templates_sha256 must not be all zero";
+    if (is_all_zero(meta.source.endpoint_fingerprint_sha256, 32))
+        return "endpoint_fingerprint_sha256 must not be all zero";
+
+    // Enum validation
+    auto clock_val = static_cast<std::uint8_t>(meta.source.clock_domain);
+    if (clock_val < 1 || clock_val > 3)
+        return "unsupported clock_domain value";
+
+    auto transport_val = static_cast<std::uint8_t>(meta.source.transport);
+    if (transport_val > 2)
+        return "unsupported transport value";
+
+    auto side_val = static_cast<std::uint8_t>(meta.source.source_side);
+    if (side_val > 2)
+        return "unsupported source_side value";
+
+    // String validation: UTF-8, no NUL, 128-byte limit
+    if (!validate_utf8_string(meta.session.feed_group))
+        return "invalid feed_group string";
+    if (meta.session.feed_group.empty())
+        return "feed_group must be non-empty";
+
+    if (!validate_utf8_string(meta.session.endpoint_role))
+        return "invalid endpoint_role string";
+    if (meta.session.endpoint_role.empty())
+        return "endpoint_role must be non-empty";
+
+    if (!validate_utf8_string(meta.session.source_label))
+        return "invalid source_label string";
+
+    // Validate that the header would not exceed 4096 bytes
+    std::vector<std::uint8_t> header_probe;
+    serialize_header(header_probe, meta);
+    if (header_probe.size() > kMaxHeaderSize)
+        return "serialized header exceeds 4096 bytes";
+
+    return "";
 }
 
 // --- RawSegmentWriter ---
@@ -66,7 +135,11 @@ std::string RawSegmentWriter::open() {
         return "Writer not in Created state";
     }
 
-    // Validate rotation policy
+    // Validate all metadata before creating any files
+    auto meta_err = validate_metadata(metadata_);
+    if (!meta_err.empty()) return meta_err;
+
+    // Enforce hard 64 GiB cap regardless of rotation policy
     if (policy_.max_segment_bytes > kMaxSegmentBytes) {
         return "max_segment_bytes exceeds 64 GiB";
     }
@@ -141,13 +214,35 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
         return "capture_index not sequential";
     }
 
+    // Compute actual serialized record size
+    std::uint32_t payload_size = static_cast<std::uint32_t>(rec.payload.size());
+    std::uint32_t record_size = kRecordHeaderSize + payload_size + 4;
+
     // Validate first record fits: actual header + record + footer <= max_segment_bytes
     if (record_count_ == 0 && policy_.max_segment_bytes > 0) {
-        std::uint32_t payload_size = static_cast<std::uint32_t>(rec.payload.size());
-        std::uint32_t record_size = kRecordHeaderSize + payload_size + 4;
-        std::uint64_t total = current_file_bytes_ + record_size + kFooterSize;
+        std::uint64_t total;
+        if (!checked_add_u64(current_file_bytes_, record_size, total)) {
+            return "segment size overflow";
+        }
+        if (!checked_add_u64(total, kFooterSize, total)) {
+            return "segment size overflow";
+        }
         if (total > policy_.max_segment_bytes) {
             return "First record too large for segment byte limit";
+        }
+    }
+
+    // Enforce hard 64 GiB cap: current_file_bytes + record + footer <= 64 GiB
+    {
+        std::uint64_t total;
+        if (!checked_add_u64(current_file_bytes_, record_size, total)) {
+            return "segment size overflow (64 GiB cap)";
+        }
+        if (!checked_add_u64(total, kFooterSize, total)) {
+            return "segment size overflow (64 GiB cap)";
+        }
+        if (total > kMaxSegmentBytes) {
+            return "segment would exceed 64 GiB hard limit";
         }
     }
 

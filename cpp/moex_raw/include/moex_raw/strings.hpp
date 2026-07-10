@@ -11,7 +11,8 @@ static constexpr std::size_t kMaxStringBytes = 128;
 bool validate_utf8_string(const std::string& s);
 
 // Write length-prefixed UTF-8 string: u16 length + bytes.
-void write_length_string(std::vector<std::uint8_t>& buf, const std::string& s);
+// Returns false if string exceeds u16 length limit (does NOT truncate).
+bool write_length_string(std::vector<std::uint8_t>& buf, const std::string& s);
 
 // Read length-prefixed UTF-8 string. Returns false on failure.
 bool read_length_string(const std::uint8_t* data, std::size_t available,

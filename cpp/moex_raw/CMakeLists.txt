@@ -95,3 +95,7 @@ add_test(NAME test_golden_record_layout COMMAND test_golden_record_layout)
 add_executable(test_content_sha256_e2e tests/test_content_sha256_e2e.cpp)
 target_link_libraries(test_content_sha256_e2e PRIVATE moex_raw_lib)
 add_test(NAME test_content_sha256_e2e COMMAND test_content_sha256_e2e)
+
+add_executable(test_round3 tests/test_round3.cpp)
+target_link_libraries(test_round3 PRIVATE moex_raw_lib)
+add_test(NAME test_round3 COMMAND test_round3)

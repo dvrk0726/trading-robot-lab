@@ -18,8 +18,38 @@ static void add_replay_issue(std::vector<RawValidationIssue>& issues,
     issues.push_back({sev, code, msg});
 }
 
+// Build the MXREPLAY1 canonical metadata prefix for SHA-256 context initialization.
+static void build_replay_prefix(const RawSegmentMetadata& meta, std::vector<std::uint8_t>& prefix) {
+    write_bytes(prefix, kMagicReplay, 10);
+    write_bytes(prefix, meta.session.session_id, 16);
+    write_u64_le(prefix, meta.source.source_id);
+    write_u64_le(prefix, meta.source.channel_id);
+    prefix.push_back(static_cast<std::uint8_t>(meta.source.clock_domain));
+    prefix.push_back(static_cast<std::uint8_t>(meta.source.transport));
+    prefix.push_back(static_cast<std::uint8_t>(meta.source.source_side));
+    write_bytes(prefix, meta.source.configuration_sha256, 32);
+    write_bytes(prefix, meta.source.templates_sha256, 32);
+    write_bytes(prefix, meta.source.endpoint_fingerprint_sha256, 32);
+    write_u16_le(prefix, static_cast<std::uint16_t>(meta.session.feed_group.size()));
+    write_bytes(prefix, meta.session.feed_group.data(), meta.session.feed_group.size());
+    write_u16_le(prefix, static_cast<std::uint16_t>(meta.session.endpoint_role.size()));
+    write_bytes(prefix, meta.session.endpoint_role.data(), meta.session.endpoint_role.size());
+    write_u16_le(prefix, static_cast<std::uint16_t>(meta.session.source_label.size()));
+    write_bytes(prefix, meta.session.source_label.data(), meta.session.source_label.size());
+}
+
+// Build the per-record framing for SHA-256 context update.
+static void build_record_framing(const RawPacketRecord& rec, std::vector<std::uint8_t>& buf) {
+    write_u16_le(buf, rec.record_flags);
+    write_u64_le(buf, rec.capture_index);
+    write_u64_le(buf, rec.capture_utc_ns);
+    write_u64_le(buf, rec.capture_monotonic_ns);
+    write_u32_le(buf, static_cast<std::uint32_t>(rec.payload.size()));
+    write_bytes(buf, rec.payload.data(), rec.payload.size());
+}
+
 ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
-                           const RawSegmentMetadata& /*meta*/,
+                           const RawSegmentMetadata& meta,
                            ReplayCallback callback) {
     ReplayResult result;
 
@@ -38,6 +68,13 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
         result.status = ReplayStatus::ValidationFailed;
         return result;
     }
+
+    // Initialize single SHA-256 context with canonical MXREPLAY1 metadata prefix
+    SHA256Ctx replay_sha_ctx;
+    sha256_init(replay_sha_ctx);
+    std::vector<std::uint8_t> prefix;
+    build_replay_prefix(meta, prefix);
+    sha256_update(replay_sha_ctx, prefix.data(), prefix.size());
 
     // Replay records in order — bounded streaming per segment
     std::uint64_t total_records = 0;
@@ -133,6 +170,11 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                 return result;
             }
 
+            // Update streaming SHA-256 with this record
+            std::vector<std::uint8_t> rec_framing;
+            build_record_framing(rec, rec_framing);
+            sha256_update(replay_sha_ctx, rec_framing.data(), rec_framing.size());
+
             if (first) {
                 first_index = rec.capture_index;
                 first = false;
@@ -147,15 +189,22 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
         std::fclose(f);
     }
 
+    // Finalize streaming SHA-256
+    std::uint8_t hash[32];
+    sha256_final(replay_sha_ctx, hash);
+
     result.summary.record_count = total_records;
     result.summary.total_payload_bytes = total_payload;
     result.summary.first_capture_index = first_index;
     result.summary.last_capture_index = last_index;
+    result.summary.replay_sha256 = sha256_bytes_to_hex(hash);
 
     result.status = ReplayStatus::Ok;
     return result;
 }
 
+// Deprecated: use replay_from_stream_set with fully resolved StreamSetInfo instead.
+// This API is kept as a safe convenience wrapper that fails on any ambiguity.
 ReplayResult replay_from_directory(const std::string& directory,
                                    std::uint64_t source_id,
                                    std::uint64_t channel_id,
@@ -168,6 +217,12 @@ ReplayResult replay_from_directory(const std::string& directory,
     // Propagate discovery issues
     result.issues.insert(result.issues.end(), discovery_issues.begin(), discovery_issues.end());
 
+    // Check for discovery errors
+    bool has_discovery_errors = false;
+    for (const auto& issue : discovery_issues) {
+        if (issue.severity == ValidationSeverity::Error) has_discovery_errors = true;
+    }
+
     // Find matching stream sets by (source_id, channel_id)
     std::vector<StreamSetInfo*> matches;
     for (auto& ss : stream_sets) {
@@ -177,35 +232,25 @@ ReplayResult replay_from_directory(const std::string& directory,
     }
 
     if (matches.empty()) {
-        if (stream_sets.empty()) {
-            result.status = ReplayStatus::StreamNotFound;
-            add_replay_issue(result.issues, ValidationSeverity::Error,
-                             "NO_STREAM", "No valid stream sets found in directory");
-        } else {
-            result.status = ReplayStatus::StreamNotFound;
-            add_replay_issue(result.issues, ValidationSeverity::Error,
-                             "STREAM_NOT_FOUND",
-                             "Stream with specified source_id/channel_id not found");
-        }
+        result.status = ReplayStatus::StreamNotFound;
+        add_replay_issue(result.issues, ValidationSeverity::Error,
+                         "STREAM_NOT_FOUND",
+                         "Stream with specified source_id/channel_id not found");
         return result;
     }
 
-    // Check for ambiguity: multiple sessions with same source_id/channel_id
-    if (matches.size() > 1) {
-        bool different_sessions = false;
-        for (std::size_t i = 1; i < matches.size(); ++i) {
-            if (std::memcmp(matches[i]->session_id, matches[0]->session_id, 16) != 0) {
-                different_sessions = true;
-                break;
-            }
-        }
-        if (different_sessions) {
-            result.status = ReplayStatus::AmbiguousStream;
-            add_replay_issue(result.issues, ValidationSeverity::Error,
-                             "AMBIGUOUS_STREAM",
-                             "Multiple sessions with same source_id/channel_id; specify session_id");
-            return result;
-        }
+    // Any matches.size() != 1 is ambiguous (same-session different source/channel too)
+    if (matches.size() != 1) {
+        result.status = ReplayStatus::AmbiguousStream;
+        add_replay_issue(result.issues, ValidationSeverity::Error,
+                         "AMBIGUOUS_STREAM",
+                         "Multiple stream sets match; specify full (session_id, source_id, channel_id)");
+        return result;
+    }
+
+    if (has_discovery_errors) {
+        result.status = ReplayStatus::ValidationFailed;
+        return result;
     }
 
     StreamSetInfo* target = matches[0];
@@ -215,8 +260,8 @@ ReplayResult replay_from_directory(const std::string& directory,
     std::vector<RawFooter> footers;
     std::vector<RawValidationIssue> issues;
 
-    auto status = validate_stream_set(target->segment_paths, metas, footers, issues);
-    if (status != SegmentStatus::ValidFinalized || metas.empty()) {
+    auto val_status = validate_stream_set(target->segment_paths, metas, footers, issues);
+    if (val_status != SegmentStatus::ValidFinalized || metas.empty()) {
         result.status = ReplayStatus::ValidationFailed;
         result.issues = std::move(issues);
         return result;
@@ -246,47 +291,24 @@ ReplayResult replay_from_stream_set(const StreamSetInfo& stream_set,
 
 std::string compute_replay_sha256(const RawSegmentMetadata& meta,
                                   const std::vector<RawPacketRecord>& records) {
-    std::vector<std::uint8_t> buf;
+    SHA256Ctx ctx;
+    sha256_init(ctx);
 
-    // MXREPLAY1 magic
-    write_bytes(buf, kMagicReplay, 10);
+    // Build and feed the canonical prefix
+    std::vector<std::uint8_t> prefix;
+    build_replay_prefix(meta, prefix);
+    sha256_update(ctx, prefix.data(), prefix.size());
 
-    // session_id
-    write_bytes(buf, meta.session.session_id, 16);
-
-    // source_id, channel_id
-    write_u64_le(buf, meta.source.source_id);
-    write_u64_le(buf, meta.source.channel_id);
-
-    // clock_domain, transport, source_side
-    buf.push_back(static_cast<std::uint8_t>(meta.source.clock_domain));
-    buf.push_back(static_cast<std::uint8_t>(meta.source.transport));
-    buf.push_back(static_cast<std::uint8_t>(meta.source.source_side));
-
-    // SHA-256 values
-    write_bytes(buf, meta.source.configuration_sha256, 32);
-    write_bytes(buf, meta.source.templates_sha256, 32);
-    write_bytes(buf, meta.source.endpoint_fingerprint_sha256, 32);
-
-    // Strings
-    write_u16_le(buf, static_cast<std::uint16_t>(meta.session.feed_group.size()));
-    write_bytes(buf, meta.session.feed_group.data(), meta.session.feed_group.size());
-    write_u16_le(buf, static_cast<std::uint16_t>(meta.session.endpoint_role.size()));
-    write_bytes(buf, meta.session.endpoint_role.data(), meta.session.endpoint_role.size());
-    write_u16_le(buf, static_cast<std::uint16_t>(meta.session.source_label.size()));
-    write_bytes(buf, meta.session.source_label.data(), meta.session.source_label.size());
-
-    // Records
+    // Feed each record
     for (const auto& rec : records) {
-        write_u16_le(buf, rec.record_flags);
-        write_u64_le(buf, rec.capture_index);
-        write_u64_le(buf, rec.capture_utc_ns);
-        write_u64_le(buf, rec.capture_monotonic_ns);
-        write_u32_le(buf, static_cast<std::uint32_t>(rec.payload.size()));
-        write_bytes(buf, rec.payload.data(), rec.payload.size());
+        std::vector<std::uint8_t> rec_buf;
+        build_record_framing(rec, rec_buf);
+        sha256_update(ctx, rec_buf.data(), rec_buf.size());
     }
 
-    return sha256_hex(buf.data(), buf.size());
+    std::uint8_t hash[32];
+    sha256_final(ctx, hash);
+    return sha256_bytes_to_hex(hash);
 }
 
 }  // namespace moex_raw

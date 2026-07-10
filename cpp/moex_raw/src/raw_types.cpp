@@ -65,19 +65,49 @@ std::string canonical_filename(const std::uint8_t session_id[16], std::uint64_t 
 }
 
 bool parse_segment_index_from_filename(const std::string& filename, std::uint64_t& segment_index) {
-    // Expected: <session>_src<source>_ch<channel>_seg<index>.mxraw
-    auto seg_pos = filename.find("_seg");
-    if (seg_pos == std::string::npos) return false;
+    ParsedFilename parsed;
+    if (!parse_canonical_filename(filename, parsed)) return false;
+    segment_index = parsed.segment_index;
+    return true;
+}
 
-    auto dot_pos = filename.rfind(".mxraw");
-    if (dot_pos == std::string::npos || dot_pos <= seg_pos + 4) return false;
+bool parse_canonical_filename(const std::string& filename, ParsedFilename& parsed) {
+    // Expected: <session-32hex>_src<source-16hex>_ch<channel-16hex>_seg<index-16hex>.mxraw
+    // Positions: 0-31 session | 32 _ | 33-35 src | 36-51 source | 52 _ | 53-54 ch | 55-70 channel | 71 _ | 72-74 seg | 75-90 index | 91-96 .mxraw
+    // Total length: 97
+    if (filename.size() != 97) return false;
+    if (filename.substr(91) != ".mxraw") return false;
 
-    auto hex_str = filename.substr(seg_pos + 4, dot_pos - seg_pos - 4);
-    if (hex_str.size() != 16) return false;
+    // Check separators
+    if (filename[32] != '_') return false;
+    if (filename.substr(33, 3) != "src") return false;
+    if (filename[52] != '_') return false;
+    if (filename.substr(53, 2) != "ch") return false;
+    if (filename[71] != '_') return false;
+    if (filename.substr(72, 3) != "seg") return false;
 
+    // Parse session_id (32 hex chars)
+    if (!parse_session_id_hex(filename.substr(0, 32), parsed.session_id)) return false;
+
+    // Parse source_id (16 hex chars)
+    auto src_hex = filename.substr(36, 16);
     char* end = nullptr;
-    segment_index = std::strtoull(hex_str.c_str(), &end, 16);
-    return end == hex_str.c_str() + 16;
+    parsed.source_id = std::strtoull(src_hex.c_str(), &end, 16);
+    if (end != src_hex.c_str() + 16) return false;
+
+    // Parse channel_id (16 hex chars)
+    auto ch_hex = filename.substr(55, 16);
+    end = nullptr;
+    parsed.channel_id = std::strtoull(ch_hex.c_str(), &end, 16);
+    if (end != ch_hex.c_str() + 16) return false;
+
+    // Parse segment_index (16 hex chars)
+    auto seg_hex = filename.substr(75, 16);
+    end = nullptr;
+    parsed.segment_index = std::strtoull(seg_hex.c_str(), &end, 16);
+    if (end != seg_hex.c_str() + 16) return false;
+
+    return true;
 }
 
 std::string sha256_bytes_to_hex(const std::uint8_t hash[32]) {
@@ -113,9 +143,9 @@ void serialize_header(std::vector<std::uint8_t>& buf, const RawSegmentMetadata& 
     write_bytes(buf, meta.source.configuration_sha256, 32);
     write_bytes(buf, meta.source.templates_sha256, 32);
     write_bytes(buf, meta.source.endpoint_fingerprint_sha256, 32);
-    write_length_string(buf, meta.session.feed_group);
-    write_length_string(buf, meta.session.endpoint_role);
-    write_length_string(buf, meta.session.source_label);
+    if (!write_length_string(buf, meta.session.feed_group)) return;
+    if (!write_length_string(buf, meta.session.endpoint_role)) return;
+    if (!write_length_string(buf, meta.session.source_label)) return;
 
     // Patch header_size
     std::uint32_t header_size = static_cast<std::uint32_t>(buf.size());

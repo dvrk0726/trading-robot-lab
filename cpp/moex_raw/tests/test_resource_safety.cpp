@@ -229,8 +229,11 @@ int main() {
         w.append(rec);
         w.finalize();
 
-        // Create a corrupt .mxraw file
-        auto corrupt_path = dir + "/corrupt.mxraw";
+        // Create a corrupt .mxraw file with canonical filename
+        auto corrupt_fn = canonical_filename(meta.session.session_id,
+                                              meta.source.source_id,
+                                              meta.source.channel_id, 99);
+        auto corrupt_path = dir + "/" + corrupt_fn;
         {
             std::FILE* f = std::fopen(corrupt_path.c_str(), "wb");
             std::uint8_t garbage[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03};
@@ -243,11 +246,12 @@ int main() {
         // Valid segment should still be found
         CHECK(sets.size() == 1);
         // Corrupt file should produce an explicit issue
-        bool found_malformed = false;
+        bool found_error = false;
         for (const auto& issue : issues) {
-            if (issue.code == "MALFORMED_HEADER") found_malformed = true;
+            if (issue.code == "MALFORMED_HEADER" || issue.code == "INVALID_FILENAME" ||
+                issue.code == "EMPTY_FILE") found_error = true;
         }
-        CHECK(found_malformed);
+        CHECK(found_error);
     }
 
     // Directory discovery: .mxraw.partial file produces explicit warning

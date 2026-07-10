@@ -39,6 +39,14 @@ SegmentStatus validate_segment(const std::string& path,
         return SegmentStatus::IoError;
     }
 
+    // Reject files above hard 64 GiB cap
+    if (file_size > kMaxSegmentBytes) {
+        std::fclose(f);
+        add_issue(issues, ValidationSeverity::Error, "FILE_TOO_LARGE",
+                  "File exceeds 64 GiB hard limit");
+        return SegmentStatus::Unsupported;
+    }
+
     if (file_size == 0) {
         std::fclose(f);
         add_issue(issues, ValidationSeverity::Error, "EMPTY_FILE", "Empty file");
@@ -65,16 +73,27 @@ SegmentStatus validate_segment(const std::string& path,
     std::size_t header_size = 0;
     if (!deserialize_header(header_buf.data(), header_read_size, meta, header_size, issues)) {
         std::fclose(f);
-        // Check if it's partial
-        if (file_size >= 8) {
-            // Read last 8 bytes to check for footer magic
+        // Check if this is an unsupported version
+        if (header_read_size >= 10) {
+            std::uint16_t version = read_u16_le(header_buf.data() + 8);
+            if (version != kFormatVersion) {
+                return SegmentStatus::Unsupported;
+            }
+        }
+        // Header failure without version mismatch: check if file has footer magic at correct position
+        // Footer magic is at the START of the 92-byte footer, not at EOF-8
+        if (file_size >= kFooterSize) {
             std::FILE* f2 = std::fopen(path.c_str(), "rb");
             if (f2) {
-                std::uint8_t last8[8];
-                std::fseek(f2, -8, SEEK_END);
-                if (std::fread(last8, 1, 8, f2) == 8 && std::memcmp(last8, kMagicEnd, 8) != 0) {
-                    std::fclose(f2);
-                    return SegmentStatus::Partial;
+                std::uint64_t footer_offset = file_size - kFooterSize;
+                std::uint8_t footer_magic[8];
+                if (fseek64(f2, static_cast<std::int64_t>(footer_offset), SEEK_SET) == 0 &&
+                    std::fread(footer_magic, 1, 8, f2) == 8) {
+                    if (std::memcmp(footer_magic, kMagicEnd, 8) != 0) {
+                        // No valid footer magic => partial/unfinalized
+                        std::fclose(f2);
+                        return SegmentStatus::Partial;
+                    }
                 }
                 std::fclose(f2);
             }
@@ -274,7 +293,15 @@ SegmentStatus validate_segment(const std::string& path,
         actual_record_count++;
         actual_payload_bytes += rec.payload.size();
 
-        expected_capture_index++;
+        // Use checked arithmetic for index advancement
+        std::uint64_t next_index;
+        if (!checked_add_u64(expected_capture_index, 1, next_index)) {
+            std::fclose(f);
+            add_issue(issues, ValidationSeverity::Error, "INDEX_OVERFLOW",
+                      "capture_index overflow");
+            return SegmentStatus::Corrupt;
+        }
+        expected_capture_index = next_index;
         pos += record_size;
     }
 
@@ -314,19 +341,43 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
         return SegmentStatus::Corrupt;
     }
 
-    metas.clear();
-    footers.clear();
-    metas.reserve(paths.size());
-    footers.reserve(paths.size());
-
-    // Validate each segment and collect metadata
-    for (const auto& path : paths) {
+    // Phase 1: Parse canonical filenames and validate each segment
+    struct SegmentEntry {
+        std::string path;
+        ParsedFilename parsed_fn;
         RawSegmentMetadata meta;
         RawFooter footer;
+        std::uint64_t file_size;
+    };
+
+    std::vector<SegmentEntry> entries;
+    entries.reserve(paths.size());
+
+    for (const auto& path : paths) {
+        SegmentEntry entry;
+        entry.path = path;
+
+        // Parse canonical filename
+        auto filename = std::filesystem::path(path).filename().string();
+        if (!parse_canonical_filename(filename, entry.parsed_fn)) {
+            add_issue(issues, ValidationSeverity::Error, "INVALID_FILENAME",
+                      "Cannot parse canonical filename: " + filename);
+            return SegmentStatus::Corrupt;
+        }
+
+        // Get file size
+        std::error_code ec;
+        entry.file_size = static_cast<std::uint64_t>(std::filesystem::file_size(path, ec));
+        if (ec) {
+            add_issue(issues, ValidationSeverity::Error, "IO_ERROR",
+                      "Cannot get file size: " + path);
+            return SegmentStatus::IoError;
+        }
+
+        // Validate the segment
         std::vector<RawValidationIssue> seg_issues;
         std::string content_hex, file_hex;
-
-        auto status = validate_segment(path, meta, footer, seg_issues, content_hex, file_hex);
+        auto status = validate_segment(path, entry.meta, entry.footer, seg_issues, content_hex, file_hex);
         issues.insert(issues.end(), seg_issues.begin(), seg_issues.end());
 
         if (status != SegmentStatus::ValidFinalized) {
@@ -335,45 +386,219 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
             return status;
         }
 
-        metas.push_back(meta);
-        footers.push_back(footer);
+        // Compare filename identity with content identity
+        if (std::memcmp(entry.parsed_fn.session_id, entry.meta.session.session_id, 16) != 0) {
+            add_issue(issues, ValidationSeverity::Error, "FILENAME_MISMATCH",
+                      "Filename session_id does not match content: " + filename);
+            return SegmentStatus::Corrupt;
+        }
+        if (entry.parsed_fn.source_id != entry.meta.source.source_id) {
+            add_issue(issues, ValidationSeverity::Error, "FILENAME_MISMATCH",
+                      "Filename source_id does not match content: " + filename);
+            return SegmentStatus::Corrupt;
+        }
+        if (entry.parsed_fn.channel_id != entry.meta.source.channel_id) {
+            add_issue(issues, ValidationSeverity::Error, "FILENAME_MISMATCH",
+                      "Filename channel_id does not match content: " + filename);
+            return SegmentStatus::Corrupt;
+        }
+        if (entry.parsed_fn.segment_index != entry.meta.segment_index) {
+            add_issue(issues, ValidationSeverity::Error, "FILENAME_MISMATCH",
+                      "Filename segment_index does not match content: " + filename);
+            return SegmentStatus::Corrupt;
+        }
+
+        entries.push_back(std::move(entry));
     }
 
-    // Check consistent metadata
-    for (std::size_t i = 1; i < metas.size(); ++i) {
-        if (std::memcmp(metas[i].session.session_id, metas[0].session.session_id, 16) != 0) {
+    // Phase 2: Sort numerically by segment index (independent of input order)
+    std::sort(entries.begin(), entries.end(),
+              [](const SegmentEntry& a, const SegmentEntry& b) {
+                  return a.meta.segment_index < b.meta.segment_index;
+              });
+
+    // Phase 3: Check for duplicate segment indexes
+    for (std::size_t i = 1; i < entries.size(); ++i) {
+        if (entries[i].meta.segment_index == entries[i - 1].meta.segment_index) {
+            add_issue(issues, ValidationSeverity::Error, "DUPLICATE_SEGMENT_INDEX",
+                      "Duplicate segment index: " + std::to_string(entries[i].meta.segment_index));
+            return SegmentStatus::Corrupt;
+        }
+    }
+
+    // Phase 4: Check contiguous segment indexes
+    for (std::size_t i = 1; i < entries.size(); ++i) {
+        if (entries[i].meta.segment_index != entries[i - 1].meta.segment_index + 1) {
+            add_issue(issues, ValidationSeverity::Error, "NONCONTIGUOUS_SEGMENT_INDEX",
+                      "Segment indexes not contiguous: " +
+                      std::to_string(entries[i - 1].meta.segment_index) + " -> " +
+                      std::to_string(entries[i].meta.segment_index));
+            return SegmentStatus::Corrupt;
+        }
+    }
+
+    // Phase 5: Check consistent metadata across all segments
+    for (std::size_t i = 1; i < entries.size(); ++i) {
+        const auto& a = entries[0].meta;
+        const auto& b = entries[i].meta;
+
+        if (std::memcmp(b.session.session_id, a.session.session_id, 16) != 0) {
             add_issue(issues, ValidationSeverity::Error, "MIXED_SESSION_ID",
                       "Different session_id in stream set");
             return SegmentStatus::Corrupt;
         }
-        if (metas[i].source.source_id != metas[0].source.source_id) {
+        if (b.source.source_id != a.source.source_id) {
             add_issue(issues, ValidationSeverity::Error, "MIXED_SOURCE_ID",
                       "Different source_id in stream set");
             return SegmentStatus::Corrupt;
         }
-        if (metas[i].source.channel_id != metas[0].source.channel_id) {
+        if (b.source.channel_id != a.source.channel_id) {
             add_issue(issues, ValidationSeverity::Error, "MIXED_CHANNEL_ID",
                       "Different channel_id in stream set");
             return SegmentStatus::Corrupt;
         }
-    }
-
-    // Check contiguous segment indexes
-    for (std::size_t i = 1; i < metas.size(); ++i) {
-        if (metas[i].segment_index != metas[i-1].segment_index + 1) {
-            add_issue(issues, ValidationSeverity::Error, "NONCONTIGUOUS_SEGMENT_INDEX",
-                      "Segment indexes not contiguous");
+        // Compare all source metadata fields
+        if (b.session.feed_group != a.session.feed_group) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_FEED_GROUP",
+                      "Different feed_group in stream set");
+            return SegmentStatus::Corrupt;
+        }
+        if (b.session.endpoint_role != a.session.endpoint_role) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_ENDPOINT_ROLE",
+                      "Different endpoint_role in stream set");
+            return SegmentStatus::Corrupt;
+        }
+        if (b.session.source_label != a.session.source_label) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_SOURCE_LABEL",
+                      "Different source_label in stream set");
+            return SegmentStatus::Corrupt;
+        }
+        if (b.source.clock_domain != a.source.clock_domain) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_CLOCK_DOMAIN",
+                      "Different clock_domain in stream set");
+            return SegmentStatus::Corrupt;
+        }
+        if (b.source.transport != a.source.transport) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_TRANSPORT",
+                      "Different transport in stream set");
+            return SegmentStatus::Corrupt;
+        }
+        if (b.source.source_side != a.source.source_side) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_SOURCE_SIDE",
+                      "Different source_side in stream set");
+            return SegmentStatus::Corrupt;
+        }
+        // Compare all three provenance hashes
+        if (std::memcmp(b.source.configuration_sha256, a.source.configuration_sha256, 32) != 0) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_CONFIGURATION_HASH",
+                      "Different configuration_sha256 in stream set");
+            return SegmentStatus::Corrupt;
+        }
+        if (std::memcmp(b.source.templates_sha256, a.source.templates_sha256, 32) != 0) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_TEMPLATES_HASH",
+                      "Different templates_sha256 in stream set");
+            return SegmentStatus::Corrupt;
+        }
+        if (std::memcmp(b.source.endpoint_fingerprint_sha256, a.source.endpoint_fingerprint_sha256, 32) != 0) {
+            add_issue(issues, ValidationSeverity::Error, "MIXED_FINGERPRINT_HASH",
+                      "Different endpoint_fingerprint_sha256 in stream set");
             return SegmentStatus::Corrupt;
         }
     }
 
-    // Check contiguous capture indexes across segments
-    for (std::size_t i = 1; i < footers.size(); ++i) {
-        if (footers[i].first_capture_index != footers[i-1].last_capture_index + 1) {
+    // Phase 6: Check contiguous capture indexes and monotonic timestamps across segments
+    for (std::size_t i = 1; i < entries.size(); ++i) {
+        if (entries[i].footer.first_capture_index != entries[i - 1].footer.last_capture_index + 1) {
             add_issue(issues, ValidationSeverity::Error, "NONCONTIGUOUS_CAPTURE_INDEX",
                       "capture_index not contiguous across segments");
             return SegmentStatus::Corrupt;
         }
+    }
+
+    // Extract the last monotonic timestamp from each segment for cross-segment check.
+    // We need to re-read the last record's monotonic timestamp from each segment.
+    // Since we already validated each segment, we know the footer is correct.
+    // We need to read the actual last record's monotonic_ns.
+    std::uint64_t prev_last_monotonic = 0;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        std::FILE* f = std::fopen(entries[i].path.c_str(), "rb");
+        if (!f) {
+            add_issue(issues, ValidationSeverity::Error, "IO_ERROR",
+                      "Cannot reopen segment for monotonic check");
+            return SegmentStatus::IoError;
+        }
+
+        // Seek to footer offset to find footer
+        std::uint64_t footer_offset = entries[i].file_size - kFooterSize;
+
+        // We need to find the last record. The data region is from header_size to footer_offset.
+        // Read header to get header_size
+        std::uint8_t preamble[14];
+        if (std::fread(preamble, 1, 14, f) != 14) {
+            std::fclose(f);
+            add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read preamble");
+            return SegmentStatus::IoError;
+        }
+        std::size_t hdr_size = read_u32_le(preamble + 10);
+
+        // Read the footer to get last_capture_index
+        std::uint8_t footer_buf[kFooterSize];
+        if (fseek64(f, static_cast<std::int64_t>(footer_offset), SEEK_SET) != 0) {
+            std::fclose(f);
+            return SegmentStatus::IoError;
+        }
+        if (std::fread(footer_buf, 1, kFooterSize, f) != kFooterSize) {
+            std::fclose(f);
+            return SegmentStatus::IoError;
+        }
+
+        // Walk records to find the last one's monotonic timestamp
+        if (fseek64(f, static_cast<std::int64_t>(hdr_size), SEEK_SET) != 0) {
+            std::fclose(f);
+            return SegmentStatus::IoError;
+        }
+
+        std::uint64_t last_mono = 0;
+        std::uint64_t pos = hdr_size;
+        while (pos < footer_offset) {
+            std::uint8_t rec_hdr[kRecordHeaderSize];
+            if (std::fread(rec_hdr, 1, kRecordHeaderSize, f) != kRecordHeaderSize) {
+                std::fclose(f);
+                return SegmentStatus::Corrupt;
+            }
+            std::uint32_t rec_size = read_u32_le(rec_hdr + 8);
+
+            // Read monotonic from header at offset 28
+            last_mono = read_u64_le(rec_hdr + 28);
+
+            // Skip to next record
+            std::size_t tail = rec_size - kRecordHeaderSize;
+            std::vector<std::uint8_t> skip(tail);
+            if (std::fread(skip.data(), 1, tail, f) != tail) {
+                std::fclose(f);
+                return SegmentStatus::Corrupt;
+            }
+            pos += rec_size;
+        }
+        std::fclose(f);
+
+        // Check monotonic across boundary
+        if (i > 0 && last_mono < prev_last_monotonic) {
+            add_issue(issues, ValidationSeverity::Error, "MONOTONIC_DECREASE_CROSS_SEGMENT",
+                      "capture_monotonic_ns decreased across segment boundary");
+            return SegmentStatus::Corrupt;
+        }
+        prev_last_monotonic = last_mono;
+    }
+
+    // Phase 7: Populate output vectors
+    metas.clear();
+    footers.clear();
+    metas.reserve(entries.size());
+    footers.reserve(entries.size());
+    for (const auto& e : entries) {
+        metas.push_back(e.meta);
+        footers.push_back(e.footer);
     }
 
     return SegmentStatus::ValidFinalized;
@@ -390,17 +615,25 @@ std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
 
         auto filepath = entry.path().string();
         auto filename = entry.path().filename().string();
-        auto ext = entry.path().extension().string();
 
         // Handle .mxraw.partial files as partial candidates
-        if (filename.find(".mxraw.partial") != std::string::npos) {
+        if (filename.size() > 14 && filename.substr(filename.size() - 14) == ".mxraw.partial") {
             add_issue(issues, ValidationSeverity::Warning, "PARTIAL_FILE",
                       "Partial segment file found: " + filepath);
             continue;
         }
 
         // Only process .mxraw files
+        auto ext = entry.path().extension().string();
         if (ext != ".mxraw") continue;
+
+        // Parse canonical filename first
+        ParsedFilename parsed_fn;
+        if (!parse_canonical_filename(filename, parsed_fn)) {
+            add_issue(issues, ValidationSeverity::Error, "INVALID_FILENAME",
+                      "Cannot parse canonical filename: " + filepath);
+            continue;
+        }
 
         // Read header to get session/source/channel (bounded: 4096 bytes)
         std::FILE* f = std::fopen(filepath.c_str(), "rb");
@@ -453,7 +686,7 @@ std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
         found->segment_indexes.push_back(meta.segment_index);
     }
 
-    // Sort each stream set by segment index
+    // Sort each stream set by parsed segment index (numeric, not lexical)
     for (auto& ss : result) {
         std::vector<std::pair<std::uint64_t, std::string>> pairs;
         for (std::size_t i = 0; i < ss.segment_indexes.size(); ++i) {

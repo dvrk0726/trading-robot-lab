@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-2 Round 2 corrections — Issue #18 / PR #20
+Статус: RT-2 Round 3 corrections — Issue #18 / PR #20
 
 ## Архитектура
 
@@ -120,14 +120,14 @@ deterministic text/JSON reports;
 Windows/Linux Release-active tests.
 ```
 
-## RT-2 — Round 2 corrections complete
+## RT-2 — Round 3 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `110360bb756e5b1f7f8bc37c6dc1aab536c077b2`
-CI #44 (run 29107791559): ALL GREEN (7/7 jobs)
+Implementation commit: (pending — see PR #20 for final head)
+CI: pending
 ```
 
 Delivered:
@@ -139,33 +139,41 @@ CRC32C (Castagnoli) and pure C++ SHA-256 implementations
 Little-endian serialization primitives with checked arithmetic
 UTF-8 string validation with 128-byte limit
 RawSegmentWriter with .partial -> finalized lifecycle
+Writer metadata validation before file creation
+write_length_string rejects oversized strings (no silent truncation)
+Hard 64 GiB segment cap regardless of rotation policy
 Incremental content SHA-256 (no fread on wb-stream)
 Deterministic rotation by record count and byte limits
 First-record byte-limit validation
 Bounded streaming reader/validator (no whole-file loading)
-Stream-set validation (contiguous indexes, metadata consistency)
+Canonical filename parsing and filename/content identity
+Stream-set validation: numeric sorting, duplicate/missing detection,
+  full metadata/hash equality, monotonic timestamp across boundaries
 Directory grouping by full (session_id, source_id, channel_id) key
-Ambiguity detection for multiple matching sessions
+Per-stream independent summaries in text and JSON reports
+Expanded report schema with format_version, source metadata, provenance hashes
+Ambiguity detection for multiple matching streams (strict: matches.size() != 1)
 Deterministic replay callback with MXREPLAY1 canonical digest
+Single streaming SHA-256 context in replay_stream()
+replay_from_stream_set() for explicit session selection
+Status classification: unsupported, partial, truncated, corrupt, I/O error
 CLI: moex-raw synth, moex-raw inspect, moex-raw replay
-Strict CLI numeric/hex parsing before file creation
+Strict CLI numeric/hex validation (reject negative/signed/whitespace)
 Release-active CHECK macros (active under NDEBUG)
 Independent golden byte-vector test
 End-to-end content SHA-256 verification test
-CI jobs for Windows/MSVC and Linux/GCC (15 tests each)
-Round 2: single SHA-256 replay context, directory discovery reporting,
-  replay_from_stream_set, portable 64-bit file position, short-read checks,
-  resource boundedness and directory discovery tests
+Independent MXREPLAY1 golden digest test
+CI jobs for Windows/MSVC and Linux/GCC (16 tests each)
 ```
 
 Test results:
 
 ```text
-RT-2:         15/15 tests passed (Windows Release)
+RT-2:         16/16 tests passed (Windows Release)
 RT-1:          6/6  tests passed (no regression)
 QSH/M10X:     20/20 tests passed (no regression)
 Python:         3/3  passed
-Hygiene:        PASS (275 files checked)
+Hygiene:        PASS (276 files checked)
 ```
 
 Explicit RT-2 non-goals:
@@ -201,7 +209,7 @@ DRAFT
 ## Immediate next actions
 
 ```text
-1. Owner reviews RT-2 Round 1 corrections in PR #20.
+1. Owner reviews RT-2 Round 3 corrections in PR #20.
 2. If accepted, merge PR #20.
 3. Move Issue #18 to DONE.
 4. Do not start RT-3 until RT-2 is DONE.

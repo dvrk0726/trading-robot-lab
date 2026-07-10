@@ -57,9 +57,11 @@ bool validate_utf8_string(const std::string& s) {
     return true;
 }
 
-void write_length_string(std::vector<std::uint8_t>& buf, const std::string& s) {
+bool write_length_string(std::vector<std::uint8_t>& buf, const std::string& s) {
+    if (s.size() > 0xFFFF) return false;
     write_u16_le(buf, static_cast<std::uint16_t>(s.size()));
     write_bytes(buf, s.data(), s.size());
+    return true;
 }
 
 bool read_length_string(const std::uint8_t* data, std::size_t available,
