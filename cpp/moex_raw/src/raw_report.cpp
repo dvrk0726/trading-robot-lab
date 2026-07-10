@@ -34,34 +34,7 @@ std::string indent(int level) {
     return std::string(level * 2, ' ');
 }
 
-std::string clock_domain_str(ClockDomain cd) {
-    switch (cd) {
-        case ClockDomain::Synthetic: return "synthetic";
-        case ClockDomain::SystemMonotonicReceive: return "system_monotonic_receive";
-        case ClockDomain::HardwareReceive: return "hardware_receive";
-        default: return "unknown";
-    }
-}
-
-std::string transport_str(Transport t) {
-    switch (t) {
-        case Transport::Synthetic: return "synthetic";
-        case Transport::Udp: return "udp";
-        case Transport::Tcp: return "tcp";
-        default: return "unknown";
-    }
-}
-
-std::string source_side_str(SourceSide s) {
-    switch (s) {
-        case SourceSide::None: return "none";
-        case SourceSide::A: return "A";
-        case SourceSide::B: return "B";
-        default: return "unknown";
-    }
-}
-
-void emit_stream_summary_json(std::ostringstream& oss, const RawStreamSummary& ss, int il,
+static void emit_stream_summary_json(std::ostringstream& oss, const RawStreamSummary& ss, int il,
                               const std::string& nl, const std::string& sep) {
     oss << indent(il) << "{" << nl;
     oss << indent(il + 1) << json_escape("session_id") << ": " << json_escape(ss.session_id_hex) << sep;
