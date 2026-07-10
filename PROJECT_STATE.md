@@ -2,7 +2,7 @@
 
 Дата последнего обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: active / MOEX realtime foundation
+Статус: active / RT-1 specification ready
 
 ## Назначение
 
@@ -24,7 +24,7 @@ Shared Contracts — normalized market events, OrderIntent, RiskDecision and rep
 market data -> Data Quality -> deterministic replay -> research -> backtest -> paper -> certification/owner gate -> live later
 ```
 
-## Принятые решения
+## Неизменяемые решения
 
 ```text
 Trading Lab cannot send real orders.
@@ -54,6 +54,8 @@ decisions/ADR-0004-moex-vpts-certification-gate.md
 private GitHub repository;
 AI_CONTEXT / PROJECT_STATE / ROADMAP / SECURITY;
 AI-agent workflow and task template;
+GitHub write-limit and handoff rules;
+Future Rewrite Notes;
 Strategy Knowledge Base;
 Shared schemas and test vectors;
 Trading Lab/Runtime skeleton;
@@ -86,18 +88,18 @@ Quote flag semantics analysis;
 54cd53df4b92473e49dd5dff96b2024590b82e42
 ```
 
-Подтверждённые QSH flags:
+Подтверждённые historical QSH flags:
 
 ```text
 0x94  = Add + Buy + Quote
 0x414 = Add + Buy + TxEnd
 ```
 
-Остаются 907 crossed snapshots, поэтому соответствующие данные имеют `strategy_ready=false`.
+Остаются 907 crossed snapshots; соответствующие данные имеют `strategy_ready=false`.
 
-Исторический QSH 2021 используется как engineering sample для parser/replay/book mechanics. Он не является доказательством современной прибыльности.
+Historical QSH 2021 remains an engineering sample for parser/replay/book mechanics and is not evidence of current profitability.
 
-## MOEX official-source work
+## MOEX official-source status
 
 Изучены и зафиксированы:
 
@@ -126,11 +128,13 @@ docs/moex/moex_source_version_check.md
 docs/moex/MOEX_REALTIME_ARCHITECTURE.md
 ```
 
-### FAST template alignment
+### FAST alignment
 
 ```text
-FAST current documentation: 1.29.1 dated 2025-11-19.
-FAST_9.0 templates match the uploaded T0 template set for the checked file.
+Current FAST documentation: 1.29.1 dated 2025-11-19.
+FAST_9.0 templates match the checked uploaded T0 template file.
+Known template SHA-256:
+dbd50f1e0becc2b2ebd9dac8e4c6609ba1538566811b610cde9b6dd3e7f66a8e
 ```
 
 Relevant template IDs:
@@ -145,9 +149,7 @@ Relevant template IDs:
 46 TradingSessionStatus
 ```
 
-### T0 ORDERS-LOG path
-
-Для T0 подтверждены необходимые логические компоненты:
+T0 logical path:
 
 ```text
 FUT-INFO;
@@ -158,7 +160,7 @@ template-driven decoding;
 Snapshot + buffered Incremental bootstrap.
 ```
 
-## Decision on FAST decoding
+## FAST decoder decision
 
 QuickFAST is not the planned production hot-path decoder.
 
@@ -175,7 +177,7 @@ template hash validation;
 differential testing against reference tools.
 ```
 
-QuickFAST, fast_sensor and reference codecs may be used only as diagnostic/correctness references.
+QuickFAST, fast_sensor and reference codecs may be used only for diagnostic/correctness comparison.
 
 ## Realtime architecture
 
@@ -221,12 +223,37 @@ Drop Copy information.
 
 Waiting for MOEX response with approved services, addresses, ports, identifiers and network requirements.
 
-Credentials and private connection parameters must not be committed or pasted into public project documents.
+Credentials and private connection parameters must not be committed or pasted into project documents.
 
-## Current priority
+## Current task — RT-1
 
 ```text
 RT-1 — Local FAST configuration/templates inspector
+```
+
+Status:
+
+```text
+specification package created;
+GitHub Issue #14 created and open;
+implementation not started;
+no MiMo commit yet;
+no code review yet.
+```
+
+Task package:
+
+```text
+tasks/RT-1-fast-config-template-inspector/00_OVERVIEW.md
+tasks/RT-1-fast-config-template-inspector/01_REQUIREMENTS.md
+tasks/RT-1-fast-config-template-inspector/02_TEST_PLAN.md
+tasks/RT-1-fast-config-template-inspector/03_ACCEPTANCE.md
+```
+
+Issue:
+
+```text
+#14 [MIMO][C++] RT-1 FAST configuration/templates inspector
 ```
 
 Expected result:
@@ -235,11 +262,12 @@ Expected result:
 C++ CLI inspector;
 parse configuration.xml;
 parse templates.xml;
-list ORDERS-LOG channels;
-validate template IDs and field order/types;
-calculate/report template/config hashes;
-create normalized FAST contract skeleton;
-unit tests;
+list ORDERS-LOG/FUT-INFO channels;
+validate template IDs and ordered field metadata;
+calculate/report file hashes;
+create normalized FAST metadata contracts;
+produce deterministic JSON;
+unit and regression tests;
 MiMo report and commit SHA.
 ```
 
@@ -249,10 +277,18 @@ Explicit RT-1 non-goals:
 no network connection;
 no UDP multicast;
 no TCP Recovery connection;
+no FAST binary decoder yet;
 no FIX/TWIME;
 no real credentials;
 no order sending;
-no full FAST decoder yet.
+no official XML committed without approval;
+no QuickFAST production dependency.
+```
+
+Required MiMo report:
+
+```text
+agent_workspaces/mimo/reports/2026-07-10-rt1-fast-config-template-inspector.md
 ```
 
 ## Agent responsibilities
@@ -272,7 +308,7 @@ MiMo must not silently change architecture or expand task scope.
 
 ## GitHub write workflow
 
-Rules are stored in:
+Rules:
 
 ```text
 docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md
@@ -282,30 +318,31 @@ Important:
 
 ```text
 large code/docs are written locally by MiMo and pushed with Git;
-connector writes stay small and focused;
+connector writes remain small and focused;
 large tasks are split into Issue + task-spec files;
-PROJECT_STATE is current state, not an unlimited history log;
+PROJECT_STATE stores current state, not unlimited history;
 raw data, binaries and secrets never enter normal Git.
 ```
 
 ## Engineering improvement log
 
-Future rewrite lessons are recorded in:
-
 ```text
 docs/engineering/FUTURE_REWRITE_NOTES.md
 ```
 
-Only evidence-backed architecture/performance/reliability observations belong there.
+Only evidence-backed architecture, correctness, performance, reliability and operability findings belong there.
 
 ## Immediate next actions
 
 ```text
-1. Wait for MOEX response without blocking local work.
-2. Prepare an approved RT-1 task specification for MiMo.
-3. MiMo implements RT-1 locally and runs tests.
-4. Architecture agent reviews commit/diff/test evidence.
-5. Only after acceptance start RT-2 raw capture/replay format.
+1. Owner gives MiMo the instruction to start Issue #14.
+2. MiMo implements RT-1 locally within the specification.
+3. MiMo runs build, new tests and existing QSH regressions.
+4. MiMo commits, pushes and publishes the required report.
+5. Architecture/Review Agent checks diff, tests and scope.
+6. Owner accepts RT-1 or requests corrections.
+7. RT-2 remains blocked until RT-1 acceptance.
+8. MOEX response is processed separately when received.
 ```
 
 ## Explicit non-goals now
