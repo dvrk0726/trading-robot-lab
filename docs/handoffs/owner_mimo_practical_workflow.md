@@ -1,261 +1,174 @@
 # Owner / ChatGPT / MiMo Practical Workflow
 
-Date: 2026-07-09
-Repo: `dvrk0726/trading-robot-lab`
-Audience: owner and any AI agent helping the owner
+Дата обновления: 2026-07-10  
+Репозиторий: `dvrk0726/trading-robot-lab`  
+Статус: актуальный практический процесс
 
-## Roles
+## Цель
 
-### Owner
+Владелец формулирует желаемый результат и проверяет готовый результат. Работа с ветками, сборкой, тестами, commit, push и Pull Request выполняется MiMo. Архитектурный review и управление задачами выполняет ChatGPT.
 
-The owner does not need to inspect code manually on every step. The owner mainly:
-
-```text
-1. opens Developer PowerShell for VS 2022;
-2. goes to the repo folder;
-3. pulls latest task file from GitHub;
-4. starts MiMo with the exact task filename;
-5. after MiMo finishes, checks git status/log;
-6. sends screenshots/results to ChatGPT for review;
-7. saves changes with mimo_save.ps1 only if MiMo left local changes.
-```
-
-### ChatGPT
-
-ChatGPT:
+## Нормальный цикл
 
 ```text
-1. creates focused task files in GitHub, e.g. M10S_...md;
-2. reviews screenshots from owner;
-3. verifies actual GitHub commits, changed files, and reports;
-4. tells owner whether the result is acceptable;
-5. creates the next task only after reviewing the previous result;
-6. keeps research direction controlled and prevents unsafe shortcuts.
+Owner формулирует результат
+-> ChatGPT готовит Issue и спецификацию
+-> Issue получает READY_FOR_MIMO
+-> Owner запускает MiMo одной командой
+-> MiMo создаёт branch, реализует, тестирует и создаёт PR
+-> MiMo переводит Issue в READY_FOR_REVIEW и останавливается
+-> ChatGPT проверяет diff, CI, тесты и архитектуру
+-> при замечаниях Issue получает CHANGES_REQUIRED
+-> после технического принятия Issue получает OWNER_REVIEW
+-> Owner проверяет готовый интерфейс/результат
+-> OWNER_APPROVED
+-> проверяемый merge в main
+-> PROJECT_STATE/ROADMAP обновляются
+-> DONE
 ```
 
-### MiMo
+## Что делает владелец
 
-MiMo:
+В обычной задаче владельцу нужно только:
 
-```text
-1. reads the task file;
-2. edits code/docs/scripts locally;
-3. builds and runs tests;
-4. runs real-sample validation if local QSH exists;
-5. updates the long report;
-6. may commit/push by itself or leave local changes.
-```
+1. Описать, какой результат нужен.
+2. После сообщения ChatGPT запустить MiMo.
+3. После технического review открыть готовый интерфейс или результат по Owner Review Package.
+4. Написать замечания или подтвердить принятие.
 
-## Owner setup
+Владелец не должен вручную выбирать файлы для commit, придумывать branch или выполнять merge вслепую.
 
-Open:
+## Единственная обычная команда MiMo
 
-```text
-Developer PowerShell for VS 2022
-```
-
-Go to repo:
+В Developer PowerShell из папки репозитория:
 
 ```powershell
-cd C:\ProjectsHFT\trading-robot-lab
+mimo --model xiaomi/mimo-v2.5-pro --prompt "Возьми следующую задачу READY_FOR_MIMO, выполни её, создай Pull Request и остановись"
 ```
 
-Check current state:
+Команда запускается только после того, как ChatGPT подтвердил статус `READY_FOR_MIMO`.
 
-```powershell
-git status --short
-git log --oneline -1
-```
+## Что MiMo делает автоматически
 
-## How to start a new task
-
-When ChatGPT creates a task file, for example:
+MiMo обязан:
 
 ```text
-M10S_COUNTER_FLAG_SEMANTICS_AND_BOOK_IMPACT.md
+проверить отсутствие незавершённой предыдущей задачи;
+найти следующий READY_FOR_MIMO Issue;
+прочитать контекст и спецификацию;
+обновить локальный main через fast-forward;
+создать ветку mimo/issue-<N>-<slug>;
+перевести Issue в IN_PROGRESS;
+выполнить только эту задачу;
+запустить сборку, тесты и hygiene check;
+создать commit и push ветки;
+создать Pull Request в main;
+добавить отчёт;
+перевести Issue в READY_FOR_REVIEW;
+остановиться.
 ```
 
-Owner runs:
+MiMo запрещено выполнять merge или начинать следующую задачу.
 
-```powershell
-git pull
-mimo --model xiaomi/mimo-v2.5-pro --prompt "Выполни M10S_COUNTER_FLAG_SEMANTICS_AND_BOOK_IMPACT.md"
-```
+## Что проверяет ChatGPT
 
-Use the exact filename that ChatGPT provides.
-
-## What to do after MiMo finishes
-
-Run:
-
-```powershell
-git status --short
-git log --oneline -1
-```
-
-Then send ChatGPT a screenshot.
-
-## How to interpret git status
-
-### Case A: working tree clean
-
-If output says:
+После появления Pull Request ChatGPT проверяет:
 
 ```text
-Nothing to commit. Working tree clean.
+связь PR с правильным Issue;
+changed files и полный diff;
+соответствие спецификации;
+результаты GitHub Actions;
+локальные команды и отчёт MiMo;
+отсутствие secrets/raw data/binaries;
+отсутствие незапрошенного network/FIX/TWIME/order code;
+сохранение QSH-семантики и strategy_ready gating;
+архитектурные границы;
+Owner Review Package для интерфейсной задачи.
 ```
 
-or `git status --short` prints nothing, then there are no local unsaved changes.
+Без этого review задача не переходит к владельцу.
 
-If `git log --oneline -1` shows a new commit with:
+## Как владелец проверяет интерфейс
+
+Для UI-задачи MiMo готовит пакет по:
 
 ```text
-HEAD -> main, origin/main, origin/HEAD
+docs/engineering/OWNER_REVIEW_PACKAGE.md
 ```
 
-then MiMo already pushed to GitHub. Do not run `mimo_save.ps1` again.
-
-### Case B: there are modified files
-
-If `git status --short` shows lines like:
+В пакете должны быть:
 
 ```text
-M  agent_workspaces/mimo/reports/...
-M  cpp/qsh_ingest/src/main.cpp
-?? cpp/qsh_ingest/tests/test_new_file.cpp
+что изменилось;
+как запустить;
+START_DEMO.cmd;
+STOP_DEMO.cmd;
+адрес интерфейса;
+короткий сценарий проверки;
+скриншоты;
+известные ограничения.
 ```
 
-then MiMo left local changes. Save them with the command ChatGPT provides, usually:
+Владелец запускает `START_DEMO.cmd`, открывает указанный адрес, проходит короткий сценарий и затем запускает `STOP_DEMO.cmd`.
 
-```powershell
-.\tools\mimo_save.ps1 "Short commit message"
-```
+## Если владелец нашёл проблему
 
-Example:
+Владелец описывает проблему обычными словами или прикладывает скриншот. ChatGPT превращает замечание в точный review comment или компактную задачу.
 
-```powershell
-.\tools\mimo_save.ps1 "Investigate Counter flag semantics and book impact"
-```
-
-After that, run again:
-
-```powershell
-git status --short
-git log --oneline -1
-```
-
-Send ChatGPT a screenshot.
-
-## What `mimo_save.ps1` does
-
-The helper script:
+Для исправлений текущего результата используется тот же Pull Request:
 
 ```text
-1. stages current changes;
-2. commits them;
-3. rebases on latest origin/main before push;
-4. pushes to GitHub.
+READY_FOR_REVIEW
+-> CHANGES_REQUIRED
+-> MiMo исправляет в той же ветке
+-> повторяет tests/CI
+-> READY_FOR_REVIEW
 ```
 
-Warnings like this are usually fine:
+Новая задача создаётся только для отдельного scope.
+
+## Что больше не используется
+
+Старый процесс считается отменённым:
 
 ```text
-LF will be replaced by CRLF the next time Git touches it
+MiMo работает прямо в main;
+MiMo самостоятельно push в main;
+Owner вручную запускает mimo_save.ps1 на main;
+Owner передаёт только скриншот git log вместо Pull Request;
+следующая задача запускается до review предыдущей.
 ```
 
-Do not stop because of those warnings unless the script fails.
+`tools/mimo_save.ps1` сохраняется только как безопасный helper для текущей feature-ветки и обязан отказать на `main`/`master`.
 
-## What screenshots to send ChatGPT
+## Когда нужно остановиться
 
-Always send the terminal screenshot showing:
+Не продолжать работу и сообщить ChatGPT, если:
 
 ```text
-git status --short
-git log --oneline -1
-mimo_save output, if used
+нет задачи READY_FOR_MIMO;
+предыдущий PR ожидает review;
+CI упал;
+тесты упали;
+MiMo находится в main с изменениями;
+появились data/raw, QSH, pcap, databases, binaries или secrets;
+MiMo расширил scope;
+задача требует реальных доступов или production/live решения.
 ```
 
-Good screenshot contents:
+## Merge
+
+Автоматический merge запрещён. MiMo merge не выполняет.
+
+Перед merge должны быть выполнены:
 
 ```text
-commit hash
-commit message
-whether push completed
-whether working tree is clean
+CI passed;
+Architecture/Review Agent accepted;
+все review comments закрыты;
+Owner approval получен, если задача пользовательская или owner-gated;
+нет секретов и запрещённых файлов.
 ```
 
-ChatGPT will then verify GitHub directly.
-
-## When to ask ChatGPT before continuing
-
-Ask ChatGPT before running the next task when:
-
-```text
-MiMo says tests failed
-MiMo says build failed
-git status shows unexpected files under data/raw or data/reports
-MiMo adds broker/live-trading code
-MiMo says L2 strategy-ready YES while crossed_book_snapshots > 0
-MiMo changes default behavior without evidence
-MiMo suggests skipping diagnostics and going to strategy
-```
-
-## Files that must not be committed
-
-Never commit:
-
-```text
-data/raw/
-data/reports/
-.env
-*.qsh
-*.csv generated reports
-*.json generated reports
-*.exe
-*.dll
-keys / tokens / credentials
-```
-
-If such files appear in `git status --short`, stop and ask ChatGPT.
-
-## Current practical loop
-
-The normal loop is:
-
-```text
-1. ChatGPT creates M10X task in GitHub.
-2. Owner runs git pull.
-3. Owner starts MiMo with exact task filename.
-4. MiMo works.
-5. Owner runs git status --short and git log --oneline -1.
-6. If dirty: owner runs tools/mimo_save.ps1 with commit message.
-7. Owner sends screenshot to ChatGPT.
-8. ChatGPT verifies GitHub commit and report.
-9. ChatGPT gives next task or says stop.
-```
-
-## Current project status at this handoff
-
-Latest research milestone: M10S.
-
-Main finding:
-
-```text
-Counter=0x100 events are the primary cause of early crossed-book reconstruction.
---counter-mode ignore-book reduces crossed snapshots from 7890 to 907.
-```
-
-Still not done:
-
-```text
-L2 strategy-ready: NO
-remaining crossed snapshots after counter-ignore-book: 907
-```
-
-Recommended next task:
-
-```text
-M10T_REMAINING_CROSSED_AFTER_COUNTER_IGNORE
-```
-
-Owner should not proceed to strategy/UI/live trading until ChatGPT or another reviewing AI confirms that the L2 data quality gate is clean or that invalid segments are explicitly excluded.
+После merge ChatGPT обновляет состояние проекта и только затем разрешает следующую задачу.

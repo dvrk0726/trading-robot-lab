@@ -1,244 +1,250 @@
-# AI_CONTEXT
+# AI Context
 
-Дата последнего обновления: 2026-07-10  
+Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: private research and engineering repository
+Текущий gate: review and owner acceptance of workflow PR before RT-1
 
-## Читать в таком порядке
+## Назначение проекта
 
-Любой новый ИИ-агент или разработчик обязан сначала прочитать:
-
-```text
-1. AI_CONTEXT.md
-2. PROJECT_STATE.md
-3. ROADMAP.md
-4. docs/moex/MOEX_REALTIME_ARCHITECTURE.md
-5. docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md
-6. relevant ADR and task specification
-```
-
-## Главная цель
-
-Построить дисциплинированную платформу для исследования и дальнейшего безопасного исполнения торговых стратегий на срочном рынке MOEX.
-
-Целевая модель:
+Создать исследовательскую и будущую production-ready торговую систему с жёстким разделением:
 
 ```text
-Trading Lab      — research, replay, backtests, reports, visualization.
-Trading Runtime  — lightweight execution of approved Strategy Packages.
-Shared Contracts — normalized events, signals, OrderIntent, RiskDecision and reports.
+Trading Lab      — data quality, replay, research, backtest, reports and UI.
+Trading Runtime  — future execution of approved Strategy Packages.
+Shared Contracts — common events, signals, OrderIntent, RiskDecision and reports.
 ```
 
-## Неизменяемые правила
+## Неизменяемая архитектура
 
 ```text
 Trading Lab не отправляет реальные заявки.
-Стратегия не вызывает биржевой шлюз напрямую.
-Strategy -> OrderIntent -> RiskEngine -> OrderManager -> Execution.
-Runtime запускает только утверждённые Strategy Packages.
-Live выключен по умолчанию и требует решения владельца.
-Production order entry заблокирован до VPTS/certification gate.
-Секреты, raw market data и реальные доступы не хранятся в Git.
+Strategy не вызывает execution напрямую.
+Каждый OrderIntent проходит RiskEngine.
+Live выключен по умолчанию.
+Production order entry заблокирован до VPTS/certification и решения Owner.
+C++ используется для low-level data/realtime/runtime contour.
+Python используется для research, reports and UI.
+Secrets, personal data and raw market data не хранятся в Git.
 ```
 
-## Роли
+Authoritative ADRs:
 
 ```text
-Owner / Human Gate:
-финальные решения, расходы, доступы, paper/live и production gates.
-
-Architecture / Review Agent (ChatGPT):
-официальные источники, архитектура, task specification, code/diff review, acceptance.
-
-Implementation Agent (MiMo Code):
-локальная реализация, сборка, тесты, commit, push и технический отчёт.
+decisions/ADR-0001-hybrid-python-cpp-architecture.md
+decisions/ADR-0002-two-system-lab-runtime-architecture.md
+decisions/ADR-0003-cpp-qsh-ordlog-data-engine.md
+decisions/ADR-0004-moex-vpts-certification-gate.md
 ```
 
-MiMo не должен самостоятельно менять основную архитектуру, включать live или переписывать работающий модуль без утверждённого задания.
-
-## Что уже работает
-
-Исторический C++ QSH/OrdLog слой создан и доведён до инженерно полезного состояния:
+## Подтверждённое состояние historical contour
 
 ```text
-C++20 qsh_ingest;
-QSH/OrdLog parsing;
-transaction grouping;
-L3 reconstruction;
-L3 -> L2 export;
-Data Quality;
-strategy_ready gating;
-исследование NonSystem, crossed-state и Quote semantics;
-тесты M10X: 20/20.
+M10X complete.
+20/20 CTest regression tests.
+Control commit: 54cd53df4b92473e49dd5dff96b2024590b82e42
+Remaining crossed snapshots: 907
+strategy_ready for affected data: false
 ```
 
-Контрольный commit M10X:
-
-```text
-54cd53df4b92473e49dd5dff96b2024590b82e42
-```
-
-Подтверждённые исторические QSH flags:
+Подтверждённые historical flags:
 
 ```text
 0x94  = Add + Buy + Quote
 0x414 = Add + Buy + TxEnd
 ```
 
-Исторический QSH 2021 используется только как engineering sample. Он не доказывает современную прибыльность.
+Historical QSH 2021 — engineering sample для parser/replay/book mechanics, не доказательство современной прибыльности.
 
-## Текущий главный приоритет
-
-```text
-MOEX Realtime RT-1
-```
-
-Следующий ограниченный этап:
-
-```text
-local configuration.xml/templates.xml inspector;
-normalized C++ FAST contracts;
-template IDs, fields, hashes and ORDERS-LOG channels validation;
-no network connection;
-no order sending;
-no QuickFAST in production hot path.
-```
-
-Realtime roadmap:
-
-```text
-docs/moex/MOEX_REALTIME_ARCHITECTURE.md
-```
-
-## MOEX FAST/FIX knowledge state
+## MOEX realtime foundation
 
 Изучены и зафиксированы:
 
 ```text
-FAST specification 1.29.1;
+FAST 1.29.1;
 FAST_9.0 templates.xml;
 T0 configuration.xml;
-ORDERS-LOG Incremental A/B;
-Snapshot A/B;
-TCP Historical Replay;
 FIX SPECTRA;
-VPTS certification procedure;
-production FAST / Full_orders_log direction.
+VPTS requirements;
+MOEX realtime architecture.
 ```
 
-Важные template IDs:
+QuickFAST не является production hot-path основой. Планируется специализированный C++ SPECTRA FAST decoder, но он не входит в RT-1.
+
+MOEX test-access questionnaire отправлена. MOEX запросила дополнительные сведения для создания логинов.
+
+Запрещено сохранять в Git:
 
 ```text
-OrdersLogMessage                  29
-BookMessage                       30
-DefaultIncrementalRefreshMessage  31
-DefaultSnapshotMessage            32
-SecurityDefinition                40
-SecurityGroupStatus               45
-TradingSessionStatus              46
+personal data;
+static IP;
+logins/passwords;
+private connection addresses/ports/identifiers;
+official owner-provided private artifacts.
 ```
 
-FAST MDFlags и исторические QSH flags — разные контракты. Их нельзя объединять в один enum.
-
-## Решение по FAST decoder
-
-QuickFAST не является фундаментом production hot path.
-
-Целевое решение:
+## Текущий process gate
 
 ```text
-собственный специализированный C++ SPECTRA FAST decoder;
-wire primitives отдельно;
-generated direct decoders from templates.xml;
-no XML interpretation in hot path;
-no universal FIX object tree;
-minimal allocations;
-differential testing against reference tools;
-template hash verification at startup.
+Issue #1: [ARCH] Establish MiMo branch, Pull Request and CI workflow
+Pull Request #15: chore: establish MiMo branch, Pull Request and CI workflow
+Branch: chore/issue-1-mimo-pr-workflow
+Merge: not performed
+RT-1: blocked
 ```
 
-QuickFAST/fast_sensor/reference codec допускаются только как диагностический эталон и инструмент сравнения.
-
-## Архитектура хранения
+Workflow package включает:
 
 ```text
-Raw source of truth: immutable binary segments or pcapng on NVMe.
-Archive: compressed Parquet.
-Hot analytics: ClickHouse.
-Control metadata: PostgreSQL.
-Local research: DuckDB + Python.
-Future archive: S3-compatible/MinIO.
+permanent MiMo instruction;
+universal READY_FOR_MIMO command;
+branch-only implementation;
+canonical task statuses;
+one-task-at-a-time rule;
+Pull Request template;
+Python/C++/hygiene GitHub Actions;
+20-test QSH/M10X regression gate;
+secret/raw-data/large-file hygiene checker;
+Owner Review Package;
+label synchronization;
+no auto-merge/no MiMo merge;
+main branch protection decision guide.
 ```
 
-Базы данных не должны синхронно блокировать UDP capture.
-
-## Старый HFT robot
-
-Старый `robot_uralpro` ценен как:
+Полный CI run #8 для PR #15 подтвердил:
 
 ```text
-источник идей;
-пример исторической инфраструктуры;
-источник гипотезы RI / synthetic index;
-материал для анализа order management.
+Repository hygiene: PASS
+Python tests and contracts: PASS
+C++ QSH M10X regression: PASS
+Expected CTest inventory: exactly 20
+All 20 regression tests: PASS
 ```
 
-Он не является готовым production robot и не переносится напрямую.
+Любой новый head commit PR должен повторно пройти те же checks перед merge.
 
-## Стратегии-кандидаты
+## Server-side защита main
+
+Для private repository availability branch protection/rulesets зависит от GitHub plan. Owner не покупает и не меняет plan автоматически.
+
+После принятия PR #15 Owner выбирает один вариант:
 
 ```text
-1. RI / Synthetic Index Lead-Lag Statistical Arbitrage.
-2. Regime-aware Inventory Market Making.
+A. Если функция доступна — включить ruleset/branch protection и required checks.
+B. Если функция недоступна — отдельно решить вопрос upgrade либо явно принять временное procedural limitation для private solo repository.
 ```
 
-Правило:
+Даже при временном limitation обязательны feature branch, Pull Request, успешный CI, Architecture/Review, manual owner merge, no auto-merge и запрет direct main work для MiMo.
+
+Инструкция:
 
 ```text
-Do not assume who leads. Measure who leads.
-No strategy is accepted without statistical validation.
+docs/engineering/MAIN_BRANCH_PROTECTION.md
 ```
 
-## Безопасность
-
-Запрещено коммитить:
+## RT-1
 
 ```text
-.env;
-API keys, passwords and tokens;
-private keys;
-MOEX/broker credentials;
-real account identifiers;
-raw QSH/FAST captures;
-large databases and market archives;
-EXE/DLL/build directories.
+Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
+Status: DRAFT
+Blocked by: Issue #1 / PR #15 acceptance
+Implementation: not started
+MiMo branch/commit/PR: none
 ```
 
-## Работа с GitHub
-
-Крупный код пишет MiMo локально и отправляет обычным `git push`.
-
-Прямая запись через ИИ-коннектор используется для небольших документов и точечных изменений. Большие задачи разделяются на компактный Issue и несколько task-spec файлов.
-
-Полные правила:
+Task package:
 
 ```text
+tasks/RT-1-fast-config-template-inspector/00_OVERVIEW.md
+tasks/RT-1-fast-config-template-inspector/01_REQUIREMENTS.md
+tasks/RT-1-fast-config-template-inspector/02_TEST_PLAN.md
+tasks/RT-1-fast-config-template-inspector/03_ACCEPTANCE.md
+```
+
+RT-1 scope:
+
+```text
+local C++20/CMake CLI inspector;
+parse configuration.xml and templates.xml;
+inspect ORDERS-LOG/FUT-INFO structure;
+validate required template IDs and ordered field metadata;
+calculate input SHA-256;
+produce human-readable and deterministic JSON output;
+use synthetic/sanitized fixtures;
+run new tests and existing 20 QSH/M10X regressions.
+```
+
+RT-1 non-goals:
+
+```text
+no network;
+no UDP/TCP recovery;
+no FAST binary decoder;
+no FIX/TWIME;
+no order sending;
+no credentials;
+no QuickFAST production dependency;
+no committed official private XML;
+no QSH semantic changes;
+no strategy_ready weakening.
+```
+
+RT-1 cannot move to `READY_FOR_MIMO` until:
+
+```text
+current head of PR #15 passes all checks;
+Architecture/Review accepts the diff;
+Owner accepts the workflow and branch-protection option;
+PR #15 is merged manually;
+canonical labels are synchronized;
+auto-merge remains disabled;
+Issue #1 is completed;
+Architecture/Review explicitly releases Issue #14.
+```
+
+## AI workflow
+
+Authoritative process:
+
+```text
+docs/mimo_developer_workflow.md
+docs/ai_team_workflow.md
+docs/ai_agent_communication_protocol.md
 docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md
+docs/engineering/OWNER_REVIEW_PACKAGE.md
+docs/engineering/MAIN_BRANCH_PROTECTION.md
 ```
 
-## Обязательный результат задачи MiMo
+Universal MiMo command:
 
 ```text
-commit SHA;
-список изменённых файлов;
-что реализовано;
-команды сборки и тестов;
-результаты тестов;
-известные ограничения;
-что намеренно не делалось;
-handoff для следующего агента.
+Возьми следующую задачу READY_FOR_MIMO, выполни её, создай Pull Request и остановись.
 ```
 
-## Live warning
+MiMo выполняет одну задачу, создаёт feature branch и PR, запускает проверки, готовит отчёт, не выполняет merge и останавливается.
 
-Проект связан с финансовым риском. Любой путь к реальным заявкам требует research, backtest, deterministic replay, paper trading, risk review, security review, VPTS/certification и явного решения владельца.
+## Canonical statuses
+
+```text
+DRAFT
+READY_FOR_MIMO
+IN_PROGRESS
+READY_FOR_REVIEW
+CHANGES_REQUIRED
+OWNER_REVIEW
+OWNER_APPROVED
+DONE
+```
+
+## Immediate actions
+
+```text
+1. Confirm all checks on the current PR #15 head.
+2. Complete Architecture/Review of the final diff.
+3. Owner reviews and accepts or requests exact changes.
+4. Owner selects the branch-protection option without automatic spending.
+5. Merge PR #15 manually only after acceptance.
+6. Synchronize labels and apply the selected main protection mode.
+7. Mark Issue #1 DONE.
+8. Only then move Issue #14 to READY_FOR_MIMO.
+9. Run MiMo once for RT-1; MiMo stops at a new Pull Request.
+```

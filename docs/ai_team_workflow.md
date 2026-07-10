@@ -1,468 +1,194 @@
 # AI Team Workflow
 
-Дата создания: 2026-07-08
-Репозиторий: `dvrk0726/trading-robot-lab`
-Статус: рабочий регламент взаимодействия ИИ-агентов и разработчиков
+Дата обновления: 2026-07-10  
+Статус: обязательный регламент
 
-## Назначение
-
-Этот документ фиксирует, как разные ИИ-агенты и разработчики должны работать в одном проекте, чтобы не мешать друг другу, не дублировать работу и не терять контекст.
-
-Главная цель: любой новый ИИ-разработчик должен открыть этот файл и понять:
-
-- кто за что отвечает;
-- какие файлы читать перед началом работы;
-- куда записывать результат;
-- как задавать вопросы другому агенту;
-- как передавать задачу дальше;
-- что запрещено делать без отдельного решения владельца проекта.
-
-## Главный принцип
-
-Проект разделяется на зоны ответственности.
-
-Ни один агент не должен самовольно захватывать весь проект и менять всё подряд.
-
-Правильный стиль работы:
+## Рабочая схема
 
 ```text
-прочитал контекст -> понял свою роль -> сделал маленький проверяемый шаг -> записал результат -> передал следующему агенту
+Owner intent
+-> Architecture/Review Agent prepares Issue and specs
+-> READY_FOR_MIMO
+-> MiMo creates branch, implements and tests
+-> Pull Request + CI
+-> Architecture/Review
+-> Owner review when required
+-> reviewed merge
+-> PROJECT_STATE/ROADMAP update
 ```
 
-## Обязательные файлы для чтения перед работой
+## Обязательный контекст
 
-Любой ИИ-агент перед началом работы должен прочитать:
+Перед существенной работой читать:
 
 ```text
 AI_CONTEXT.md
 PROJECT_STATE.md
-SECURITY.md
 ROADMAP.md
-README.md
-```
-
-Если работа связана со стратегиями, также прочитать:
-
-```text
-strategy_knowledge_base/README.md
-strategy_knowledge_base/strategy_master_agent/STRATEGY_MASTER_PROMPT.md
-strategy_knowledge_base/ideas/IDEA_TEMPLATE.md
-strategy_knowledge_base/strategies/STRATEGY_TEMPLATE.md
-strategy_knowledge_base/evaluations/EVALUATION_TEMPLATE.md
-```
-
-Если работа связана с архитектурой, также прочитать:
-
-```text
-docs/01_hybrid_architecture.md
-decisions/ADR-0001-hybrid-python-cpp-architecture.md
-```
-
-Если работа связана с командным взаимодействием, также прочитать:
-
-```text
+SECURITY.md
 docs/ai_team_workflow.md
 docs/ai_agent_communication_protocol.md
+docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md
 ```
 
-## Роли агентов
+MiMo дополнительно читает `docs/mimo_developer_workflow.md`, Issue, все task specs и relevant ADR.
 
-### 1. Strategy Master Agent
+## Роли
 
-Зона ответственности:
+### Owner
+
+Формулирует желаемый результат, проверяет готовый результат и принимает решения по расходам, доступам, MOEX, hardware, paper/live и production.
+
+### Architecture / Review Agent
+
+Отвечает за архитектуру, компактные задачи, зависимости, review diff/CI/test evidence, замечания, `PROJECT_STATE.md` и `ROADMAP.md`.
+
+### MiMo Code
+
+Implementation Agent. Выполняет одну готовую задачу в отдельной ветке, запускает проверки, создаёт commit, push, Pull Request и отчёт. Не меняет архитектуру самостоятельно, не выполняет merge и не начинает следующую задачу до review.
+
+### Strategy / Research Agent
+
+Формализует гипотезы, требования к данным, replay/backtest планы и evidence. Не выдаёт historical result за доказательство текущей прибыльности.
+
+## Неизменяемые границы
 
 ```text
-strategy_knowledge_base/
-docs/strategy/
-docs/research/
-docs/risk/
+Trading Lab не отправляет реальные заявки.
+Strategy создаёт Signal/OrderIntent и не вызывает execution напрямую.
+Каждый OrderIntent проходит RiskEngine.
+Live выключен по умолчанию.
+Production заблокирован certification/owner gate.
+C++ — low-level data/realtime/runtime contour.
+Python — research, reports and UI.
+Secrets и raw market data не хранятся в Git.
 ```
 
-Отвечает за:
+## Канонические статусы
 
-- торговые гипотезы;
-- классификацию стратегий;
-- формализацию идей;
-- требования к данным;
-- описание сигналов;
-- условия входа и выхода;
-- риск-ограничения;
-- план бэктеста;
-- оценку результатов;
-- проверку, что стратегия не выдается за рабочую без тестов.
-
-Strategy Master Agent НЕ должен:
-
-- писать live execution code;
-- подключать брокера;
-- использовать реальные ключи;
-- отправлять реальные заявки;
-- обходить risk engine;
-- обещать прибыль;
-- переносить старого HFT-робота целиком без анализа.
-
-Основной результат работы Strategy Master Agent:
+Каждый implementation Issue имеет ровно один статус:
 
 ```text
-IDEA-*.md
-STRAT-*.md
-EVAL-*.md
-NOTE-*.md
-ТЗ для Python/C++ разработчика
+DRAFT
+READY_FOR_MIMO
+IN_PROGRESS
+READY_FOR_REVIEW
+CHANGES_REQUIRED
+OWNER_REVIEW
+OWNER_APPROVED
+DONE
 ```
-
-### 2. Python Research / Backtest Agent
-
-Зона ответственности:
 
 ```text
-src/
-examples/
-tests/
-backtest/
-research/
-notebooks/
+DRAFT            — scope/dependency/test/decision ещё не готовы.
+READY_FOR_MIMO   — задача полностью определена и может быть начата.
+IN_PROGRESS      — MiMo работает только над этой задачей.
+READY_FOR_REVIEW — PR создан; MiMo остановился.
+CHANGES_REQUIRED — точные исправления в том же PR.
+OWNER_REVIEW     — технический review пройден; проверяет владелец.
+OWNER_APPROVED   — владелец принял; merge ещё отдельное действие.
+DONE             — PR объединён и состояние проекта обновлено.
 ```
 
-Отвечает за:
+Одновременно у MiMo может быть только одна задача в `IN_PROGRESS`, `READY_FOR_REVIEW` или `CHANGES_REQUIRED`.
 
-- загрузку и подготовку исторических данных;
-- прототипы расчетов;
-- простой бэктест;
-- расчет synthetic index / spread;
-- расчет PnL;
-- комиссии и базовое проскальзывание;
-- отчеты и графики;
-- тесты Python-логики.
+## READY_FOR_MIMO gate
 
-Python Agent НЕ должен:
-
-- писать live order sending code;
-- подключать реальные брокерские ключи;
-- делать вид, что простой бэктест доказывает прибыльность;
-- менять стратегическую гипотезу без фиксации в `strategy_knowledge_base/`.
-
-Основной результат работы Python Agent:
+Статус разрешён только если зафиксированы:
 
 ```text
-рабочий прототип
-тесты
-отчет по бэктесту
-список проблем стратегии
-pull request с понятным описанием
+bounded objective;
+required context;
+dependencies;
+allowed files/scope;
+explicit non-goals;
+existing behavior to preserve;
+acceptance criteria;
+exact tests/checks;
+report path;
+Owner Review Package requirement.
 ```
 
-### 3. C++ Core Agent
+## Issue и task specs
 
-Зона ответственности:
+Одна задача = один Issue. Большая спецификация хранится отдельно:
 
 ```text
-cpp/
-include/
-src/
-apps/
-tests/
+tasks/<task-id>/00_OVERVIEW.md
+tasks/<task-id>/01_REQUIREMENTS.md
+tasks/<task-id>/02_TEST_PLAN.md
+tasks/<task-id>/03_ACCEPTANCE.md
 ```
 
-Отвечает за:
+Issue остаётся компактным и ссылается на эти файлы.
 
-- будущий быстрый контур;
-- общие типы данных;
-- risk engine skeleton;
-- paper execution;
-- replay execution;
-- тесты C++-логики;
-- подготовку архитектуры под low-latency режим.
-
-C++ Agent НЕ должен:
-
-- начинать с live gateway;
-- подключать брокера без отдельного решения;
-- оптимизировать микросекунды до подтверждения торговой идеи;
-- писать код, который может случайно отправить реальные заявки.
-
-Основной результат работы C++ Agent:
+## Branch / Pull Request
 
 ```text
-типы данных
-risk engine
-paper/replay контур
-тесты
-документация интерфейсов
+main -> dedicated branch -> commit -> push branch -> Pull Request -> CI -> review
 ```
 
-### 4. Architecture / Documentation Agent
-
-Зона ответственности:
+Для MiMo:
 
 ```text
-docs/
-decisions/
-PROJECT_STATE.md
-ROADMAP.md
+mimo/issue-<NUMBER>-<short-slug>
 ```
 
-Отвечает за:
+Запрещены direct code push в `main`, force-push, auto-merge, merge MiMo, unrelated changes и следующая задача до review предыдущей.
 
-- архитектурные документы;
-- ADR-решения;
-- дорожную карту;
-- фиксацию текущего состояния;
-- согласование границ между Python, C++, strategy, risk, execution;
-- поддержание контекста для новых ИИ.
-
-Основной результат работы Architecture Agent:
+## CI baseline
 
 ```text
-ADR-*.md
-обновленный PROJECT_STATE.md
-обновленный ROADMAP.md
-архитектурные схемы
+repository hygiene;
+Python tests and contract validation;
+C++ QSH/M10X build and all 20 regression tests.
 ```
 
-### 5. Owner / Human Gate
+Task-specific checks добавляются поверх baseline. Build без acceptance review недостаточен.
 
-Владелец проекта принимает финальные решения по:
-
-- смене архитектурного направления;
-- переходу от backtest к paper;
-- переходу от paper к live gate;
-- подключению брокера;
-- использованию реальных данных и ключей;
-- любым действиям, которые могут привести к реальной торговле.
-
-Ни один ИИ-агент не имеет права самостоятельно переводить систему в live.
-
-## Как агенты должны общаться
-
-Главный канал общения между агентами:
+## Review routing
 
 ```text
-GitHub Issues
-GitHub Pull Request comments
-Markdown-документы в репозитории
+Architecture review — module boundaries, contracts, layout, Python/C++ boundary.
+Strategy review     — signals, formulas, entry/exit, backtest assumptions.
+Risk review         — RiskEngine, limits, kill switch and protections.
+Security review     — credentials, network, scripts, CI permissions, private artifacts.
+Owner review        — user-facing result and access/cost/hardware/stage decisions.
 ```
 
-Не рекомендуется использовать один общий файл вида `chat.md`, потому что несколько агентов могут одновременно его менять и создавать конфликт.
+Для UI используется `docs/engineering/OWNER_REVIEW_PACKAGE.md`.
 
-Правильная схема:
+## Каналы коммуникации
 
 ```text
-1 задача = 1 GitHub Issue
-1 изменение кода/документа = 1 Pull Request или 1 понятный commit
-1 крупное решение = 1 ADR в decisions/
-1 стратегическая идея = 1 файл в strategy_knowledge_base/ideas/
-1 формальная стратегия = 1 файл в strategy_knowledge_base/strategies/
+Issue        — task, dependency, blocker, owner decision.
+Pull Request — implementation, review and corrections.
+MiMo report  — commands, results, limitations and handoff.
+ADR/docs     — durable decisions and rules.
+PROJECT_STATE.md — current verified state.
+ROADMAP.md       — ordered gates and future work.
 ```
 
-## Передача задачи между агентами
-
-Если Strategy Agent передает задачу Python Agent, он должен указать:
-
-```text
-Цель:
-Входные данные:
-Ожидаемый результат:
-Формулы:
-Ограничения:
-Что не делать:
-Критерии готовности:
-Связанные файлы:
-```
-
-Если Python Agent передает задачу Strategy Agent, он должен указать:
-
-```text
-Что протестировано:
-Какие данные использовались:
-Какие параметры использовались:
-Результаты:
-Проблемы:
-Где стратегия сломалась:
-Что нужно уточнить:
-```
-
-Если Python Agent передает задачу C++ Agent, он должен указать:
-
-```text
-Какая логика подтверждена:
-Какие типы нужны:
-Какие интерфейсы нужны:
-Какие edge cases важны:
-Какие тесты обязательны:
-Что пока нельзя переносить в C++:
-```
-
-Если C++ Agent передает задачу Architecture Agent, он должен указать:
-
-```text
-Какой интерфейс изменился:
-Почему изменился:
-Какие файлы затронуты:
-Нужно ли ADR:
-Нужно ли обновить README/PROJECT_STATE:
-```
-
-## Статусы задач
-
-Использовать такие статусы в Issues или описании задач:
-
-```text
-proposed
-needs_clarification
-ready_for_research
-in_research
-ready_for_backtest
-in_backtest
-needs_strategy_review
-ready_for_cpp_prototype
-in_cpp_prototype
-blocked
-done
-rejected
-```
-
-## Рекомендуемые labels GitHub Issues
-
-```text
-strategy
-research
-backtest
-risk
-architecture
-python
-cpp
-docs
-security
-blocked
-needs-owner-decision
-no-live
-```
-
-Label `no-live` означает: задача не должна содержать подключение к брокеру, реальные заявки или реальные ключи.
-
-## Формат сообщения от агента
-
-Каждый агент, создавая Issue или комментарий, должен писать в таком формате:
-
-```markdown
-## Agent
-Strategy Master Agent / Python Agent / C++ Agent / Architecture Agent
-
-## Context read
-- [ ] AI_CONTEXT.md
-- [ ] PROJECT_STATE.md
-- [ ] SECURITY.md
-- [ ] relevant docs
-
-## Task
-Что нужно сделать.
-
-## Inputs
-Какие файлы, данные, формулы или решения используются.
-
-## Output
-Что будет создано или изменено.
-
-## Constraints
-Что запрещено делать.
-
-## Done criteria
-Как понять, что задача выполнена.
+Общий chat-файл в репозитории не используется.
 
 ## Handoff
-Кому передать результат после выполнения.
-```
 
-## Формат результата работы
-
-После выполнения задачи агент должен оставить итог:
-
-```markdown
-## Result
-Что сделано.
-
-## Files changed
-- file 1
-- file 2
-
-## Tests / Checks
-Что проверено.
-
-## Risks / Open questions
-Что осталось неясным.
-
-## Next agent
-Кто должен продолжить.
-```
-
-## Правила безопасности
-
-Запрещено добавлять в репозиторий:
-
-- реальные `.env`;
-- API-ключи;
-- брокерские токены;
-- пароли;
-- приватные ключи;
-- персональные данные;
-- `.exe`, `.dll`, архивы старого робота без отдельного решения;
-- код, который может отправлять реальные заявки без risk engine.
-
-Любой агент обязан остановиться и запросить решение владельца, если задача требует:
-
-- подключения брокера;
-- реальных ключей;
-- live trading;
-- реальной отправки заявок;
-- обхода risk engine;
-- загрузки чувствительных данных.
-
-## Правило PR review
-
-Любой PR, который меняет стратегическую логику, должен пройти review Strategy Master Agent.
-
-Любой PR, который меняет risk engine, должен пройти отдельный risk review.
-
-Любой PR, который приближает систему к live execution, должен иметь label:
+Implementation agent сообщает:
 
 ```text
-needs-owner-decision
+Issue;
+branch;
+commit SHA;
+Pull Request;
+changed files;
+implemented and intentionally omitted scope;
+commands and results;
+CI status;
+known limitations;
+requested review;
+Owner Review Package path when applicable.
 ```
 
-И не должен быть принят без ручного решения владельца.
+## Stop conditions
 
-## Минимальная рабочая схема команды
-
-```text
-Owner
-  |
-  v
-Strategy Master Agent
-  |
-  v
-Python Research / Backtest Agent
-  |
-  v
-Strategy Review
-  |
-  v
-C++ Core Agent
-  |
-  v
-Architecture / Risk Review
-  |
-  v
-Paper / Replay only
-  |
-  v
-Owner decision before any live work
-```
-
-## Вывод
-
-Этот проект должен развиваться не как хаотичная разработка робота, а как управляемая торговая лаборатория.
-
-Каждый агент делает свою часть, фиксирует результат в GitHub и передает задачу дальше через Issues, PR comments и Markdown-документы.
-
-Live-торговля не является текущей задачей и не может быть включена автоматически.
+Остановиться и зафиксировать blocker при запросе credentials/private parameters, обходе safety gate, неутверждённом расширении scope, raw data в Git, архитектурном конфликте или незавершённом предыдущем MiMo PR.

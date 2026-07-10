@@ -1,195 +1,216 @@
 # GitHub Write Limits and AI Workflow
 
-Дата: 2026-07-10  
-Статус: active project rule
+Дата обновления: 2026-07-10  
+Статус: обязательное правило
 
 ## Назначение
 
-Этот документ определяет безопасный порядок записи кода, задач и документации в GitHub через ИИ-агентов, GitHub API и локальный Git.
+Документ определяет, какие изменения допустимо делать через GitHub connector, а какие выполняются MiMo локально через обычный Git.
 
-## Важно различать два типа ограничений
+## Два типа ограничений
 
-### 1. Ограничения самого GitHub
+### GitHub
 
-Официальные ограничения GitHub:
+Важные практические ограничения:
 
 ```text
-Browser upload: не более 25 MiB на файл.
-Git warning: файл больше 50 MiB.
-GitHub blocks: файл больше 100 MiB.
-Repository target: желательно меньше 1 GB; меньше 5 GB настоятельно рекомендуется.
-Contents API: полная работа с содержимым файла до 1 MB.
-Contents API: 1–100 MB читается с ограничениями.
-Contents API: больше 100 MB не поддерживается.
-Authenticated REST API: обычно 5,000 запросов в час.
-Secondary content limit: обычно до 80 создающих запросов в минуту и 500 в час.
+Git блокирует отдельные файлы больше 100 MiB.
+Большие repositories ухудшают clone, CI and review.
+Contents API заменяет файл целиком.
+Raw data, binaries and generated build artifacts не подходят для normal Git.
 ```
 
-Эти пределы относятся к GitHub, а не к длине обычного Markdown-задания.
+### AI connector
 
-### 2. Ограничения ИИ-коннектора или инструмента
-
-ИИ-инструмент может отклонить запрос до отправки в GitHub из-за:
+Connector может отклонить запись раньше GitHub из-за:
 
 ```text
-слишком большого JSON payload;
-слишком длинного поля content;
-ограничения контекста модели;
-внутренней проверки безопасности;
-таймаута;
-слишком большого полного replacement-файла;
-частых последовательных API-записей.
+large JSON payload;
+long replacement content;
+context/tool safety checks;
+timeout;
+multiple sequential writes to one path.
 ```
 
-У такого ограничения нет стабильного публичного размера. Оно может отличаться у ChatGPT, MiMo Code и других агентов.
+Размер connector-запроса не считается стабильным GitHub limit.
 
-В проекте уже был случай: большая операция `create_file` была отклонена до GitHub, после уменьшения текста запись прошла. Это не было лимитом размера файла GitHub.
+## Внутренние пределы проекта
 
-## Внутренние безопасные пределы проекта
-
-Для прямой записи через ИИ-коннектор:
+Для connector writes:
 
 ```text
-Рекомендуемый размер одного нового Markdown-файла: до 12 KB.
-Предельный целевой размер одного запроса записи: до 20 KB.
-GitHub Issue body: желательно до 8 KB.
-Одна задача MiMo: одна ограниченная цель, а не полный проект.
-Один commit: один логический результат.
+новый Markdown-файл: целевой размер до 12 KB;
+один write request: целевой размер до 20 KB;
+Issue body: желательно до 8 KB;
+одна запись = один логический результат;
+не выполнять параллельные update/delete одного path.
 ```
 
-Это внутренние эксплуатационные пределы, а не официальные лимиты GitHub.
+Если длинный replacement отклонён, документ сокращается или разделяется по смыслу. Не повторять одинаковый большой запрос.
 
-## Как оформлять большие задачи
+## Что делает ChatGPT через connector
 
-Не помещать огромную спецификацию в один GitHub Issue.
-
-Использовать:
+Подходит для:
 
 ```text
-GitHub Issue:
-- цель;
-- границы задачи;
-- критерии готовности;
-- ссылки на спецификацию.
+Issue creation/status/handoff;
+небольших task specs;
+коротких architecture/process docs;
+точечных правок;
+review comments;
+создания отдельной branch;
+небольшой логической серии commits;
+открытия Pull Request.
+```
 
-Task specification files:
+Даже connector не должен писать implementation/process changes прямо в `main`. Для набора связанных изменений сначала создаётся branch, затем Pull Request.
+
+## Что делает MiMo локально
+
+MiMo используется для:
+
+```text
+implementation code;
+large or multi-file changes;
+C++/Python build work;
+fixtures and tests;
+локального запуска full regression suite;
+Owner Review Package;
+branch, commit, push and Pull Request.
+```
+
+Полный процесс описан в `docs/mimo_developer_workflow.md`.
+
+## Branch-only rule
+
+```text
+main is read-only for implementation agents.
+Every code/process change uses a dedicated branch.
+Every branch is reviewed through a Pull Request.
+MiMo never merges and never enables auto-merge.
+```
+
+Рекомендуемая ветка:
+
+```text
+mimo/issue-<NUMBER>-<short-slug>
+```
+
+Architecture/Review Agent использует `chore/`, `docs/` или `fix/` для собственных небольших изменений.
+
+## Большие задачи
+
+Не помещать полную спецификацию в Issue.
+
+```text
+Issue:
+- objective;
+- status/dependencies;
+- constraints;
+- acceptance;
+- links.
+
+Task package:
 - tasks/<task-id>/00_OVERVIEW.md
 - tasks/<task-id>/01_REQUIREMENTS.md
 - tasks/<task-id>/02_TEST_PLAN.md
 - tasks/<task-id>/03_ACCEPTANCE.md
 ```
 
-Каждый файл должен быть самодостаточным и небольшим.
+## Перед commit
 
-## Как записывать большие изменения
-
-### Через ChatGPT/GitHub connector
-
-Подходит для:
-
-```text
-небольших документов;
-точечных правок;
-обновления PROJECT_STATE;
-ADR;
-коротких task specs;
-небольших конфигурационных файлов.
+```powershell
+git status --short
+git diff --check
+git diff --stat
+git diff
+python tools/check_repository_hygiene.py
 ```
 
-Не подходит для:
+Затем запускаются task-specific проверки и baseline CI commands.
 
-```text
-большого generated code;
-бинарных файлов;
-raw market data;
-полной замены очень большого документа;
-массового создания десятков файлов подряд.
+## Baseline checks
+
+```powershell
+python -m pytest -q
+python shared/schemas/validate_examples.py
+
+cmake -S cpp/qsh_ingest -B build/qsh_ingest
+cmake --build build/qsh_ingest --config Release
+ctest --test-dir build/qsh_ingest -C Release --output-on-failure
 ```
 
-### Через MiMo Code и локальный Git
+Для C++ implementation существующие 20 QSH/M10X tests обязательны, если Issue явно не доказывает неприменимость.
 
-Предпочтительный путь для большого кода или документации:
+## Хранение больших и private данных
 
-```text
-1. MiMo создаёт/изменяет файлы локально.
-2. Запускает сборку и тесты.
-3. Проверяет git diff --stat и git diff.
-4. Делает один логический commit.
-5. Выполняет git push.
-6. Возвращает commit SHA и отчёт.
-```
-
-Локальный Git не требует передавать весь файл внутри одного API JSON-запроса.
-
-## Если запись отклонена
-
-Порядок действий:
-
-```text
-1. Не повторять тот же большой запрос много раз.
-2. Определить тип ошибки: GitHub HTTP error или отказ инструмента до GitHub.
-3. Уменьшить содержимое и убрать дублирование.
-4. Разделить документ на несколько логических файлов.
-5. Для большого кода передать работу MiMo через локальный Git.
-6. При HTTP 403/429 проверить Retry-After и rate-limit headers.
-7. При secondary rate limit подождать минимум минуту и применять exponential backoff.
-8. Не выполнять параллельные update/delete одного пути.
-```
-
-## Правила для update_file
-
-GitHub Contents API заменяет файл целиком. Поэтому для длинного файла каждая правка снова отправляет весь текст.
-
-Следствия:
-
-```text
-не превращать PROJECT_STATE.md в архив всех событий;
-держать AI_CONTEXT.md кратким;
-старые детали выносить в специализированные документы;
-не использовать один гигантский ROADMAP;
-не обновлять один и тот же файл несколькими агентами параллельно;
-перед update_file обязательно получать текущий SHA;
-после чужого commit повторно получать SHA.
-```
-
-## Хранение больших данных
-
-В обычный Git не помещать:
+Не помещать в normal Git:
 
 ```text
 QSH;
-pcap/pcapng captures;
-FAST raw packets;
-Parquet market archives;
-базы данных;
-ZIP/PDF официальной документации без отдельной необходимости;
+pcap/pcapng;
+raw FAST packets;
+Parquet archives;
+databases;
 EXE/DLL;
-generated build directories.
+build directories;
+official private XML;
+credentials/private connection parameters;
+large generated reports.
 ```
 
-Использовать локальное хранилище, object storage, release assets или Git LFS только после отдельного решения.
+Использовать локальное хранилище, approved object storage или другой отдельно согласованный механизм.
 
-## Обязательный handoff агента
+## update_file safety
 
-После выполнения задачи агент сообщает:
+Перед `update_file` обязательно получить текущий SHA. После чужого commit SHA получить повторно.
+
+Не превращать:
 
 ```text
+AI_CONTEXT.md в длинную историю;
+PROJECT_STATE.md в журнал каждого commit;
+ROADMAP.md в task dump;
+один shared document в параллельный chat нескольких агентов.
+```
+
+## Pull Request handoff
+
+После работы агент сообщает:
+
+```text
+Issue;
+branch;
 commit SHA;
-изменённые файлы;
-что реализовано;
-какие тесты запускались;
-результаты тестов;
-известные ограничения;
-что не делалось;
-нужно ли обновить PROJECT_STATE и ROADMAP.
+Pull Request;
+changed files;
+implemented and omitted scope;
+commands and results;
+CI status;
+known limitations;
+Owner Review Package path when applicable.
+```
+
+После создания PR MiMo останавливается. Следующая задача не начинается до review предыдущей.
+
+## Если connector write отклонён
+
+```text
+1. Не повторять тот же payload.
+2. Проверить, была ли запись фактически создана.
+3. Уменьшить replacement.
+4. Разделить по логическим файлам.
+5. Передать большой implementation MiMo/local Git.
+6. Повторно получить SHA перед следующей записью.
 ```
 
 ## Главный принцип
 
 ```text
-GitHub хранит проверенное состояние проекта.
+GitHub хранит проверенное состояние.
 Issue хранит компактную задачу.
-Большая спецификация разделяется на файлы.
-Большой код пишет MiMo локально и отправляет обычным git push.
-Raw данные и секреты в GitHub не попадают.
+Branch хранит незавершённое изменение.
+Pull Request хранит review и evidence.
+Main получает только проверенный результат.
+Raw data, binaries and secrets не попадают в repository.
 ```
