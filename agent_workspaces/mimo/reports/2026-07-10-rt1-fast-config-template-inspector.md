@@ -3,8 +3,8 @@
 Date: 2026-07-10 (Round 7 corrections)  
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
-Implementation commit: (will be filled after push)  
-CI run: (pending — will be filled after CI completes)  
+Implementation commit: `8d8e7f5234448fe1f8accb14888fda4697774d92`  
+CI run: 28 (run id `29096554638`): all five jobs passed.  
 Executor: MiMo Code
 
 ## Summary

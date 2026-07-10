@@ -113,12 +113,12 @@ Main protection: Option B active.
 
 ```text
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: READY_FOR_REVIEW (Round 6 corrections applied)
+Status: READY_FOR_REVIEW (Round 7 corrections applied)
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Head: f4ecf9a (code: f4ecf9a1478bbdbc7a8b7931caa82f7bff9b8e90)
-CI run: (pending)
-Review cycle: Round 6 CHANGES_REQUIRED → Round 6 corrections applied
+Implementation commit: 8d8e7f5 (8d8e7f5234448fe1f8accb14888fda4697774d92)
+CI run: 28 (29096554638): all five jobs passed.
+Review cycle: Round 7 CHANGES_REQUIRED → Round 7 corrections applied
 ```
 
 RT-1 task package:
@@ -150,14 +150,15 @@ No second MiMo task starts while the previous task is in progress, review or cha
 ## Immediate next actions
 
 ```text
-1. Round 6 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
-2. Profile logic hardened: always auto-detect, separate detected/requested/selected/evidence.
-3. spectra-1.29 rejects conflicting 1.30 evidence (ID 48, wrong-name ID 47/48).
-4. CLI validates --profile values; unsupported values rejected.
-5. 6 new Round 6 tests added; all 99 tests pass on Windows.
-6. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
-7. Push to PR #16, Issue #14 moved to READY_FOR_REVIEW.
-8. Stop — do not merge, do not start RT-2.
+1. Round 7 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
+2. auto+ambiguous/unknown => selected_profile=none; no version-specific checks without evidence.
+3. Wrong-name ID 47/48 => ambiguous (not unknown); mismatch under all modes.
+4. Strict mode + unresolved compatibility => invalid.
+5. Shared template checks separated from version-specific required pairs.
+6. 9 new Round 7 tests added; 107 total tests pass on Windows and Linux.
+7. CI run 28 (29096554638): all five jobs passed.
+8. Issue #14 and PR #16 updated with actual head SHA and CI run, moved to READY_FOR_REVIEW.
+9. Stop — do not merge, do not start RT-2.
 ```
 
 ## Explicit non-goals now
