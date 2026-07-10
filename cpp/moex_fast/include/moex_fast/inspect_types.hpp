@@ -62,6 +62,7 @@ struct FeedEndpoint {
     bool is_tcp{};
     // Role carried by this specific feed/source (Incremental, Snapshot, etc.)
     std::string feed_type;
+    std::string connection_type;
 };
 
 struct FeedGroup {

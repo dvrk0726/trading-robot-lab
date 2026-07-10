@@ -111,10 +111,10 @@ main protection option guide.
 
 ```text
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: READY_FOR_REVIEW
+Status: CHANGES_REQUIRED
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Review cycle: CHANGES_REQUIRED → corrections applied
+Review cycle: Round 2 CHANGES_REQUIRED → Round 2 corrections applied
 ```
 
 RT-1 task package:
@@ -146,9 +146,9 @@ No second MiMo task starts while the previous task is in progress, review or cha
 ## Immediate next actions
 
 ```text
-1. Implement RT-1 on feat/rt-1-fast-config-inspector branch.
-2. Run all tests including existing 20 QSH/M10X regressions.
-3. Create Pull Request for RT-1.
+1. Apply Round 2 corrections for RT-1 on feat/rt-1-fast-config-inspector.
+2. Run all tests including 20 QSH/M10X regressions.
+3. Push to PR #16.
 4. Move Issue #14 to READY_FOR_REVIEW.
 5. Stop — do not merge, do not start RT-2.
 ```

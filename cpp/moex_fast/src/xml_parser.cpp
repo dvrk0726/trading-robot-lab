@@ -1,6 +1,7 @@
 #include "moex_fast/xml_parser.hpp"
 #include <pugixml.hpp>
 #include <algorithm>
+#include <map>
 #include <set>
 #include <cctype>
 #include <cstdlib>
@@ -96,11 +97,30 @@ void parse_template_fields(pugi::xml_node parent_node,
                 fd.wire_type = WireType::Sequence;
                 std::string seq_name = fd.name;
                 fields.push_back(fd);
+
+                // Check for unsupported operators in sequence field
+                for (auto op : child.children()) {
+                    std::string on(op.name());
+                    if (on != "constant" && is_known_operator_element(on)) {
+                        issues.push_back({Severity::Warning, IssueSource::Template,
+                            "Unsupported FAST operator '" + on + "' in field '" + fd.name + "'"});
+                    }
+                }
+
                 // Parse children of the sequence with the sequence name as parent.
                 // Field order continues globally (no reset).
                 parse_template_fields(child, fields, issues, field_order, seq_name);
             } else {
-                fields.push_back(parse_field(child, field_order, parent_sequence));
+                auto fd = parse_field(child, field_order, parent_sequence);
+                // Check for unsupported operators in non-sequence field
+                for (auto op : child.children()) {
+                    std::string on(op.name());
+                    if (on != "constant" && is_known_operator_element(on)) {
+                        issues.push_back({Severity::Warning, IssueSource::Template,
+                            "Unsupported FAST operator '" + on + "' in field '" + fd.name + "'"});
+                    }
+                }
+                fields.push_back(std::move(fd));
             }
         } else if (is_known_operator_element(name)) {
             // Operators like constant, default, copy, etc. are valid children
@@ -128,7 +148,7 @@ bool parse_port_strict(const std::string& text, std::uint16_t& out_port,
                        const std::string& context) {
     if (text.empty()) {
         issues.push_back({Severity::Error, IssueSource::Configuration,
-            "Missing port attribute in " + context});
+            "Missing port value in " + context});
         return false;
     }
     // Check all characters are digits
@@ -149,6 +169,12 @@ bool parse_port_strict(const std::string& text, std::uint16_t& out_port,
     }
     out_port = static_cast<std::uint16_t>(val);
     return true;
+}
+
+// Read text content of a child element, return empty string if absent.
+std::string child_text(pugi::xml_node node, const char* child_name) {
+    auto c = node.child(child_name);
+    return c ? std::string(c.text().as_string("")) : std::string();
 }
 
 }  // namespace
@@ -240,50 +266,103 @@ bool parse_configuration_xml(
         return false;
     }
 
-    for (auto group : root.children("group")) {
-        FeedGroup fg;
-        fg.name = group.attribute("name").as_string("");
-        fg.market_id = group.attribute("marketId").as_string("");
+    // Merge FeedGroups by label attribute.
+    // Map label -> index in out vector.
+    std::map<std::string, std::size_t> label_index;
 
-        if (fg.name.empty()) {
+    for (auto mdg : root.children("MarketDataGroup")) {
+        std::string feed_type = mdg.attribute("feedType").as_string("");
+        std::string market_id = mdg.attribute("marketID").as_string("");
+        std::string label = mdg.attribute("label").as_string("");
+
+        if (label.empty()) {
             issues.push_back({Severity::Warning, IssueSource::Configuration,
-                "Feed group missing name"});
+                "MarketDataGroup missing 'label' attribute"});
         }
 
-        for (auto feed : group.children("feed")) {
-            std::string feed_type = feed.attribute("type").as_string("");
-            if (feed_type.empty()) {
-                issues.push_back({Severity::Warning, IssueSource::Configuration,
-                    "Feed element missing 'type' attribute in group " + fg.name});
+        // Find or create FeedGroup for this label
+        auto it = label_index.find(label);
+        std::size_t group_idx;
+        if (it != label_index.end()) {
+            group_idx = it->second;
+        } else {
+            group_idx = out.size();
+            FeedGroup fg;
+            fg.name = label;
+            fg.market_id = market_id;
+            out.push_back(std::move(fg));
+            label_index[label] = group_idx;
+        }
+
+        auto conns = mdg.child("connections");
+        if (!conns) {
+            issues.push_back({Severity::Warning, IssueSource::Configuration,
+                "MarketDataGroup '" + label + "' missing <connections> element"});
+            continue;
+        }
+
+        for (auto conn : conns.children("connection")) {
+            std::string protocol = child_text(conn, "protocol");
+            std::string src_ip = child_text(conn, "src-ip");
+            std::string conn_type = child_text(conn, "type");
+            std::string feed = child_text(conn, "feed");
+            std::string port_text = child_text(conn, "port");
+
+            bool is_tcp = (protocol.find("TCP") != std::string::npos);
+
+            // Validate protocol
+            if (protocol.empty()) {
+                issues.push_back({Severity::Error, IssueSource::Configuration,
+                    "Connection missing <protocol> in group '" + label + "'"});
+            } else if (protocol != "UDP/IP" && protocol != "TCP/IP") {
+                issues.push_back({Severity::Error, IssueSource::Configuration,
+                    "Unknown protocol '" + protocol + "' in group '" + label + "'"});
             }
 
-            for (auto source : feed.children("source")) {
-                FeedEndpoint ep;
-                ep.feed_type = feed_type;  // role per endpoint, not per group
-
-                ep.protocol = source.attribute("protocol").as_string("");
-                ep.source_ip = source.attribute("ip").as_string("");
-                ep.multicast_group = source.attribute("multicastGroup").as_string("");
-                ep.feed_id = source.attribute("feed").as_string("");
-
-                // Validate protocol
-                if (ep.protocol.empty()) {
+            // Validate required UDP fields
+            if (!is_tcp) {
+                if (src_ip.empty()) {
                     issues.push_back({Severity::Error, IssueSource::Configuration,
-                        "Source missing 'protocol' attribute in " + fg.name});
+                        "UDP connection missing <src-ip> in group '" + label + "'"});
                 }
+                if (feed.empty()) {
+                    issues.push_back({Severity::Error, IssueSource::Configuration,
+                        "UDP connection missing <feed> in group '" + label + "'"});
+                }
+            }
 
-                // Strict port parsing
-                std::string port_text = source.attribute("port").as_string("");
-                std::string ctx = fg.name + " endpoint (feed=" + ep.feed_id + ")";
-                parse_port_strict(port_text, ep.port, issues, ctx);
+            // Parse port
+            std::uint16_t port = 0;
+            std::string ctx = label + " connection (feed=" + feed + ")";
+            parse_port_strict(port_text, port, issues, ctx);
 
-                ep.is_tcp = (ep.protocol.find("TCP") != std::string::npos);
+            // Collect all <ip> elements — one endpoint per ip
+            std::vector<std::string> ips;
+            for (auto ip_node : conn.children("ip")) {
+                std::string ip_val = ip_node.text().as_string("");
+                if (!ip_val.empty()) {
+                    ips.push_back(ip_val);
+                }
+            }
 
-                fg.endpoints.push_back(std::move(ep));
+            if (ips.empty()) {
+                issues.push_back({Severity::Error, IssueSource::Configuration,
+                    "Connection missing <ip> element in group '" + label + "'"});
+            }
+
+            for (const auto& ip : ips) {
+                FeedEndpoint ep;
+                ep.protocol = protocol;
+                ep.source_ip = src_ip;
+                ep.multicast_group = ip;
+                ep.port = port;
+                ep.feed_id = feed;
+                ep.is_tcp = is_tcp;
+                ep.feed_type = feed_type;
+                ep.connection_type = conn_type;
+                out[group_idx].endpoints.push_back(std::move(ep));
             }
         }
-
-        out.push_back(std::move(fg));
     }
 
     return true;

@@ -171,11 +171,18 @@ void test_udp_tcp_protocol() {
 void test_port_zero_rejected() {
     write_file("fixtures/bad_port.xml",
         "<configuration>"
-        "  <group name='TEST'>"
-        "    <feed type='Incremental'>"
-        "      <source ip='1.2.3.4' port='0' protocol='UDP/IP' multicastGroup='233.0.0.1' feed='A'/>"
-        "    </feed>"
-        "  </group>"
+        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>0</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
@@ -196,11 +203,18 @@ void test_port_zero_rejected() {
 void test_port_negative_rejected() {
     write_file("fixtures/neg_port.xml",
         "<configuration>"
-        "  <group name='TEST'>"
-        "    <feed type='Incremental'>"
-        "      <source ip='1.2.3.4' port='-1' protocol='UDP/IP' multicastGroup='233.0.0.1' feed='A'/>"
-        "    </feed>"
-        "  </group>"
+        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>-1</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
@@ -221,11 +235,18 @@ void test_port_negative_rejected() {
 void test_port_overflow_rejected() {
     write_file("fixtures/big_port.xml",
         "<configuration>"
-        "  <group name='TEST'>"
-        "    <feed type='Incremental'>"
-        "      <source ip='1.2.3.4' port='99999' protocol='UDP/IP' multicastGroup='233.0.0.1' feed='A'/>"
-        "    </feed>"
-        "  </group>"
+        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>99999</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
@@ -245,11 +266,18 @@ void test_port_overflow_rejected() {
 void test_port_nonnumeric_rejected() {
     write_file("fixtures/str_port.xml",
         "<configuration>"
-        "  <group name='TEST'>"
-        "    <feed type='Incremental'>"
-        "      <source ip='1.2.3.4' port='abc' protocol='UDP/IP' multicastGroup='233.0.0.1' feed='A'/>"
-        "    </feed>"
-        "  </group>"
+        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>abc</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
@@ -289,16 +317,176 @@ void test_tcp_historical_replay() {
     }
     CHECK(ol != nullptr);
 
-    bool found_tcp_hist = false;
+    int tcp_hist_count = 0;
     for (const auto& ep : ol->endpoints) {
         if (ep.feed_type == "Historical Replay" && ep.is_tcp) {
-            found_tcp_hist = true;
+            tcp_hist_count++;
             CHECK(ep.port == 8022);
         }
     }
-    CHECK(found_tcp_hist);
+    CHECK(tcp_hist_count == 2);
 
     TEST_PASS("TCP Historical Replay");
+}
+
+void test_unknown_protocol() {
+    write_file("fixtures/unknown_proto.xml",
+        "<configuration>"
+        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>XYZ</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>1234</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
+        "</configuration>");
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml("fixtures/unknown_proto.xml", groups, issues);
+
+    bool found_error = false;
+    for (const auto& iss : issues) {
+        if (iss.message.find("Unknown protocol") != std::string::npos) {
+            found_error = true;
+        }
+    }
+    CHECK(found_error);
+
+    TEST_PASS("unknown protocol detected");
+}
+
+void test_missing_udp_src_ip() {
+    write_file("fixtures/no_src_ip.xml",
+        "<configuration>"
+        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>1234</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
+        "</configuration>");
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml("fixtures/no_src_ip.xml", groups, issues);
+
+    bool found_error = false;
+    for (const auto& iss : issues) {
+        if (iss.message.find("src-ip") != std::string::npos) {
+            found_error = true;
+        }
+    }
+    CHECK(found_error);
+
+    TEST_PASS("missing UDP src-ip detected");
+}
+
+void test_missing_udp_feed() {
+    write_file("fixtures/no_feed.xml",
+        "<configuration>"
+        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>1234</port>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
+        "</configuration>");
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml("fixtures/no_feed.xml", groups, issues);
+
+    bool found_error = false;
+    for (const auto& iss : issues) {
+        if (iss.message.find("feed") != std::string::npos &&
+            iss.message.find("missing") != std::string::npos) {
+            found_error = true;
+        }
+    }
+    CHECK(found_error);
+
+    TEST_PASS("missing UDP feed detected");
+}
+
+void test_tcp_no_feed_ok() {
+    write_file("fixtures/tcp_no_feed.xml",
+        "<configuration>"
+        "  <MarketDataGroup feedType='Historical Replay' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>TCP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>192.168.1.1</ip>"
+        "        <port>8022</port>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
+        "</configuration>");
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml("fixtures/tcp_no_feed.xml", groups, issues);
+
+    // Should NOT have a "missing feed" error for TCP
+    bool found_feed_error = false;
+    for (const auto& iss : issues) {
+        if (iss.message.find("feed") != std::string::npos &&
+            iss.message.find("missing") != std::string::npos) {
+            found_feed_error = true;
+        }
+    }
+    CHECK(!found_feed_error);
+
+    TEST_PASS("TCP no feed is OK");
+}
+
+void test_true_duplicate_endpoint() {
+    write_file("fixtures/dup_endpoint.xml",
+        "<configuration>"
+        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>1234</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "      <connection>"
+        "        <type>MarketData</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>1234</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
+        "</configuration>");
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml("fixtures/dup_endpoint.xml", groups, issues);
+
+    // The parser itself doesn't detect duplicates (inspector does),
+    // but we verify both endpoints are parsed
+    CHECK(groups.size() == 1);
+    CHECK(groups[0].endpoints.size() == 2);
+
+    TEST_PASS("true duplicate endpoint");
 }
 
 }  // namespace
@@ -319,6 +507,11 @@ int main() {
     test_port_nonnumeric_rejected();
     test_issue_source_configuration();
     test_tcp_historical_replay();
+    test_unknown_protocol();
+    test_missing_udp_src_ip();
+    test_missing_udp_feed();
+    test_tcp_no_feed_ok();
+    test_true_duplicate_endpoint();
 
     std::cout << "\nAll configuration parser tests PASSED.\n";
     return 0;

@@ -91,11 +91,11 @@ main protection option guide.
 Status:
 
 ```text
-READY_FOR_REVIEW
+CHANGES_REQUIRED
 Issue #14
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Review cycle: CHANGES_REQUIRED → corrections applied
+Review cycle: Round 2 CHANGES_REQUIRED → Round 2 corrections applied
 ```
 
 Scope:
@@ -226,9 +226,9 @@ production remains disabled by default.
 ## Immediate sequence
 
 ```text
-1. Implement RT-1 on feat/rt-1-fast-config-inspector branch.
-2. Run all tests including existing 20 QSH/M10X regressions.
-3. Create Pull Request for RT-1.
+1. Apply Round 2 corrections for RT-1 on feat/rt-1-fast-config-inspector.
+2. Run all tests including 20 QSH/M10X regressions.
+3. Push to PR #16.
 4. Move Issue #14 to READY_FOR_REVIEW.
 5. Stop — do not merge, do not start RT-2.
 ```

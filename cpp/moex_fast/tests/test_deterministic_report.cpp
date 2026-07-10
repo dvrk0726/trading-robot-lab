@@ -2,6 +2,7 @@
 #include "moex_fast/report.hpp"
 #include "test_helpers.hpp"
 #include <iostream>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -59,19 +60,106 @@ void test_overall_status_invalid() {
 }
 
 void test_strict_vs_nonstrict() {
-    moex_fast::InspectorOptions opts;
-    opts.configuration_path = "fixtures/synthetic_configuration.xml";
-    opts.templates_path = "fixtures/synthetic_templates.xml";
+    // Create a fixture with only ORDERS-LOG (missing FUT-INFO)
+    {
+        std::ofstream ofs("fixtures/strict_test_config.xml");
+        ofs << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            << "<configuration>\n"
+            << "  <MarketDataGroup feedType='Incremental' marketID='D' label='ORDERS-LOG'>\n"
+            << "    <connections>\n"
+            << "      <connection>\n"
+            << "        <type>MarketData</type>\n"
+            << "        <protocol>UDP/IP</protocol>\n"
+            << "        <src-ip>192.0.2.1</src-ip>\n"
+            << "        <ip>233.0.0.40</ip>\n"
+            << "        <port>48040</port>\n"
+            << "        <feed>A</feed>\n"
+            << "      </connection>\n"
+            << "      <connection>\n"
+            << "        <type>MarketData</type>\n"
+            << "        <protocol>UDP/IP</protocol>\n"
+            << "        <src-ip>192.0.2.2</src-ip>\n"
+            << "        <ip>233.0.0.41</ip>\n"
+            << "        <port>49040</port>\n"
+            << "        <feed>B</feed>\n"
+            << "      </connection>\n"
+            << "    </connections>\n"
+            << "  </MarketDataGroup>\n"
+            << "  <MarketDataGroup feedType='Snapshot' marketID='D' label='ORDERS-LOG'>\n"
+            << "    <connections>\n"
+            << "      <connection>\n"
+            << "        <type>MarketData</type>\n"
+            << "        <protocol>UDP/IP</protocol>\n"
+            << "        <src-ip>192.0.2.1</src-ip>\n"
+            << "        <ip>233.0.0.42</ip>\n"
+            << "        <port>48041</port>\n"
+            << "        <feed>A</feed>\n"
+            << "      </connection>\n"
+            << "      <connection>\n"
+            << "        <type>MarketData</type>\n"
+            << "        <protocol>UDP/IP</protocol>\n"
+            << "        <src-ip>192.0.2.2</src-ip>\n"
+            << "        <ip>233.0.0.43</ip>\n"
+            << "        <port>49041</port>\n"
+            << "        <feed>B</feed>\n"
+            << "      </connection>\n"
+            << "    </connections>\n"
+            << "  </MarketDataGroup>\n"
+            << "  <MarketDataGroup feedType='Historical Replay' marketID='D' label='ORDERS-LOG'>\n"
+            << "    <connections>\n"
+            << "      <connection>\n"
+            << "        <type>MarketData</type>\n"
+            << "        <protocol>TCP/IP</protocol>\n"
+            << "        <src-ip>192.0.2.1</src-ip>\n"
+            << "        <ip>192.0.2.10</ip>\n"
+            << "        <port>8022</port>\n"
+            << "      </connection>\n"
+            << "    </connections>\n"
+            << "  </MarketDataGroup>\n"
+            << "</configuration>\n";
+    }
 
-    opts.strict = true;
-    auto r1 = moex_fast::run_inspector(opts);
+    // Non-strict: missing FUT-INFO is a warning
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/strict_test_config.xml";
+        opts.templates_path = "fixtures/synthetic_templates.xml";
+        opts.strict = false;
 
-    opts.strict = false;
-    auto r2 = moex_fast::run_inspector(opts);
+        auto r = moex_fast::run_inspector(opts);
+        CHECK(r.overall_status == "warning");
 
-    // With valid fixtures, both should be valid or warning
-    CHECK(r1.overall_status == "valid" || r1.overall_status == "warning");
-    CHECK(r2.overall_status == "valid" || r2.overall_status == "warning");
+        bool found_fut_warning = false;
+        for (const auto& fr : r.required_feed_results) {
+            if (fr.name == "FUT-INFO") {
+                CHECK(!fr.present);
+                CHECK(fr.severity == moex_fast::Severity::Warning);
+                found_fut_warning = true;
+            }
+        }
+        CHECK(found_fut_warning);
+    }
+
+    // Strict: missing FUT-INFO is an error
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/strict_test_config.xml";
+        opts.templates_path = "fixtures/synthetic_templates.xml";
+        opts.strict = true;
+
+        auto r = moex_fast::run_inspector(opts);
+        CHECK(r.overall_status == "invalid");
+
+        bool found_fut_error = false;
+        for (const auto& fr : r.required_feed_results) {
+            if (fr.name == "FUT-INFO") {
+                CHECK(!fr.present);
+                CHECK(fr.severity == moex_fast::Severity::Error);
+                found_fut_error = true;
+            }
+        }
+        CHECK(found_fut_error);
+    }
 
     TEST_PASS("strict vs non-strict mode");
 }

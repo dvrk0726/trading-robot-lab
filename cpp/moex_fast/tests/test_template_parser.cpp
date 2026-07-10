@@ -259,29 +259,25 @@ void test_unknown_element_reported() {
     write_file("fixtures/unknown_elem.xml",
         "<templates>"
         "  <template id='1' name='A'>"
-        "    <uInt32 name='X'/>"
-        "    <tail/>"
+        "    <uInt32 name='X'><tail/></uInt32>"
         "  </template>"
         "</templates>");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
     moex_fast::parse_templates_xml("fixtures/unknown_elem.xml", templates, issues);
 
-    // The parser should report the unknown <tail/> element
-    // (tail is a known operator, but at template level without parent field it should warn)
-    // Actually, <tail/> is known but at template-level it's a warning
-    // Let's check for at least one warning about unknown/operator elements
+    // The parser should report the unsupported 'tail' operator in field 'X'
     bool found_issue = false;
     for (const auto& iss : issues) {
         if (iss.message.find("tail") != std::string::npos ||
-            iss.message.find("Unknown") != std::string::npos ||
+            iss.message.find("Unsupported") != std::string::npos ||
             iss.message.find("operator") != std::string::npos) {
             found_issue = true;
         }
     }
     CHECK(found_issue);
 
-    TEST_PASS("unknown element reported");
+    TEST_PASS("unsupported FAST operator reported");
 }
 
 void test_issue_source_template() {

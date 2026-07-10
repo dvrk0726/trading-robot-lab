@@ -1,0 +1,1 @@
+<configuration>  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>    <connections>      <connection>        <type>MarketData</type>        <protocol>UDP/IP</protocol>        <ip>233.0.0.1</ip>        <port>1234</port>        <feed>A</feed>      </connection>    </connections>  </MarketDataGroup></configuration>

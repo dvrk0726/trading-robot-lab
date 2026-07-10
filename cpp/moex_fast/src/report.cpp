@@ -154,6 +154,9 @@ std::string report_to_json(const InspectionReport& r) {
             const auto& ep = g.endpoints[ei];
             indent(oss, 4); oss << "{\n";
             indent(oss, 5); oss << "\"feed_type\": "; json_escape(oss, ep.feed_type); oss << ",\n";
+            if (!ep.connection_type.empty()) {
+                indent(oss, 5); oss << "\"connection_type\": "; json_escape(oss, ep.connection_type); oss << ",\n";
+            }
             indent(oss, 5); oss << "\"protocol\": "; json_escape(oss, ep.protocol); oss << ",\n";
             indent(oss, 5); oss << "\"source_ip\": "; json_escape(oss, ep.source_ip); oss << ",\n";
             indent(oss, 5); oss << "\"multicast_group\": "; json_escape(oss, ep.multicast_group); oss << ",\n";
