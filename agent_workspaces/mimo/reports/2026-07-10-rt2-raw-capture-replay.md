@@ -180,7 +180,7 @@ C++20 / Release / x64
 ## GitHub Actions
 
 ```text
-CI #50 (run 29110786126): ALL GREEN — 7/7 jobs passed
+CI #51 (run 29111638220): ALL GREEN — 7/7 jobs passed
   C++ MOEX RAW Windows/MSVC (16 tests): PASSED
   C++ MOEX RAW Linux/GCC (16 tests): PASSED
   C++ MOEX FAST inspector Windows (6 tests): PASSED
