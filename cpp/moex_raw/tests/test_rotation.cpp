@@ -156,8 +156,8 @@ int main() {
         std::fseek(f1, 0, SEEK_SET);
         std::fseek(f2, 0, SEEK_SET);
         std::vector<std::uint8_t> b1(sz1), b2(sz2);
-        std::fread(b1.data(), 1, sz1, f1);
-        std::fread(b2.data(), 1, sz2, f2);
+        CHECK(std::fread(b1.data(), 1, sz1, f1) == static_cast<std::size_t>(sz1));
+        CHECK(std::fread(b2.data(), 1, sz2, f2) == static_cast<std::size_t>(sz2));
         std::fclose(f1);
         std::fclose(f2);
         CHECK(b1 == b2);
