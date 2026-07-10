@@ -1,4 +1,5 @@
 #include "moex_fast/xml_parser.hpp"
+#include "moex_fast/inspector.hpp"
 #include "test_helpers.hpp"
 #include <iostream>
 #include <fstream>
@@ -507,15 +508,25 @@ void test_true_duplicate_endpoint() {
         "    </connections>"
         "  </MarketDataGroup>"
         "</configuration>");
-    std::vector<moex_fast::FeedGroup> groups;
-    std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml(temp_path("dup_endpoint.xml").c_str(), groups, issues);
 
-    // Both endpoints should be parsed
-    CHECK(groups.size() == 1);
-    CHECK(groups[0].endpoints.size() == 2);
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = temp_path("dup_endpoint.xml");
+    opts.templates_path = "fixtures/synthetic_templates.xml";
 
-    TEST_PASS("true duplicate endpoint");
+    auto report = moex_fast::run_inspector(opts);
+
+    CHECK(report.feed_groups.size() == 1);
+    CHECK(report.feed_groups[0].endpoints.size() == 2);
+
+    bool found_duplicate = false;
+    for (const auto& iss : report.issues) {
+        if (iss.message.find("Duplicate endpoint") != std::string::npos) {
+            found_duplicate = true;
+        }
+    }
+    CHECK(found_duplicate);
+
+    TEST_PASS("true duplicate endpoint detected by inspector");
 }
 
 void test_missing_feedtype() {
