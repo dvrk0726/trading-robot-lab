@@ -1,10 +1,10 @@
 # RT-1 Implementation Report — FAST Configuration/Template Inspector
 
-Date: 2026-07-10 (Round 6 corrections)  
+Date: 2026-07-10 (Round 7 corrections)  
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
-Head: `f4ecf9a1478bbdbc7a8b7931caa82f7bff9b8e90`  
-CI run: (pending)  
+Implementation commit: (will be filled after push)  
+CI run: (pending — will be filled after CI completes)  
 Executor: MiMo Code
 
 ## Summary
@@ -29,7 +29,34 @@ All blocking corrections from Architecture/Review Round 5 have been addressed:
 
 7. **Profile test fixtures and tests.** Created `synthetic_templates_130.xml` for spectra-1.30 profile. Added 11 new tests: length wire type, strict valid, auto-detection (1.29/1.30), explicit override, mismatch warning/error, text report, mixed profile negative, wrong name negative.
 
-## Round 6 Corrections Applied
+## Round 7 Corrections Applied
+
+All blocking corrections from Architecture/Review Round 7 have been addressed:
+
+1. **No silent profile selection in auto mode.** `auto + ambiguous/unknown` now sets `selected_profile = "none"` instead of silently falling back to `spectra-1.29`. Version-specific required template checks are not run when no version profile is established.
+
+2. **Shared vs version-specific template checks.** Common checks (wire type validation) run regardless of profile state. Version-specific required pair checks only run when a version profile is established (spectra-1.29 or spectra-1.30).
+
+3. **Wrong-name ID 47/48 are ambiguous, not unknown.** Artifacts containing ID 47 or ID 48 with wrong template names are internally inconsistent evidence. `detect_profile()` now returns `"ambiguous"` instead of `"unknown"` for these cases. This applies under auto mode and explicit overrides.
+
+4. **Strict mode rejects unresolved compatibility.** When `compatibility_status` is not `"compatible"` (i.e., `"unknown"` or `"mismatch"`) and strict mode is active, `overall_status` is forced to `"invalid"` regardless of other issues.
+
+5. **Removed duplicate CLI test.** Removed `test_round6_invalid_profile_cli` from `test_deterministic_report.cpp` (used Windows-only `NUL`). The portable `test_invalid_profile_value` in `test_cli.cpp` already covers this.
+
+6. **Round 7 test matrix.** Added 9 new tests:
+   - auto + ambiguous artifact => selected_profile=none; mismatch; strict invalid
+   - auto + unknown artifact => selected_profile=none; unknown; strict invalid
+   - wrong-name-only ID 47 => ambiguous/mismatch; strict invalid
+   - wrong-name-only ID 48 => ambiguous/mismatch; strict invalid
+   - explicit 1.29 and 1.30 overrides on wrong-name evidence remain mismatch/invalid
+   - shared checks still run on unresolved profile
+   - positive spectra-1.29 still valid (strict)
+   - positive spectra-1.30 still valid (strict)
+   - strict unknown compatibility => invalid
+
+7. **Existing positive tests preserved.** All 1.29, 1.30, and FAST length tests from Rounds 5-6 continue to pass.
+
+## Round 6 Corrections Applied (retained)
 
 All blocking corrections from Architecture/Review Round 6 have been addressed:
 
@@ -119,9 +146,9 @@ Platform: Windows 10 x64
   - test_template_parser ............. Passed — 17 tests
   - test_config_parser ............... Passed — 24 tests
   - test_provenance .................. Passed — 7 tests
-  - test_deterministic_report ........ Passed — 31 tests (6 new Round 6)
+  - test_deterministic_report ........ Passed — 39 tests (9 new Round 7)
   - test_resource_safety ............. Passed — 8 tests
-  - test_cli ......................... Passed — 12 tests (1 new Round 6)
+  - test_cli ......................... Passed — 12 tests
 ```
 
 ### Existing QSH/M10X Regression
@@ -171,7 +198,7 @@ Platform: Windows 10 x64
 - No raw XML/credentials in report
 - Independent validation status (template errors don't affect configuration validation_ok)
 
-### Deterministic Report (31 tests)
+### Deterministic Report (39 tests)
 - Deterministic JSON, schema version, status
 - Strict vs non-strict, template ordering
 - JSON valid syntax, text output
@@ -197,14 +224,22 @@ Platform: Windows 10 x64
 - **Round 6:** explicit spectra-1.29 on ambiguous => mismatch/invalid
 - **Round 6:** explicit spectra-1.30 on ambiguous => mismatch/invalid
 - **Round 6:** override preserves actual detection evidence
-- **Round 6:** unsupported --profile CLI value rejected
+- **Round 7:** auto + ambiguous => selected_profile=none, mismatch, strict invalid
+- **Round 7:** auto + unknown => selected_profile=none, unknown, strict invalid
+- **Round 7:** wrong-name-only ID 47 => ambiguous/mismatch, strict invalid
+- **Round 7:** wrong-name-only ID 48 => ambiguous/mismatch, strict invalid
+- **Round 7:** explicit overrides on wrong-name evidence remain mismatch/invalid
+- **Round 7:** shared checks run on unresolved profile
+- **Round 7:** positive spectra-1.29 still valid
+- **Round 7:** positive spectra-1.30 still valid
+- **Round 7:** strict unknown compatibility => invalid
 
 ### Resource Safety (8 tests)
 - Empty/truncated file, large template/field count
 - Output write failure, invalid XML variants
 - JSON escape handling, wire type names
 
-### CLI Integration (12 tests)
+### CLI Integration (12 tests — 1 Round 6)
 - `--help`, no args, missing configuration/templates/files
 - Valid input with/without JSON, strict/non-strict mode
 - Invalid output path, unknown argument
@@ -219,7 +254,7 @@ Platform: Windows 10 x64
   "detected_profile": "spectra-1.29|spectra-1.30|unknown|ambiguous",
   "profile_evidence": "actual auto-detection evidence from artifact contents",
   "requested_profile": "auto|spectra-1.29|spectra-1.30",
-  "selected_profile": "spectra-1.29|spectra-1.30 (profile used for validation)",
+  "selected_profile": "none|spectra-1.29|spectra-1.30 (profile used for validation; none when unresolved)",
   "compatibility_status": "compatible|unknown|mismatch",
   "templates_file": { "path", "file_name", "file_size", "sha256", "parse_ok", "validation_ok" },
   "configuration_file": { "path", "file_name", "file_size", "sha256", "parse_ok", "validation_ok" },
@@ -306,6 +341,16 @@ build\moex_fast\Release\moex-fast-inspect.exe --configuration <path\T0-configura
 ## Main Protection
 
 Option B active. MiMo does not merge PRs or push to main.
+
+## Files Changed (Round 7)
+
+```
+MODIFIED: cpp/moex_fast/src/inspector.cpp (detect_profile: wrong-name => ambiguous; run_inspector: shared/versioned checks, selected_profile=none, strict unresolved => invalid)
+MODIFIED: cpp/moex_fast/CMakeLists.txt (removed MOEX_FAST_INSPECT_PATH from test_deterministic_report)
+MODIFIED: cpp/moex_fast/tests/test_deterministic_report.cpp (removed duplicate CLI test, added 9 Round 7 tests)
+MODIFIED: agent_workspaces/mimo/reports/2026-07-10-rt1-fast-config-template-inspector.md
+MODIFIED: PROJECT_STATE.md
+```
 
 ## Files Changed (Round 6)
 

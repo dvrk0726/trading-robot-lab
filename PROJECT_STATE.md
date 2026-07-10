@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-1 Round 6 corrections applied, READY_FOR_REVIEW
+Статус: RT-1 Round 7 corrections applied, READY_FOR_REVIEW
 
 ## Архитектура
 

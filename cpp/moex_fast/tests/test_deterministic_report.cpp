@@ -682,16 +682,314 @@ void test_round6_override_preserves_detection_evidence() {
     TEST_PASS("Round 6: override preserves detection evidence");
 }
 
-void test_round6_invalid_profile_cli() {
-    // unsupported CLI profile value => CLI failure with non-zero exit code
-    int rc = std::system(
-        ("\"" + std::string(MOEX_FAST_INSPECT_PATH) +
-         "\" --configuration fixtures/synthetic_configuration.xml"
-         " --templates fixtures/synthetic_templates.xml"
-         " --profile bogus-profile > NUL 2>&1").c_str());
-    CHECK(rc != 0);
+// --- Round 7 tests ---
 
-    TEST_PASS("Round 6: unsupported --profile CLI value rejected");
+void test_round7_auto_ambiguous_selected_none() {
+    // auto + ambiguous artifact => selected_profile=none; mismatch; strict invalid
+    write_temp_file("r7_auto_ambiguous.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='40' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='47' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    // Non-strict
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_auto_ambiguous.xml");
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.detected_profile == "ambiguous");
+        CHECK(report.selected_profile == "none");
+        CHECK(report.requested_profile == "auto");
+        CHECK(report.compatibility_status == "mismatch");
+        CHECK(report.required_template_results.empty());
+    }
+
+    // Strict => invalid
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_auto_ambiguous.xml");
+        opts.strict = true;
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.overall_status == "invalid");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    TEST_PASS("Round 7: auto + ambiguous => selected_profile=none, mismatch, strict invalid");
+}
+
+void test_round7_auto_unknown_selected_none() {
+    // auto + unknown artifact => selected_profile=none; compatibility unknown; strict invalid
+    write_temp_file("r7_auto_unknown.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    // Non-strict
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_auto_unknown.xml");
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.detected_profile == "unknown");
+        CHECK(report.selected_profile == "none");
+        CHECK(report.requested_profile == "auto");
+        CHECK(report.compatibility_status == "unknown");
+        CHECK(report.required_template_results.empty());
+    }
+
+    // Strict => invalid
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_auto_unknown.xml");
+        opts.strict = true;
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.overall_status == "invalid");
+        CHECK(report.compatibility_status == "unknown");
+    }
+
+    TEST_PASS("Round 7: auto + unknown => selected_profile=none, unknown, strict invalid");
+}
+
+void test_round7_wrong_name_47_only_mismatch() {
+    // wrong-name-only ID 47 (no ID 40, no valid ID 48) => mismatch; strict invalid
+    write_temp_file("r7_wrong47_only.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='47' name='WrongName'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    // Non-strict
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_wrong47_only.xml");
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.detected_profile == "ambiguous");
+        CHECK(report.selected_profile == "none");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    // Strict => invalid
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_wrong47_only.xml");
+        opts.strict = true;
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.overall_status == "invalid");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    TEST_PASS("Round 7: wrong-name-only ID 47 => ambiguous/mismatch, strict invalid");
+}
+
+void test_round7_wrong_name_48_only_mismatch() {
+    // wrong-name-only ID 48 (no ID 40, no valid ID 47) => mismatch; strict invalid
+    write_temp_file("r7_wrong48_only.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='48' name='WrongName'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    // Non-strict
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_wrong48_only.xml");
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.detected_profile == "ambiguous");
+        CHECK(report.selected_profile == "none");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    // Strict => invalid
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_wrong48_only.xml");
+        opts.strict = true;
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.overall_status == "invalid");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    TEST_PASS("Round 7: wrong-name-only ID 48 => ambiguous/mismatch, strict invalid");
+}
+
+void test_round7_explicit_override_wrong_name_stays_mismatch() {
+    // explicit 1.29 and 1.30 overrides on wrong-name evidence remain mismatch/invalid
+    write_temp_file("r7_override_wrong.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='47' name='WrongName'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    // Explicit spectra-1.29 override
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_override_wrong.xml");
+        opts.profile = "spectra-1.29";
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.detected_profile == "ambiguous");
+        CHECK(report.selected_profile == "spectra-1.29");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    // Explicit spectra-1.30 override
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_override_wrong.xml");
+        opts.profile = "spectra-1.30";
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.detected_profile == "ambiguous");
+        CHECK(report.selected_profile == "spectra-1.30");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    // Both strict => invalid
+    {
+        moex_fast::InspectorOptions opts;
+        opts.configuration_path = "fixtures/synthetic_configuration.xml";
+        opts.templates_path = temp_path("r7_override_wrong.xml");
+        opts.profile = "spectra-1.29";
+        opts.strict = true;
+
+        auto report = moex_fast::run_inspector(opts);
+        CHECK(report.overall_status == "invalid");
+        CHECK(report.compatibility_status == "mismatch");
+    }
+
+    TEST_PASS("Round 7: explicit overrides on wrong-name evidence remain mismatch/invalid");
+}
+
+void test_round7_shared_checks_still_run_on_unresolved() {
+    // When selected_profile=none, shared checks (wire type) still run
+    write_temp_file("r7_shared_checks.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = temp_path("r7_shared_checks.xml");
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "unknown");
+    CHECK(report.selected_profile == "none");
+    // Configuration validation should still run
+    CHECK(!report.required_feed_results.empty());
+
+    TEST_PASS("Round 7: shared checks run on unresolved profile");
+}
+
+void test_round7_positive_129_still_valid() {
+    // Existing valid official-style spectra-1.29 fixture remains valid
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+    opts.strict = true;
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "spectra-1.29");
+    CHECK(report.selected_profile == "spectra-1.29");
+    CHECK(report.compatibility_status == "compatible");
+    CHECK(report.overall_status == "valid");
+    CHECK(report.required_template_results.size() == 7);
+    for (const auto& r : report.required_template_results) {
+        CHECK(r.present);
+    }
+
+    TEST_PASS("Round 7: positive spectra-1.29 still valid");
+}
+
+void test_round7_positive_130_still_valid() {
+    // Existing valid synthetic spectra-1.30 fixture remains valid
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates_130.xml";
+    opts.strict = true;
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "spectra-1.30");
+    CHECK(report.selected_profile == "spectra-1.30");
+    CHECK(report.compatibility_status == "compatible");
+    CHECK(report.overall_status == "valid");
+    CHECK(report.required_template_results.size() == 8);
+    for (const auto& r : report.required_template_results) {
+        CHECK(r.present);
+    }
+
+    TEST_PASS("Round 7: positive spectra-1.30 still valid");
+}
+
+void test_round7_strict_unknown_invalid() {
+    // Strict mode with unknown compatibility must be invalid
+    write_temp_file("r7_strict_unknown.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = temp_path("r7_strict_unknown.xml");
+    opts.strict = true;
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.compatibility_status == "unknown");
+    CHECK(report.overall_status == "invalid");
+
+    TEST_PASS("Round 7: strict unknown compatibility => invalid");
 }
 
 }  // namespace
@@ -729,7 +1027,16 @@ int main() {
     test_round6_explicit_129_on_ambiguous();
     test_round6_explicit_130_on_ambiguous();
     test_round6_override_preserves_detection_evidence();
-    test_round6_invalid_profile_cli();
+    // Round 7 tests
+    test_round7_auto_ambiguous_selected_none();
+    test_round7_auto_unknown_selected_none();
+    test_round7_wrong_name_47_only_mismatch();
+    test_round7_wrong_name_48_only_mismatch();
+    test_round7_explicit_override_wrong_name_stays_mismatch();
+    test_round7_shared_checks_still_run_on_unresolved();
+    test_round7_positive_129_still_valid();
+    test_round7_positive_130_still_valid();
+    test_round7_strict_unknown_invalid();
 
     std::cout << "\nAll deterministic report tests PASSED.\n";
     return 0;

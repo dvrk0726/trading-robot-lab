@@ -106,7 +106,7 @@ std::string detect_profile(const std::vector<FastTemplateDescriptor>& templates,
         return "ambiguous";
     }
 
-    // Unknown: wrong-name IDs only, no valid SecurityDefinition/SecurityStatus
+    // Ambiguous: wrong-name IDs are internally inconsistent evidence
     if (has_47_wrong_name || has_48_wrong_name) {
         std::string details;
         if (has_47_wrong_name) {
@@ -116,8 +116,8 @@ std::string detect_profile(const std::vector<FastTemplateDescriptor>& templates,
             if (!details.empty()) details += "; ";
             details += "ID 48 has wrong name '" + id_to_name[48] + "'";
         }
-        evidence = details + " — no valid SecurityDefinition/SecurityStatus evidence";
-        return "unknown";
+        evidence = details + " — internally inconsistent";
+        return "ambiguous";
     }
 
     evidence = "No distinguishing SecurityDefinition/SecurityStatus ID evidence";
@@ -152,7 +152,24 @@ std::vector<RequiredPair> required_pairs_for_profile(const std::string& profile)
     };
 }
 
-void validate_templates(
+// Shared template checks common to all profiles (wire type validation).
+void validate_templates_common(
+    const std::vector<FastTemplateDescriptor>& templates,
+    std::vector<InspectionIssue>& issues) {
+
+    for (const auto& t : templates) {
+        for (const auto& f : t.fields) {
+            if (f.wire_type == WireType::Unknown) {
+                issues.push_back({Severity::Warning, IssueSource::Template,
+                    "Unknown wire type in template " + std::to_string(t.id) +
+                    " field " + f.name});
+            }
+        }
+    }
+}
+
+// Version-specific required template pair checks.
+void validate_templates_versioned(
     const std::vector<FastTemplateDescriptor>& templates,
     bool strict,
     const std::string& profile,
@@ -185,16 +202,6 @@ void validate_templates(
         required_results.push_back({
             "template-" + std::to_string(rp.id) + "-" + rp.name,
             found && name_match, sev});
-    }
-
-    for (const auto& t : templates) {
-        for (const auto& f : t.fields) {
-            if (f.wire_type == WireType::Unknown) {
-                issues.push_back({Severity::Warning, IssueSource::Template,
-                    "Unknown wire type in template " + std::to_string(t.id) +
-                    " field " + f.name});
-            }
-        }
     }
 }
 
@@ -312,16 +319,25 @@ InspectionReport run_inspector(const InspectorOptions& opts) {
     report.detected_profile = detected;
     report.detection_evidence = evidence;
 
-    // Determine requested and selected profile
+    // Determine requested and selected profile.
+    // Auto + spectra-1.29/1.30 => select that profile.
+    // Auto + ambiguous/unknown => no selected version ("none").
+    // Explicit override => use the override.
     bool is_auto = opts.profile.empty() || opts.profile == "auto";
     report.requested_profile = is_auto ? "auto" : opts.profile;
 
     std::string profile_to_use;
+    bool has_version_profile = false;
     if (is_auto) {
-        profile_to_use = (detected == "spectra-1.29" || detected == "spectra-1.30")
-                         ? detected : "spectra-1.29";
+        if (detected == "spectra-1.29" || detected == "spectra-1.30") {
+            profile_to_use = detected;
+            has_version_profile = true;
+        } else {
+            profile_to_use = "none";
+        }
     } else {
         profile_to_use = opts.profile;
+        has_version_profile = true;
     }
     report.selected_profile = profile_to_use;
 
@@ -349,11 +365,16 @@ InspectionReport run_inspector(const InspectorOptions& opts) {
         }
     }
 
-    // Validate templates independently
+    // Validate templates independently.
+    // Shared checks (wire type) always run.
+    // Version-specific required pair checks only run when a version profile is established.
     if (report.templates_info.parse_ok) {
         std::size_t issue_start = report.issues.size();
-        validate_templates(report.templates, opts.strict, profile_to_use,
-                          report.issues, report.required_template_results);
+        validate_templates_common(report.templates, report.issues);
+        if (has_version_profile) {
+            validate_templates_versioned(report.templates, opts.strict, profile_to_use,
+                                        report.issues, report.required_template_results);
+        }
         // Check only template-sourced issues for templates validation_ok
         report.templates_info.validation_ok = true;
         for (std::size_t i = issue_start; i < report.issues.size(); ++i) {
@@ -399,20 +420,25 @@ InspectionReport run_inspector(const InspectorOptions& opts) {
         }
     }
 
-    // Determine overall status
-    bool has_error = false;
-    bool has_warning = false;
-    for (const auto& iss : report.issues) {
-        if (iss.severity == Severity::Error) has_error = true;
-        if (iss.severity == Severity::Warning) has_warning = true;
-    }
-
-    if (has_error) {
+    // Strict mode: unresolved compatibility (unknown or mismatch) must be invalid.
+    if (opts.strict && report.compatibility_status != "compatible") {
         report.overall_status = "invalid";
-    } else if (has_warning) {
-        report.overall_status = "warning";
     } else {
-        report.overall_status = "valid";
+        // Determine overall status from issues
+        bool has_error = false;
+        bool has_warning = false;
+        for (const auto& iss : report.issues) {
+            if (iss.severity == Severity::Error) has_error = true;
+            if (iss.severity == Severity::Warning) has_warning = true;
+        }
+
+        if (has_error) {
+            report.overall_status = "invalid";
+        } else if (has_warning) {
+            report.overall_status = "warning";
+        } else {
+            report.overall_status = "valid";
+        }
     }
 
     return report;

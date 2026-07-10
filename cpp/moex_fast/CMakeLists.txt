@@ -55,9 +55,6 @@ add_test(NAME test_provenance COMMAND test_provenance WORKING_DIRECTORY ${MOEX_F
 
 add_executable(test_deterministic_report tests/test_deterministic_report.cpp)
 target_link_libraries(test_deterministic_report PRIVATE moex_inspect)
-target_compile_definitions(test_deterministic_report PRIVATE
-    MOEX_FAST_INSPECT_PATH="$<TARGET_FILE:moex-fast-inspect>"
-)
 add_test(NAME test_deterministic_report COMMAND test_deterministic_report WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
 
 add_executable(test_resource_safety tests/test_resource_safety.cpp)
