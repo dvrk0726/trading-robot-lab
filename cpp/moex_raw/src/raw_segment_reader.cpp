@@ -14,7 +14,7 @@ namespace moex_raw {
 static void add_issue(std::vector<RawValidationIssue>& issues,
                       ValidationSeverity sev, const std::string& code,
                       const std::string& msg) {
-    issues.push_back({sev, code, msg});
+    issues.push_back({sev, code, msg, {}, {}});
 }
 
 SegmentStatus validate_segment(const std::string& path,

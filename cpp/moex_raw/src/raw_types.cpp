@@ -22,7 +22,7 @@ static bool is_all_zero(const std::uint8_t* data, std::size_t len) {
 static void add_issue(std::vector<RawValidationIssue>& issues,
                       ValidationSeverity sev, const std::string& code,
                       const std::string& msg) {
-    issues.push_back({sev, code, msg});
+    issues.push_back({sev, code, msg, {}, {}});
 }
 
 std::string session_id_hex(const std::uint8_t id[16]) {

@@ -440,7 +440,7 @@ static int cmd_inspect(int argc, char* argv[]) {
 
         if (stream_sets.empty()) {
             report.overall_status = "invalid";
-            report.issues.push_back({ValidationSeverity::Error, "NO_STREAMS", "No valid streams found"});
+            report.issues.push_back({ValidationSeverity::Error, "NO_STREAMS", "No valid streams found", {}, {}});
             has_errors = true;
         } else {
             // Sort stream_sets deterministically by (session_id, source_id, channel_id)

@@ -49,8 +49,8 @@ int main() {
     // Issues in JSON
     {
         RawSegmentReport report;
-        report.issues.push_back({ValidationSeverity::Error, "TEST_ERR", "test error message"});
-        report.issues.push_back({ValidationSeverity::Warning, "TEST_WARN", "test warning"});
+        report.issues.push_back({ValidationSeverity::Error, "TEST_ERR", "test error message", {}, {}});
+        report.issues.push_back({ValidationSeverity::Warning, "TEST_WARN", "test warning", {}, {}});
         report.overall_status = "invalid";
 
         auto json = generate_json_report(report);

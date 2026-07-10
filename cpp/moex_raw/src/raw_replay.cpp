@@ -15,7 +15,7 @@ namespace moex_raw {
 static void add_replay_issue(std::vector<RawValidationIssue>& issues,
                              ValidationSeverity sev, const std::string& code,
                              const std::string& msg) {
-    issues.push_back({sev, code, msg});
+    issues.push_back({sev, code, msg, {}, {}});
 }
 
 // Build the MXREPLAY1 canonical metadata prefix for SHA-256 context initialization.
