@@ -141,7 +141,7 @@ Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
 Implementation commit: `110360bb756e5b1f7f8bc37c6dc1aab536c077b2`
-CI #43 (run 29107532103): ALL GREEN (7/7 jobs)
+CI #44 (run 29107791559): ALL GREEN (7/7 jobs)
 ```
 
 Round 2 corrections delivered:
