@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: workflow review before RT-1
+Текущий gate: review and owner acceptance of workflow PR before RT-1
 
 ## Назначение проекта
 
@@ -38,13 +38,12 @@ decisions/ADR-0004-moex-vpts-certification-gate.md
 
 ## Подтверждённое состояние historical contour
 
-C++ QSH/OrdLog contour завершён на текущем engineering уровне.
-
 ```text
 M10X complete.
 20/20 CTest regression tests.
-Control commit:
-54cd53df4b92473e49dd5dff96b2024590b82e42
+Control commit: 54cd53df4b92473e49dd5dff96b2024590b82e42
+Remaining crossed snapshots: 907
+strategy_ready for affected data: false
 ```
 
 Подтверждённые historical flags:
@@ -53,8 +52,6 @@ Control commit:
 0x94  = Add + Buy + Quote
 0x414 = Add + Buy + TxEnd
 ```
-
-Остаются 907 crossed snapshots; соответствующие данные имеют `strategy_ready=false`.
 
 Historical QSH 2021 — engineering sample для parser/replay/book mechanics, не доказательство современной прибыльности.
 
@@ -87,46 +84,69 @@ official owner-provided private artifacts.
 
 ## Текущий process gate
 
-Issue #1:
-
 ```text
-[ARCH] Establish MiMo branch, Pull Request and CI workflow
-Status: IN_PROGRESS / Pull Request review
-```
-
-Pull Request:
-
-```text
-#15 chore: establish MiMo branch, Pull Request and CI workflow
+Issue #1: [ARCH] Establish MiMo branch, Pull Request and CI workflow
+Pull Request #15: chore: establish MiMo branch, Pull Request and CI workflow
 Branch: chore/issue-1-mimo-pr-workflow
-State: draft until state docs and CI review are complete
+Merge: not performed
+RT-1: blocked
 ```
 
-Workflow package includes:
+Workflow package включает:
 
 ```text
 permanent MiMo instruction;
+universal READY_FOR_MIMO command;
 branch-only implementation;
 canonical task statuses;
+one-task-at-a-time rule;
 Pull Request template;
 Python/C++/hygiene GitHub Actions;
 20-test QSH/M10X regression gate;
 secret/raw-data/large-file hygiene checker;
 Owner Review Package;
 label synchronization;
-one-task rule;
 no auto-merge/no MiMo merge;
-main branch ruleset instructions.
+main branch protection decision guide.
+```
+
+Полный CI run #8 для PR #15 подтвердил:
+
+```text
+Repository hygiene: PASS
+Python tests and contracts: PASS
+C++ QSH M10X regression: PASS
+Expected CTest inventory: exactly 20
+All 20 regression tests: PASS
+```
+
+Любой новый head commit PR должен повторно пройти те же checks перед merge.
+
+## Server-side защита main
+
+Для private repository availability branch protection/rulesets зависит от GitHub plan. Owner не покупает и не меняет plan автоматически.
+
+После принятия PR #15 Owner выбирает один вариант:
+
+```text
+A. Если функция доступна — включить ruleset/branch protection и required checks.
+B. Если функция недоступна — отдельно решить вопрос upgrade либо явно принять временное procedural limitation для private solo repository.
+```
+
+Даже при временном limitation обязательны feature branch, Pull Request, успешный CI, Architecture/Review, manual owner merge, no auto-merge и запрет direct main work для MiMo.
+
+Инструкция:
+
+```text
+docs/engineering/MAIN_BRANCH_PROTECTION.md
 ```
 
 ## RT-1
 
-Issue #14:
-
 ```text
-[MIMO][C++] RT-1 FAST configuration/templates inspector
+Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
 Status: DRAFT
-Blocked by: Issue #1 and PR #15 acceptance
+Blocked by: Issue #1 / PR #15 acceptance
 Implementation: not started
 MiMo branch/commit/PR: none
 ```
@@ -171,12 +191,14 @@ no strategy_ready weakening.
 RT-1 cannot move to `READY_FOR_MIMO` until:
 
 ```text
-PR #15 accepted and merged;
-CI checks pass and exist as required checks;
-canonical labels synchronized;
-Protect main ruleset active;
-auto-merge disabled;
-Architecture/Review Agent explicitly releases Issue #14.
+current head of PR #15 passes all checks;
+Architecture/Review accepts the diff;
+Owner accepts the workflow and branch-protection option;
+PR #15 is merged manually;
+canonical labels are synchronized;
+auto-merge remains disabled;
+Issue #1 is completed;
+Architecture/Review explicitly releases Issue #14.
 ```
 
 ## AI workflow
@@ -198,7 +220,7 @@ Universal MiMo command:
 Возьми следующую задачу READY_FOR_MIMO, выполни её, создай Pull Request и остановись.
 ```
 
-MiMo performs one task at a time, creates a feature branch and PR, runs tests, reports results, does not merge and stops.
+MiMo выполняет одну задачу, создаёт feature branch и PR, запускает проверки, готовит отчёт, не выполняет merge и останавливается.
 
 ## Canonical statuses
 
@@ -216,12 +238,13 @@ DONE
 ## Immediate actions
 
 ```text
-1. Complete PR #15 state-document updates.
-2. Run and review all PR #15 GitHub Actions.
-3. Review full diff and resolve defects.
-4. Owner accepts workflow package.
-5. Merge only after acceptance; no auto-merge.
-6. Synchronize labels and configure Protect main ruleset.
-7. Only then move Issue #14 to READY_FOR_MIMO.
-8. MiMo implements RT-1 in a separate branch and stops at PR.
+1. Confirm all checks on the current PR #15 head.
+2. Complete Architecture/Review of the final diff.
+3. Owner reviews and accepts or requests exact changes.
+4. Owner selects the branch-protection option without automatic spending.
+5. Merge PR #15 manually only after acceptance.
+6. Synchronize labels and apply the selected main protection mode.
+7. Mark Issue #1 DONE.
+8. Only then move Issue #14 to READY_FOR_MIMO.
+9. Run MiMo once for RT-1; MiMo stops at a new Pull Request.
 ```
