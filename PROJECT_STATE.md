@@ -1,537 +1,334 @@
 # PROJECT_STATE
 
-Дата последнего обновления: 2026-07-08  
+Дата последнего обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: active research / historical market microstructure data layer
+Статус: active / MOEX realtime foundation
 
-## Назначение файла
+## Назначение
 
-Этот файл фиксирует текущее состояние проекта: что уже сделано, какие решения приняты и какой следующий шаг.
+Этот файл фиксирует текущее проверенное состояние проекта: что уже работает, какие решения приняты, что ожидается извне и какой следующий шаг.
 
-Любой ИИ-агент или разработчик должен читать этот файл после `AI_CONTEXT.md`.
+Любой агент читает его после `AI_CONTEXT.md`.
 
-## Главная цель проекта
-
-Построить не одного монолитного торгового робота, а дисциплинированную платформу для исследования и дальнейшего безопасного исполнения торговых стратегий на фьючерсах MOEX.
-
-Целевая модель:
+## Целевая система
 
 ```text
-Trading Lab      — исследование, тестирование, replay, отчеты, анализ.
-Trading Runtime  — легкое исполнение утвержденных Strategy Packages.
-Shared Contracts — единые форматы данных, сигналов, заявок, risk decisions и отчетов.
+Trading Lab      — research, replay, backtests, reports and visualization.
+Trading Runtime  — execution of approved Strategy Packages.
+Shared Contracts — normalized market events, OrderIntent, RiskDecision and reports.
 ```
 
-На текущем этапе задача не в live trading и не в подключении брокера.
-
-Текущая цепочка развития:
+Основной путь:
 
 ```text
-data quality -> microstructure replay -> statistical validation -> backtest -> paper -> owner gate -> live later
+market data -> Data Quality -> deterministic replay -> research -> backtest -> paper -> certification/owner gate -> live later
 ```
 
-## Принятые архитектурные решения
-
-### ADR-0002 — Two-system Lab / Runtime architecture
+## Принятые решения
 
 ```text
-decisions/ADR-0002-two-system-lab-runtime-architecture.md
+Trading Lab cannot send real orders.
+Strategy cannot call execution directly.
+Every OrderIntent passes RiskEngine.
+Runtime only runs approved Strategy Packages.
+Live is disabled by default.
+Production order entry requires VPTS/certification and owner approval.
+C++ is used for low-latency data/replay/runtime core.
+Python is used for research, statistics, reports and UI.
 ```
 
-Суть:
+ADR:
 
 ```text
-Trading Lab не умеет отправлять реальные заявки.
-Trading Runtime не запускает неутвержденные стратегии.
-Стратегии передаются из Lab в Runtime только через Strategy Package.
-Каждый OrderIntent проходит RiskEngine.
-Live disabled by default and owner-gated.
-```
-
-### ADR-0003 — C++ QSH / OrdLog Data Engine
-
-```text
-decisions/ADR-0003-cpp-qsh-ordlog-data-engine.md
-```
-
-Суть:
-
-```text
-C++20 = низкоуровневый слой данных и будущая база replay/runtime core.
-Python = research, Trading Lab dashboard, анализ, графики, отчеты.
-```
-
-Первый C++-модуль:
-
-```text
-cpp/qsh_ingest
-```
-
-Он должен читать исторические QSH/OrdLog/Quotes/Deals/AuxInfo, делать Data Quality, восстанавливать L3/L2 стакан и отдавать нормализованные данные Python-лаборатории.
-
-## Что уже сделано
-
-### 1. Создан приватный GitHub-репозиторий
-
-```text
-trading-robot-lab
-```
-
-Владелец:
-
-```text
-dvrk0726
-```
-
-Назначение: хранить код, документацию, архитектурные решения, research notes, идеи стратегий, оценки и контекст для ИИ-агентов.
-
-### 2. Подключен доступ ChatGPT/GitHub
-
-Доступ к репозиторию проверен.
-
-Доступны:
-
-```text
-чтение файлов
-создание файлов
-обновление файлов
-создание GitHub Issues
-работа с репозиторием через GitHub connector
-```
-
-### 3. Созданы базовые документы
-
-```text
-README.md
-AI_CONTEXT.md
-PROJECT_STATE.md
-SECURITY.md
-ROADMAP.md
-.env.example
-.gitignore
-```
-
-`AI_CONTEXT.md` является главным стартовым файлом для нового ИИ-агента.
-
-### 4. Создана архитектурная документация
-
-```text
-docs/01_hybrid_architecture.md
 decisions/ADR-0001-hybrid-python-cpp-architecture.md
 decisions/ADR-0002-two-system-lab-runtime-architecture.md
 decisions/ADR-0003-cpp-qsh-ordlog-data-engine.md
-docs/system_architecture_and_user_interface_requirements.md
-docs/trading_robot_vision_and_research_plan.md
+decisions/ADR-0004-moex-vpts-certification-gate.md
 ```
 
-### 5. Создан регламент взаимодействия ИИ-агентов
+## Что уже работает
+
+### Repository and workflow
 
 ```text
-docs/ai_team_workflow.md
-docs/ai_agent_communication_protocol.md
-.github/ISSUE_TEMPLATE/ai_agent_task.md
+private GitHub repository;
+AI_CONTEXT / PROJECT_STATE / ROADMAP / SECURITY;
+AI-agent workflow and task template;
+Strategy Knowledge Base;
+Shared schemas and test vectors;
+Trading Lab/Runtime skeleton;
+GitHub connector access;
+MiMo local implementation workflow.
 ```
 
-Принята схема:
+### Historical QSH / OrdLog engine
+
+Текущий инженерный уровень завершён:
 
 ```text
-Issue -> work -> result -> review -> handoff -> state update
+C++20 qsh_ingest;
+QSH header/stream parsing;
+OrdLog decoding;
+transaction grouping;
+L3 book reconstruction;
+L3 -> L2 export;
+Data Quality reports;
+strategy_ready gating;
+NonSystem semantics analysis;
+persistent crossed-state analysis;
+Quote flag semantics analysis;
+20/20 tests at M10X.
 ```
 
-Основные роли:
+Контрольный commit:
 
 ```text
-Strategy Master Agent        торговая логика, гипотезы, риск, ТЗ на бэктест
-Python Research Agent        данные, прототипы, бэктест, отчеты
-C++ Core Agent               быстрый контур, QSH/OrdLog, replay, future runtime core
-Architecture Agent           docs, ADR, roadmap, PROJECT_STATE
-Owner / Human Gate           финальные решения, особенно перед live
+54cd53df4b92473e49dd5dff96b2024590b82e42
 ```
 
-### 6. Создана база знаний по стратегиям
+Подтверждённые QSH flags:
 
 ```text
-strategy_knowledge_base/
-  ideas/
-  strategies/
-  strategy_families/
-  evaluations/
-  research_notes/
-  strategy_master_agent/
+0x94  = Add + Buy + Quote
+0x414 = Add + Buy + TxEnd
 ```
 
-### 7. Обработаны и структурированы ключевые материалы
+Остаются 907 crossed snapshots, поэтому соответствующие данные имеют `strategy_ready=false`.
 
-Research notes:
+Исторический QSH 2021 используется как engineering sample для parser/replay/book mechanics. Он не является доказательством современной прибыльности.
+
+## MOEX official-source work
+
+Изучены и зафиксированы:
 
 ```text
-strategy_knowledge_base/research_notes/NOTE-20260708-002-market-maker-algorithms-parts-1-4.md
-strategy_knowledge_base/research_notes/NOTE-20260708-003-market-maker-algorithms-parts-5-8.md
-strategy_knowledge_base/research_notes/NOTE-20260708-004-bulashev-statistics-for-traders.md
-strategy_knowledge_base/research_notes/NOTE-20260708-005-avellaneda-stoikov-limit-order-book.md
-strategy_knowledge_base/research_notes/NOTE-20260708-006-r0man-market-maker-test-siu5.md
-strategy_knowledge_base/research_notes/NOTE-20260708-007-robot-uralpro-hft-context.md
+SPECTRA test access;
+FAST test directory;
+FIX test documentation;
+production FAST direction;
+Full_orders_log direction;
+VPTS certification procedure;
+FAST specification 1.29.1;
+FAST_9.0 templates.xml;
+T0 configuration.xml;
+FIX SPECTRA manual.
 ```
 
-Ideas:
+Ключевые документы:
 
 ```text
-strategy_knowledge_base/ideas/IDEA-20260708-002-inventory-imbalance-market-making.md
-strategy_knowledge_base/ideas/IDEA-20260708-003-regime-aware-market-making-price-function.md
-strategy_knowledge_base/ideas/IDEA-20260708-004-ri-synthetic-index-lead-lag.md
+MOEX_SPECTRA_FIX_FAST_REALTIME_DATA_AND_TEST_ACCESS_PLAN.md
+docs/moex/MOEX_SOURCE_INDEX.md
+docs/moex/fast_spectra_notes.md
+docs/moex/fast_spectra_t0_templates_notes.md
+docs/moex/fix_spectra_notes.md
+docs/moex/moex_source_version_check.md
+docs/moex/MOEX_REALTIME_ARCHITECTURE.md
 ```
 
-Evaluation:
+### FAST template alignment
 
 ```text
-strategy_knowledge_base/evaluations/EVAL-20260708-001-siu5-market-maker-r0man.md
+FAST current documentation: 1.29.1 dated 2025-11-19.
+FAST_9.0 templates match the uploaded T0 template set for the checked file.
 ```
 
-### 8. Создана базовая техническая инфраструктура
-
-Сделано или начато:
+Relevant template IDs:
 
 ```text
-project skeleton
-Python package skeleton
-core trading models
-safe config loader
-minimal risk engine
-synthetic spread strategy prototype
-shared JSON schemas
-schema validation examples
-Strategy Package standard
-dummy no-trade package
-Trading Lab demo database
-Trading Lab demo dashboard
-Trading Lab demo charts
-chart controls and marker fixes
-QSH data source notes
-qsh2txt/txt2qsh notes
+29 OrdersLogMessage
+30 BookMessage
+31 DefaultIncrementalRefreshMessage
+32 DefaultSnapshotMessage
+40 SecurityDefinition
+45 SecurityGroupStatus
+46 TradingSessionStatus
 ```
 
-## Главные выводы из материалов
+### T0 ORDERS-LOG path
 
-### 1. Старый `robot_uralpro` — не готовый боевой робот
-
-Он ценен как:
+Для T0 подтверждены необходимые логические компоненты:
 
 ```text
-источник архитектурных идей
-источник торговой гипотезы RI / synthetic index
-пример старого HFT event loop
-материал для изучения order management
+FUT-INFO;
+ORDERS-LOG Incremental A/B;
+ORDERS-LOG Snapshot A/B;
+TCP Historical Replay;
+template-driven decoding;
+Snapshot + buffered Incremental bootstrap.
 ```
 
-Но не имеет статуса готового live решения.
+## Decision on FAST decoding
 
-Причины:
+QuickFAST is not the planned production hot-path decoder.
+
+Target:
 
 ```text
-устаревшая инфраструктура
-изменившийся рынок
-неизвестная актуальная прибыльность
-отсутствие современного risk engine
-отсутствие replay-бэктеста
-риск случайной отправки реальных заявок
+specialized C++ SPECTRA FAST decoder;
+small wire-codec primitives;
+generated direct decoders from templates.xml;
+no XML interpretation in hot path;
+no universal FIX message tree;
+minimal allocations;
+template hash validation;
+differential testing against reference tools.
 ```
 
-### 2. Первая стратегия-кандидат
+QuickFAST, fast_sensor and reference codecs may be used only as diagnostic/correctness references.
+
+## Realtime architecture
 
 ```text
-RI / Synthetic Index Lead-Lag Statistical Arbitrage
+FAST -> raw capture -> decode -> sequence/recovery -> normalized events -> L3/L2 -> storage -> research
 ```
 
-Современная формулировка:
+Future trading path remains separate:
 
 ```text
-Do not assume who leads. Measure who leads.
+Strategy Package -> RiskEngine -> OrderManager -> FIX/TWIME
 ```
 
-Нужно проверить:
+Storage direction:
 
 ```text
-кто лидер: RI or synthetic index
-на каком лаге
-стабильно ли это внутри дня
-стабильно ли это по режимам рынка
-выживает ли edge после комиссий и slippage
+Raw: immutable binary segments or pcapng on NVMe.
+Archive: compressed Parquet.
+Analytics: ClickHouse.
+Control metadata: PostgreSQL.
+Local research: DuckDB + Python.
+Future object storage: MinIO/S3-compatible.
 ```
 
-### 3. Вторая стратегия-кандидат
+Database failure must not block raw capture.
+
+## External status
+
+MOEX test-access questionnaire has been submitted.
+
+Requested broadly for future work:
 
 ```text
-Regime-aware Inventory Market Making
+T0/T+1/T+2 where available;
+FAST;
+FIX;
+TWIME;
+SIMBA;
+Plaza II;
+Spectra terminal;
+Drop Copy information.
 ```
 
-Требует:
+Waiting for MOEX response with approved services, addresses, ports, identifiers and network requirements.
 
-```text
-order book data
-depth imbalance
-spread state
-fill probability
-inventory control
-volatility regime filter
-cancel latency
-queue approximation
-event-driven replay
-```
-
-Поэтому это более позднее направление.
-
-### 4. Статистика обязательна
-
-Правило проекта:
-
-```text
-No strategy is accepted without statistical validation.
-```
-
-Минимум:
-
-```text
-sample size
-expected trade return
-confidence interval
-PnL distribution
-MAE/MFE
-max drawdown
-loss streaks
-VaR / Expected Shortfall
-out-of-sample
-parameter stability
-commission/slippage sensitivity
-```
-
-## QSH / OrdLog решение
-
-### Доступные и желательные данные
-
-Доступен инженерный пример:
-
-```text
-RTS-3.21.2021-01-05.OrdLog.qsh
-```
-
-Важно:
-
-```text
-2021 OrdLog = engineering sample, not current trading evidence.
-```
-
-Использовать его можно для:
-
-```text
-parser development
-L3 book reconstruction
-replay mechanics
-queue/fill model prototype
-Data Quality checks
-historical order book visualization
-```
-
-Нельзя использовать его как:
-
-```text
-proof of current profitability
-final live-trading validation
-final estimate of modern execution quality
-```
-
-### Разница потоков
-
-```text
-OrdLog.qsh:
-  L3 / full order-log level data.
-  Best for queue/fill/order book reconstruction.
-
-Quotes.qsh:
-  L2 quote/book stream.
-  Good for spread/mid/depth, but not full queue reconstruction.
-
-Deals.qsh:
-  trade prints.
-
-AuxInfo.qsh:
-  auxiliary market/session info.
-```
-
-Движок должен поддержать оба режима:
-
-```text
-Mode A: L3 mode from OrdLog.qsh
-Mode B: L2 mode from Quotes.qsh + Deals.qsh + AuxInfo.qsh
-```
-
-Но первый приоритет — `OrdLog.qsh`.
-
-## Принятые принципы
-
-### Principle 1. Research first
-
-До live — только research, Data Quality, backtest, replay, paper.
-
-### Principle 2. Data Quality first
-
-Любая стратегия опирается только на проверенные данные.
-
-### Principle 3. Strategy is not execution
-
-Стратегия возвращает `OrderIntent`, но не отправляет заявку.
-
-### Principle 4. Risk Engine is mandatory
-
-Каждый `OrderIntent` проходит RiskEngine.
-
-### Principle 5. Live disabled by default
-
-Live mode must require explicit owner approval.
-
-### Principle 6. Lab cannot trade
-
-Trading Lab cannot send real broker/exchange orders.
-
-### Principle 7. Runtime only runs approved packages
-
-Trading Runtime can only run validated and approved Strategy Packages.
-
-### Principle 8. Signal parity required
-
-Перед запуском в Runtime стратегия должна пройти проверку совпадения сигналов на test vectors.
-
-### Principle 9. Secrets are not stored in GitHub
-
-No `.env`, broker keys, passwords, tokens, private keys.
-
-## Текущее целевое устройство проекта
-
-```text
-apps/
-  lab/
-    backend/
-    frontend/
-    research/
-    reports/
-
-  runtime/
-    core/
-    risk/
-    order_manager/
-    strategy_loader/
-    telemetry/
-    execution/
-
-cpp/
-  qsh_ingest/
-
-shared/
-  contracts/
-  schemas/
-  strategy_sdk/
-  test_vectors/
-
-strategy_packages/
-  examples/
-
-docs/
-decisions/
-strategy_knowledge_base/
-```
+Credentials and private connection parameters must not be committed or pasted into public project documents.
 
 ## Current priority
 
-Главная текущая задача:
-
 ```text
-M9_CPP_QSH_ORDLOG_DATA_LAYER.md
+RT-1 — Local FAST configuration/templates inspector
 ```
 
-GitHub Issue:
+Expected result:
 
 ```text
-#13 [MIMO][C++] Build QSH / OrdLog data layer and historical order book replay foundation
+C++ CLI inspector;
+parse configuration.xml;
+parse templates.xml;
+list ORDERS-LOG channels;
+validate template IDs and field order/types;
+calculate/report template/config hashes;
+create normalized FAST contract skeleton;
+unit tests;
+MiMo report and commit SHA.
 ```
 
-Цель:
+Explicit RT-1 non-goals:
 
 ```text
-Raw QSH / OrdLog / Quotes / Deals / AuxInfo
-  -> C++20 parser / normalizer
-  -> L3 order book reconstruction
-  -> L2 snapshots / event stream
-  -> Data Quality report
-  -> Python Trading Lab visualization and research
+no network connection;
+no UDP multicast;
+no TCP Recovery connection;
+no FIX/TWIME;
+no real credentials;
+no order sending;
+no full FAST decoder yet.
 ```
 
-## What MiMo must do now
-
-MiMo must implement M9 incrementally:
+## Agent responsibilities
 
 ```text
-1. Create cpp/qsh_ingest C++20 CMake skeleton.
-2. Implement qsh-ingest CLI help.
-3. Implement QSH signature/header reader.
-4. Implement stream type detection.
-5. Implement and test LEB128 / signed LEB128 / growing int readers.
-6. Decode first 100 OrdLog records.
-7. Scan whole OrdLog file with Data Quality counters.
-8. Group records by TxEnd.
-9. Reconstruct L3 order book on a limited safe segment.
-10. Export L2 snapshots.
-11. Generate metadata.json and data_quality.json.
-12. Show generated quality metadata in Trading Lab.
-13. Create MiMo report.
+ChatGPT / Architecture-Review Agent:
+official sources, architecture, task specification, diff/test review and acceptance.
+
+MiMo Code / Implementation Agent:
+local coding, build, tests, commit, push and implementation report.
+
+Owner:
+final scope, access, costs, hardware, paper/live and production gates.
 ```
 
-Required MiMo report:
+MiMo must not silently change architecture or expand task scope.
+
+## GitHub write workflow
+
+Rules are stored in:
 
 ```text
-agent_workspaces/mimo/reports/2026-07-08-m9-cpp-qsh-ordlog-data-layer.md
+docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md
 ```
 
-## User-facing target
-
-Trading Lab should eventually show:
+Important:
 
 ```text
-Data Sources
-Data Quality
-Historical Order Book
-Price / Mid / Spread chart
-Trades
-Event stream
-Strategy Replay
-Simulated orders/fills
-PnL diagnostics
+large code/docs are written locally by MiMo and pushed with Git;
+connector writes stay small and focused;
+large tasks are split into Issue + task-spec files;
+PROJECT_STATE is current state, not an unlimited history log;
+raw data, binaries and secrets never enter normal Git.
 ```
 
-For the current task, minimum visible result:
+## Engineering improvement log
+
+Future rewrite lessons are recorded in:
 
 ```text
-Data Quality section can display C++ generated metadata and quality reports.
+docs/engineering/FUTURE_REWRITE_NOTES.md
 ```
 
-## Explicit Non-Goals Now
+Only evidence-backed architecture/performance/reliability observations belong there.
+
+## Immediate next actions
 
 ```text
-no live trading
-no broker connection
-no real API keys
-no colocation setup
-no real order sending
-no direct port of old robot into production
-no profitability claims from old historical data
-no raw real QSH committed to GitHub
-no EXE/DLL/binary tools committed
+1. Wait for MOEX response without blocking local work.
+2. Prepare an approved RT-1 task specification for MiMo.
+3. MiMo implements RT-1 locally and runs tests.
+4. Architecture agent reviews commit/diff/test evidence.
+5. Only after acceptance start RT-2 raw capture/replay format.
 ```
 
-## Next step after M9
-
-After M9 is complete:
+## Explicit non-goals now
 
 ```text
-M10 — normalized microstructure research / first historical replay reports
-M11 — RI / Synthetic Index Lead-Lag research using current/valid weights and data
-M12 — event-driven replay bridge with latency/fill assumptions
+no live trading;
+no production order sending;
+no broker/MOEX secrets in Git;
+no production hardware purchase before measurements;
+no direct reuse of old HFT robot;
+no QuickFAST dependency in production hot path;
+no Kafka/Kubernetes/microservice expansion without evidence;
+no claims of profitability from historical sample data.
+```
+
+## Project principle
+
+```text
+Correctness first.
+Raw reproducibility first.
+Data Quality first.
+Measure before optimization.
+Research before execution.
+RiskEngine is mandatory.
+Live remains owner-gated.
 ```
