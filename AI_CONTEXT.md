@@ -134,45 +134,38 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — Round 3 corrections complete
+## RT-2 — Round 6 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `8e9a61ef26d99a2b47b2d05fa354952797e46ec2`
-CI #51 (run 29111638220): ALL GREEN (7/7 jobs)
+Implementation commit: `c16abf4`
+CI #60 (run 29120669510): ALL GREEN (7/7 jobs)
 ```
 
-Round 3 corrections delivered:
+Round 6 corrections delivered:
 
 ```text
-complete stream-set validation (filename parsing, content identity, numeric sorting,
-  duplicate/missing indexes, full metadata/hash equality, cross-segment monotonic);
-per-stream independent summaries in directory inspection;
-strict replay ambiguity (matches.size() != 1 always fails);
-partial file blocks replay;
-writer metadata validation before file creation (UTF-8/NUL/128-byte strings, IDs,
-  timestamps, hashes, enums, header <=4096);
-write_length_string rejects oversized strings;
-hard 64 GiB cap regardless of max_segment_bytes=0;
-checked arithmetic for indexes, counts, bytes;
-reject negative/signed/whitespace numbers in CLI;
-status classification fixed (Unsupported, footer magic at correct position);
-expanded report schema (format_version, source metadata, provenance hashes, per-stream summaries);
-ReplayResult.summary.replay_sha256 via single streaming SHA-256 context;
-independent golden MXREPLAY1 digest test;
-16/16 Release tests (Windows + Linux).
+scripted stage-aware IFileHandle with per-operation-type failure injection;
+preflight append/rotation validation before any state mutation;
+CLI cmd_synth pre-validation (records*segments, max timestamp overflow);
+UTC bounds fix: scan all segments for first/last non-zero UTC-valid timestamps;
+.mxraw.partial always returns Partial even with valid footer;
+concrete file path propagated to all low-level deserializer issues;
+strict JSON parser: rejects trailing, malformed, invalid escapes;
+end-to-end report tests verify real JSON values for single/multi-stream;
+18/18 Release tests (Windows + Linux).
 ```
 
 Test results:
 
 ```text
-RT-2:         16/16 tests passed (Windows Release)
+RT-2:         18/18 tests passed (Windows + Linux Release)
 RT-1:          6/6  tests passed (no regression)
 QSH/M10X:     20/20 tests passed (no regression)
 Python:         3/3  passed
-Hygiene:        PASS (276 files checked)
+Hygiene:        PASS
 ```
 
 ## Future FIX architecture
