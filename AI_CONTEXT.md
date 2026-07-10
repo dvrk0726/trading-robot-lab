@@ -140,8 +140,8 @@ RT-1 does not connect to MOEX or decode wire packets.
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: (pending — see PR #20 for final head)
-CI: pending
+Implementation commit: `8e9a61ef26d99a2b47b2d05fa354952797e46ec2`
+CI #50 (run 29110786126): ALL GREEN (7/7 jobs)
 ```
 
 Round 3 corrections delivered:

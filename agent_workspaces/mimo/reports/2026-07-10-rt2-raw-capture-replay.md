@@ -3,7 +3,7 @@
 Date: 2026-07-10  
 Branch: mimo/issue-18-rt2-raw-capture-replay  
 Pull Request: #20  
-Implementation commit: (see Round 3 implementation commit below)  
+Implementation commit: `8e9a61ef26d99a2b47b2d05fa354952797e46ec2`  
 Executor: MiMo Code
 
 ## Summary
@@ -175,6 +175,19 @@ MSVC 19.42.34436.0
 Windows SDK 10.0.22621.0
 CMake 4.3
 C++20 / Release / x64
+```
+
+## GitHub Actions
+
+```text
+CI #50 (run 29110786126): ALL GREEN — 7/7 jobs passed
+  C++ MOEX RAW Windows/MSVC (16 tests): PASSED
+  C++ MOEX RAW Linux/GCC (16 tests): PASSED
+  C++ MOEX FAST inspector Windows (6 tests): PASSED
+  C++ MOEX FAST inspector Linux (6 tests): PASSED
+  C++ QSH M10X regression (20 tests): PASSED
+  Python tests and contracts: PASSED
+  Repository hygiene: PASSED
 ```
 
 ## Safety and Architecture Check
