@@ -3,6 +3,7 @@
 #include "moex_raw/endian.hpp"
 #include "moex_raw/crc32c.hpp"
 #include "moex_raw/sha256.hpp"
+#include "moex_raw/file_position.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <cstring>
@@ -29,22 +30,12 @@ SegmentStatus validate_segment(const std::string& path,
         return SegmentStatus::IoError;
     }
 
-    // Get file size with error checking
-    if (std::fseek(f, 0, SEEK_END) != 0) {
+    // Get file size using std::filesystem (supports > 4 GiB on all platforms)
+    std::error_code ec;
+    auto file_size = static_cast<std::uint64_t>(std::filesystem::file_size(path, ec));
+    if (ec) {
         std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek to end");
-        return SegmentStatus::IoError;
-    }
-    long file_size_long = std::ftell(f);
-    if (file_size_long < 0) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Negative ftell");
-        return SegmentStatus::IoError;
-    }
-    auto file_size = static_cast<std::uint64_t>(file_size_long);
-    if (std::fseek(f, 0, SEEK_SET) != 0) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek to start");
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot get file size");
         return SegmentStatus::IoError;
     }
 
@@ -101,7 +92,7 @@ SegmentStatus validate_segment(const std::string& path,
 
     std::uint64_t footer_offset = file_size - kFooterSize;
     std::uint8_t footer_buf_arr[kFooterSize];
-    if (std::fseek(f, static_cast<long>(footer_offset), SEEK_SET) != 0) {
+    if (fseek64(f, static_cast<std::int64_t>(footer_offset), SEEK_SET) != 0) {
         std::fclose(f);
         add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek to footer");
         return SegmentStatus::IoError;
@@ -172,7 +163,12 @@ SegmentStatus validate_segment(const std::string& path,
     while (file_remaining > 0) {
         std::size_t to_read = static_cast<std::size_t>(std::min(file_remaining, static_cast<std::uint64_t>(sizeof(read_buf))));
         std::size_t n = std::fread(read_buf, 1, to_read, f);
-        if (n == 0) break;
+        if (n == 0) {
+            std::fclose(f);
+            add_issue(issues, ValidationSeverity::Error, "IO_ERROR",
+                      "Short read during file SHA-256");
+            return SegmentStatus::IoError;
+        }
         sha256_update(file_sha_ctx, read_buf, n);
         file_remaining -= n;
     }
@@ -181,7 +177,7 @@ SegmentStatus validate_segment(const std::string& path,
     file_sha256_hex = sha256_bytes_to_hex(file_hash);
 
     // --- Validate records streaming (bounded: one record at a time) ---
-    if (std::fseek(f, static_cast<long>(header_size), SEEK_SET) != 0) {
+    if (fseek64(f, static_cast<std::int64_t>(header_size), SEEK_SET) != 0) {
         std::fclose(f);
         add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek to records");
         return SegmentStatus::IoError;
@@ -383,26 +379,34 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
     return SegmentStatus::ValidFinalized;
 }
 
-std::vector<StreamSetInfo> group_stream_sets(const std::string& directory) {
+std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
+                                              std::vector<RawValidationIssue>& issues) {
     std::vector<StreamSetInfo> result;
-    std::vector<std::string> unparsed_files;
 
     if (!std::filesystem::exists(directory)) return result;
 
     for (const auto& entry : std::filesystem::directory_iterator(directory)) {
         if (!entry.is_regular_file()) continue;
 
+        auto filepath = entry.path().string();
         auto filename = entry.path().filename().string();
         auto ext = entry.path().extension().string();
 
-        // Only process .mxraw files (not .partial)
+        // Handle .mxraw.partial files as partial candidates
+        if (filename.find(".mxraw.partial") != std::string::npos) {
+            add_issue(issues, ValidationSeverity::Warning, "PARTIAL_FILE",
+                      "Partial segment file found: " + filepath);
+            continue;
+        }
+
+        // Only process .mxraw files
         if (ext != ".mxraw") continue;
-        if (filename.find(".partial") != std::string::npos) continue;
 
         // Read header to get session/source/channel (bounded: 4096 bytes)
-        std::FILE* f = std::fopen(entry.path().string().c_str(), "rb");
+        std::FILE* f = std::fopen(filepath.c_str(), "rb");
         if (!f) {
-            unparsed_files.push_back(entry.path().string());
+            add_issue(issues, ValidationSeverity::Error, "UNREADABLE_FILE",
+                      "Cannot open .mxraw file: " + filepath);
             continue;
         }
 
@@ -410,12 +414,19 @@ std::vector<StreamSetInfo> group_stream_sets(const std::string& directory) {
         std::size_t n = std::fread(header_data.data(), 1, kMaxHeaderSize, f);
         std::fclose(f);
 
+        if (n == 0) {
+            add_issue(issues, ValidationSeverity::Error, "EMPTY_FILE",
+                      "Empty .mxraw file: " + filepath);
+            continue;
+        }
+
         RawSegmentMetadata meta;
         std::size_t header_size = 0;
-        std::vector<RawValidationIssue> issues;
+        std::vector<RawValidationIssue> hdr_issues;
 
-        if (!deserialize_header(header_data.data(), n, meta, header_size, issues)) {
-            unparsed_files.push_back(entry.path().string());
+        if (!deserialize_header(header_data.data(), n, meta, header_size, hdr_issues)) {
+            add_issue(issues, ValidationSeverity::Error, "MALFORMED_HEADER",
+                      "Cannot parse .mxraw header: " + filepath);
             continue;
         }
 
@@ -438,7 +449,7 @@ std::vector<StreamSetInfo> group_stream_sets(const std::string& directory) {
             found->channel_id = meta.source.channel_id;
         }
 
-        found->segment_paths.push_back(entry.path().string());
+        found->segment_paths.push_back(filepath);
         found->segment_indexes.push_back(meta.segment_index);
     }
 

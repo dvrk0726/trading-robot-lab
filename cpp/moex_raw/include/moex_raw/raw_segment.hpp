@@ -126,6 +126,9 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
                                   std::vector<RawValidationIssue>& issues);
 
 // Group segments in a directory by (session_id, source_id, channel_id).
-std::vector<StreamSetInfo> group_stream_sets(const std::string& directory);
+// Issues from unreadable, malformed, corrupt, unsupported, and partial candidates
+// are reported in `issues`. No .mxraw or .mxraw.partial candidate is silently skipped.
+std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
+                                              std::vector<RawValidationIssue>& issues);
 
 }  // namespace moex_raw

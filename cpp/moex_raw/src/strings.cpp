@@ -68,10 +68,10 @@ bool read_length_string(const std::uint8_t* data, std::size_t available,
 
     std::uint16_t len = read_u16_le(data);
     if (len > kMaxStringBytes) return false;
-    if (available < 2 + len) return false;
+    if (available < static_cast<std::size_t>(2) + len) return false;
 
     out.assign(reinterpret_cast<const char*>(data + 2), len);
-    bytes_consumed = 2 + len;
+    bytes_consumed = static_cast<std::size_t>(2) + len;
 
     // Validate UTF-8
     if (!validate_utf8_string(out)) return false;

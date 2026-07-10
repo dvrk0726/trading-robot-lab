@@ -129,11 +129,12 @@ int main() {
         w2.append(rec);
         w2.finalize();
 
-        auto sets = group_stream_sets(dir);
+        std::vector<RawValidationIssue> issues;
+        auto sets = group_stream_sets(dir, issues);
         CHECK(sets.size() == 2);
     }
 
-    // Partial files not included in stream sets
+    // Partial files not included in stream sets but reported as issues
     {
         auto dir = temp_dir();
         auto meta = make_meta();
@@ -156,9 +157,16 @@ int main() {
             std::fclose(f);
         }
 
-        auto sets = group_stream_sets(dir);
+        std::vector<RawValidationIssue> issues;
+        auto sets = group_stream_sets(dir, issues);
         // Should only have 1 stream set (the valid one)
         CHECK(sets.size() == 1);
+        // Should have a partial file warning
+        bool found_partial = false;
+        for (const auto& issue : issues) {
+            if (issue.code == "PARTIAL_FILE") found_partial = true;
+        }
+        CHECK(found_partial);
     }
 
     std::cout << "test_stream_set: ALL PASSED\n";

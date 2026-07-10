@@ -303,8 +303,16 @@ static int cmd_inspect(int argc, char* argv[]) {
     bool has_warnings = false;
 
     if (std::filesystem::is_directory(input_path)) {
-        auto stream_sets = group_stream_sets(input_path);
+        std::vector<RawValidationIssue> discovery_issues;
+        auto stream_sets = group_stream_sets(input_path, discovery_issues);
         report.input_paths.push_back(input_path);
+
+        // Include discovery issues (unreadable, malformed, partial, etc.)
+        report.issues.insert(report.issues.end(), discovery_issues.begin(), discovery_issues.end());
+        for (const auto& issue : discovery_issues) {
+            if (issue.severity == ValidationSeverity::Error) has_errors = true;
+            if (issue.severity == ValidationSeverity::Warning) has_warnings = true;
+        }
 
         if (stream_sets.empty()) {
             report.overall_status = "invalid";
@@ -473,14 +481,15 @@ static int cmd_replay(int argc, char* argv[]) {
         return 1;
     }
 
-    // Check if directory has multiple streams
-    auto stream_sets = group_stream_sets(input_dir);
+    // Discover stream sets and collect all discovery issues
+    std::vector<RawValidationIssue> discovery_issues;
+    auto stream_sets = group_stream_sets(input_dir, discovery_issues);
     if (stream_sets.empty()) {
         std::cerr << "Error: no valid streams found in " << input_dir << "\n";
         return 1;
     }
 
-    // Find matching stream sets
+    // Find matching stream sets by full key (session_id, source_id, channel_id)
     std::vector<StreamSetInfo*> matches;
     for (auto& ss : stream_sets) {
         bool match = true;
@@ -518,20 +527,8 @@ static int cmd_replay(int argc, char* argv[]) {
     }
 
     StreamSetInfo* target = matches[0];
-    source_id = target->source_id;
-    channel_id = target->channel_id;
 
-    // Replay with bounded streaming — no full-file or all-records loading
-    RawSegmentMetadata replay_meta;
-    bool meta_set = false;
-    std::uint64_t replay_record_count = 0;
-    std::uint64_t replay_total_payload = 0;
-    std::uint64_t replay_first_index = 0;
-    std::uint64_t replay_last_index = 0;
-    SHA256Ctx replay_sha_ctx;
-    sha256_init(replay_sha_ctx);
-
-    // First, validate to get metadata
+    // Validate to get metadata before replay
     std::vector<RawSegmentMetadata> metas;
     std::vector<RawFooter> footers;
     std::vector<RawValidationIssue> val_issues;
@@ -540,21 +537,52 @@ static int cmd_replay(int argc, char* argv[]) {
         std::cerr << "Error: stream set validation failed\n";
         return 1;
     }
-    replay_meta = metas[0];
 
-    // Replay with callback that computes SHA-256 incrementally
+    RawSegmentMetadata replay_meta = metas[0];
+    source_id = replay_meta.source.source_id;
+    channel_id = replay_meta.source.channel_id;
+
+    // Initialize single SHA-256 context with canonical MXREPLAY1 metadata prefix
+    SHA256Ctx replay_sha_ctx;
+    sha256_init(replay_sha_ctx);
+
+    std::vector<std::uint8_t> prefix;
+    write_bytes(prefix, kMagicReplay, 10);
+    write_bytes(prefix, replay_meta.session.session_id, 16);
+    write_u64_le(prefix, replay_meta.source.source_id);
+    write_u64_le(prefix, replay_meta.source.channel_id);
+    prefix.push_back(static_cast<std::uint8_t>(replay_meta.source.clock_domain));
+    prefix.push_back(static_cast<std::uint8_t>(replay_meta.source.transport));
+    prefix.push_back(static_cast<std::uint8_t>(replay_meta.source.source_side));
+    write_bytes(prefix, replay_meta.source.configuration_sha256, 32);
+    write_bytes(prefix, replay_meta.source.templates_sha256, 32);
+    write_bytes(prefix, replay_meta.source.endpoint_fingerprint_sha256, 32);
+    write_u16_le(prefix, static_cast<std::uint16_t>(replay_meta.session.feed_group.size()));
+    write_bytes(prefix, replay_meta.session.feed_group.data(), replay_meta.session.feed_group.size());
+    write_u16_le(prefix, static_cast<std::uint16_t>(replay_meta.session.endpoint_role.size()));
+    write_bytes(prefix, replay_meta.session.endpoint_role.data(), replay_meta.session.endpoint_role.size());
+    write_u16_le(prefix, static_cast<std::uint16_t>(replay_meta.session.source_label.size()));
+    write_bytes(prefix, replay_meta.session.source_label.data(), replay_meta.session.source_label.size());
+    sha256_update(replay_sha_ctx, prefix.data(), prefix.size());
+
+    // Replay with single callback — update same SHA-256 context for each record
+    std::uint64_t replay_record_count = 0;
+    std::uint64_t replay_total_payload = 0;
+    std::uint64_t replay_first_index = 0;
+    std::uint64_t replay_last_index = 0;
+    bool first_record = true;
+
     auto result = replay_stream(target->segment_paths, replay_meta,
-        [&](const RawSegmentMetadata& meta, const RawPacketRecord& rec) -> bool {
-            if (!meta_set) {
-                replay_meta = meta;
-                meta_set = true;
+        [&](const RawSegmentMetadata& /*meta*/, const RawPacketRecord& rec) -> bool {
+            if (first_record) {
                 replay_first_index = rec.capture_index;
+                first_record = false;
             }
             replay_last_index = rec.capture_index;
             replay_record_count++;
             replay_total_payload += rec.payload.size();
 
-            // Feed into incremental replay SHA-256
+            // Update same SHA-256 context with this record
             std::vector<std::uint8_t> rec_buf;
             write_u16_le(rec_buf, rec.record_flags);
             write_u64_le(rec_buf, rec.capture_index);
@@ -582,45 +610,21 @@ static int cmd_replay(int argc, char* argv[]) {
     report.first_capture_index = replay_first_index;
     report.last_capture_index = replay_last_index;
 
-    report.issues = std::move(result.issues);
+    // Merge discovery issues + replay issues
+    bool has_discovery_errors = false;
+    for (const auto& issue : discovery_issues) {
+        if (issue.severity == ValidationSeverity::Error) has_discovery_errors = true;
+    }
+    report.issues = std::move(discovery_issues);
+    for (auto& issue : result.issues) {
+        report.issues.push_back(std::move(issue));
+    }
 
-    if (result.status == ReplayStatus::Ok) {
-        // Compute replay SHA-256 incrementally
-        // Build header part of replay digest
-        std::vector<std::uint8_t> header_buf;
-        write_bytes(header_buf, kMagicReplay, 10);
-        write_bytes(header_buf, replay_meta.session.session_id, 16);
-        write_u64_le(header_buf, replay_meta.source.source_id);
-        write_u64_le(header_buf, replay_meta.source.channel_id);
-        header_buf.push_back(static_cast<std::uint8_t>(replay_meta.source.clock_domain));
-        header_buf.push_back(static_cast<std::uint8_t>(replay_meta.source.transport));
-        header_buf.push_back(static_cast<std::uint8_t>(replay_meta.source.source_side));
-        write_bytes(header_buf, replay_meta.source.configuration_sha256, 32);
-        write_bytes(header_buf, replay_meta.source.templates_sha256, 32);
-        write_bytes(header_buf, replay_meta.source.endpoint_fingerprint_sha256, 32);
-        write_u16_le(header_buf, static_cast<std::uint16_t>(replay_meta.session.feed_group.size()));
-        write_bytes(header_buf, replay_meta.session.feed_group.data(), replay_meta.session.feed_group.size());
-        write_u16_le(header_buf, static_cast<std::uint16_t>(replay_meta.session.endpoint_role.size()));
-        write_bytes(header_buf, replay_meta.session.endpoint_role.data(), replay_meta.session.endpoint_role.size());
-        write_u16_le(header_buf, static_cast<std::uint16_t>(replay_meta.session.source_label.size()));
-        write_bytes(header_buf, replay_meta.session.source_label.data(), replay_meta.session.source_label.size());
-
-        // We already fed records into replay_sha_ctx, but we need the full digest including header
-        // Re-compute with full buffer
-        std::vector<std::uint8_t> full_buf = header_buf;
-        // Re-feed records
-        replay_from_directory(input_dir, source_id, channel_id,
-            [&](const RawSegmentMetadata&, const RawPacketRecord& rec) -> bool {
-                write_u16_le(full_buf, rec.record_flags);
-                write_u64_le(full_buf, rec.capture_index);
-                write_u64_le(full_buf, rec.capture_utc_ns);
-                write_u64_le(full_buf, rec.capture_monotonic_ns);
-                write_u32_le(full_buf, static_cast<std::uint32_t>(rec.payload.size()));
-                write_bytes(full_buf, rec.payload.data(), rec.payload.size());
-                return true;
-            });
-
-        report.replay_sha256 = sha256_hex(full_buf.data(), full_buf.size());
+    if (result.status == ReplayStatus::Ok && !has_discovery_errors) {
+        // Finalize the single SHA-256 context after successful replay
+        std::uint8_t hash[32];
+        sha256_final(replay_sha_ctx, hash);
+        report.replay_sha256 = sha256_bytes_to_hex(hash);
         report.overall_status = "valid";
     } else {
         report.overall_status = "invalid";
@@ -638,7 +642,7 @@ static int cmd_replay(int argc, char* argv[]) {
         }
     }
 
-    return result.status == ReplayStatus::Ok ? 0 : 1;
+    return (result.status == ReplayStatus::Ok && !has_discovery_errors) ? 0 : 1;
 }
 
 int main(int argc, char* argv[]) {

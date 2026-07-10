@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-2 specification review — Issue #18 / PR #19
+Статус: RT-2 Round 2 corrections — Issue #18 / PR #20
 
 ## Архитектура
 
@@ -120,13 +120,14 @@ deterministic text/JSON reports;
 Windows/Linux Release-active tests.
 ```
 
-## RT-2 — Round 1 corrections complete
+## RT-2 — Round 2 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: (current head)
+Implementation commit: (pending push — Round 2)
+CI: Windows/MSVC 15/15 + Linux/GCC (awaiting new run)
 ```
 
 Delivered:
@@ -152,6 +153,9 @@ Release-active CHECK macros (active under NDEBUG)
 Independent golden byte-vector test
 End-to-end content SHA-256 verification test
 CI jobs for Windows/MSVC and Linux/GCC (15 tests each)
+Round 2: single SHA-256 replay context, directory discovery reporting,
+  replay_from_stream_set, portable 64-bit file position, short-read checks,
+  resource boundedness and directory discovery tests
 ```
 
 Test results:
@@ -161,7 +165,7 @@ RT-2:         15/15 tests passed (Windows Release)
 RT-1:          6/6  tests passed (no regression)
 QSH/M10X:     20/20 tests passed (no regression)
 Python:         3/3  passed
-Hygiene:        PASS (274 files checked)
+Hygiene:        PASS (275 files checked)
 ```
 
 Explicit RT-2 non-goals:

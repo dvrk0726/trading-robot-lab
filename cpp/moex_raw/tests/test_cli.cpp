@@ -258,6 +258,75 @@ int main() {
         CHECK(rc != 0);
     }
 
+    // inspect: valid + corrupt .mxraw in directory — non-zero result
+    {
+        auto dir = temp_dir();
+        auto out_dir = dir + "/valid_corrupt";
+        run_cmd_exit(exe + " synth --out " + out_dir + " --records 3");
+
+        // Add a corrupt .mxraw file
+        auto corrupt_path = out_dir + "/corrupt.mxraw";
+        {
+            std::ofstream ofs(corrupt_path, std::ios::binary);
+            ofs << "NOT_A_VALID_MXRAW_FILE";
+        }
+
+        int rc = run_cmd_exit(exe + " inspect --input " + out_dir + " 2>NUL");
+        CHECK(rc != 0);
+    }
+
+    // inspect: valid + .mxraw.partial in directory — reports partial warning
+    {
+        auto dir = temp_dir();
+        auto out_dir = dir + "/valid_partial";
+        run_cmd_exit(exe + " synth --out " + out_dir + " --records 3");
+
+        // Add a .mxraw.partial file
+        auto partial_path = out_dir + "/incomplete.mxraw.partial";
+        {
+            std::ofstream ofs(partial_path, std::ios::binary);
+            ofs << "partial_data";
+        }
+
+        // Should still succeed (partial is a warning, not error) but report the issue
+        auto output = run_cmd(exe + " inspect --input " + out_dir);
+        CHECK(output.find("PARTIAL_FILE") != std::string::npos);
+    }
+
+    // replay: valid + corrupt .mxraw in directory — non-zero result
+    {
+        auto dir = temp_dir();
+        auto out_dir = dir + "/replay_valid_corrupt";
+        run_cmd_exit(exe + " synth --out " + out_dir + " --records 3");
+
+        // Add a corrupt .mxraw file
+        auto corrupt_path = out_dir + "/corrupt.mxraw";
+        {
+            std::ofstream ofs(corrupt_path, std::ios::binary);
+            ofs << "NOT_A_VALID_MXRAW_FILE";
+        }
+
+        int rc = run_cmd_exit(exe + " replay --input " + out_dir + " 2>NUL");
+        CHECK(rc != 0);
+    }
+
+    // replay: two sessions with same source/channel — ambiguity rejected
+    {
+        auto dir = temp_dir();
+        auto out_dir = dir + "/replay_ambig";
+
+        // Create session A
+        run_cmd_exit(exe + " synth --out " + out_dir +
+                     " --session 0123456789abcdef0123456789abcdef --records 3");
+
+        // Create session B (different session, same source/channel)
+        run_cmd_exit(exe + " synth --out " + out_dir +
+                     " --session fedcba9876543210fedcba9876543210 --records 3");
+
+        int rc = run_cmd_exit(exe + " replay --input " + out_dir + " 2>NUL");
+        CHECK(rc != 0);
+    }
+
     std::cout << "test_cli: ALL PASSED\n";
     return 0;
 }

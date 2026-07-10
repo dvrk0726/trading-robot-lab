@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-2 specification review — Issue #18 / PR #19
+Текущий gate: RT-2 Round 2 corrections — Issue #18 / PR #20
 
 ## Назначение проекта
 
@@ -134,30 +134,26 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — implementation Round 1 corrections complete
+## RT-2 — Round 2 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: (current head)
+Implementation commit: (pending push — Round 2)
+CI: Windows/MSVC 15/15 + Linux/GCC (awaiting new run)
 ```
 
-Round 1 corrections delivered:
+Round 2 corrections delivered:
 
 ```text
-Release-active CHECK macros replace plain assert (all 15 tests active under NDEBUG);
-record offsets fixed: capture_index=12, capture_utc_ns=20, capture_monotonic_ns=28;
-independent golden byte-vector test verifies exact layout;
-content SHA-256 computed incrementally (no fread on wb-stream);
-bounded streaming reader/replay (no whole-file or all-records loading);
-first-record byte-limit validation;
-multi-segment lifecycle via automatic rotation;
-strict CLI numeric/hex parsing before file creation;
-directory inspect reports partial/corrupt files;
-stream selection uses full (session_id, source_id, channel_id) key;
-ambiguity detection for multiple matching sessions;
-CI jobs for cpp/moex_raw Windows/MSVC and Linux/GCC (15 tests each).
+GCC sign-compare fix (strings.cpp:71);
+single SHA-256 replay context (no full_buf, no second replay);
+directory discovery reports all .mxraw/.mxraw.partial candidates;
+replay_from_stream_set() for explicit session selection;
+portable 64-bit file position (fseek64/ftell64 for 64 GiB limit);
+short-read completion checks (IoError on premature EOF);
+new tests: resource boundedness, directory discovery, two-session, ambiguity rejection.
 ```
 
 Test results:
@@ -167,7 +163,7 @@ RT-2:         15/15 tests passed (Windows Release)
 RT-1:          6/6  tests passed (no regression)
 QSH/M10X:     20/20 tests passed (no regression)
 Python:         3/3  passed
-Hygiene:        PASS (274 files checked)
+Hygiene:        PASS (275 files checked)
 ```
 
 ## Future FIX architecture

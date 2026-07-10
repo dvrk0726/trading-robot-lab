@@ -3,8 +3,10 @@
 #include "moex_raw/raw_types.hpp"
 #include "moex_raw/endian.hpp"
 #include "moex_raw/sha256.hpp"
+#include "moex_raw/file_position.hpp"
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <algorithm>
 #include <vector>
 
@@ -51,12 +53,14 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
             return result;
         }
 
-        // Get file size
-        if (std::fseek(f, 0, SEEK_END) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
-        long file_size_long = std::ftell(f);
-        if (file_size_long < 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
-        auto file_size = static_cast<std::uint64_t>(file_size_long);
-        if (std::fseek(f, 0, SEEK_SET) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
+        // Get file size using std::filesystem (supports > 4 GiB on all platforms)
+        std::error_code ec;
+        auto file_size = static_cast<std::uint64_t>(std::filesystem::file_size(sorted_paths[si], ec));
+        if (ec) {
+            std::fclose(f);
+            result.status = ReplayStatus::IoError;
+            return result;
+        }
 
         // Read header size (bounded: first 14 bytes)
         std::uint8_t preamble[14];
@@ -64,7 +68,7 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
         std::size_t header_size = read_u32_le(preamble + 10);
 
         // Seek past header
-        if (std::fseek(f, static_cast<long>(header_size), SEEK_SET) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
+        if (fseek64(f, static_cast<std::int64_t>(header_size), SEEK_SET) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
 
         std::uint64_t data_end = file_size - kFooterSize;
         std::uint64_t pos = header_size;
@@ -157,8 +161,12 @@ ReplayResult replay_from_directory(const std::string& directory,
                                    std::uint64_t channel_id,
                                    ReplayCallback callback) {
     ReplayResult result;
+    std::vector<RawValidationIssue> discovery_issues;
 
-    auto stream_sets = group_stream_sets(directory);
+    auto stream_sets = group_stream_sets(directory, discovery_issues);
+
+    // Propagate discovery issues
+    result.issues.insert(result.issues.end(), discovery_issues.begin(), discovery_issues.end());
 
     // Find matching stream sets by (source_id, channel_id)
     std::vector<StreamSetInfo*> matches;
@@ -184,7 +192,6 @@ ReplayResult replay_from_directory(const std::string& directory,
 
     // Check for ambiguity: multiple sessions with same source_id/channel_id
     if (matches.size() > 1) {
-        // Check if they have different session_ids
         bool different_sessions = false;
         for (std::size_t i = 1; i < matches.size(); ++i) {
             if (std::memcmp(matches[i]->session_id, matches[0]->session_id, 16) != 0) {
@@ -204,7 +211,6 @@ ReplayResult replay_from_directory(const std::string& directory,
     StreamSetInfo* target = matches[0];
 
     // Build metadata from first segment
-    RawSegmentMetadata meta;
     std::vector<RawSegmentMetadata> metas;
     std::vector<RawFooter> footers;
     std::vector<RawValidationIssue> issues;
@@ -217,6 +223,25 @@ ReplayResult replay_from_directory(const std::string& directory,
     }
 
     return replay_stream(target->segment_paths, metas[0], std::move(callback));
+}
+
+ReplayResult replay_from_stream_set(const StreamSetInfo& stream_set,
+                                    ReplayCallback callback) {
+    ReplayResult result;
+
+    // Build metadata from first segment
+    std::vector<RawSegmentMetadata> metas;
+    std::vector<RawFooter> footers;
+    std::vector<RawValidationIssue> issues;
+
+    auto status = validate_stream_set(stream_set.segment_paths, metas, footers, issues);
+    if (status != SegmentStatus::ValidFinalized || metas.empty()) {
+        result.status = ReplayStatus::ValidationFailed;
+        result.issues = std::move(issues);
+        return result;
+    }
+
+    return replay_stream(stream_set.segment_paths, metas[0], std::move(callback));
 }
 
 std::string compute_replay_sha256(const RawSegmentMetadata& meta,

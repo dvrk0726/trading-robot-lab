@@ -7,6 +7,8 @@
 
 namespace moex_raw {
 
+struct StreamSetInfo;
+
 // Callback receives immutable metadata and bounded payload view.
 // Return false to stop replay.
 using ReplayCallback = std::function<bool(const RawSegmentMetadata& meta,
@@ -38,6 +40,10 @@ ReplayResult replay_from_directory(const std::string& directory,
                                    std::uint64_t source_id,
                                    std::uint64_t channel_id,
                                    ReplayCallback callback);
+
+// Replay from a fully resolved StreamSetInfo (no ambiguity possible).
+ReplayResult replay_from_stream_set(const StreamSetInfo& stream_set,
+                                    ReplayCallback callback);
 
 // Compute MXREPLAY1 digest from summary and metadata.
 std::string compute_replay_sha256(const RawSegmentMetadata& meta,

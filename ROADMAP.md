@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Статус: gated engineering roadmap  
-Текущий gate: RT-2 specification review — Issue #18 / PR #19
+Текущий gate: RT-2 Round 2 corrections — Issue #18 / PR #20
 
 ## Главный порядок
 
@@ -110,10 +110,10 @@ RT-1 deliberately excluded network, binary FAST decoding, recovery, books and or
 Current status:
 
 ```text
-Issue #18: READY_FOR_REVIEW (Round 1 corrections complete)
+Issue #18: READY_FOR_REVIEW (Round 2 corrections complete)
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-CI: Windows/MSVC + Linux/GCC (15 tests each)
+CI: Windows/MSVC 15/15 + Linux/GCC (awaiting new run)
 ```
 
 Delivered:
@@ -135,7 +135,10 @@ deterministic synthetic replay callback and digest;
 CLI with strict numeric/hex validation;
 Release-active CHECK macros (active under NDEBUG);
 golden byte-vector and end-to-end SHA-256 tests;
-Windows/Linux CI jobs.
+Windows/Linux CI jobs;
+Round 2: single SHA-256 replay context, directory discovery reporting,
+  replay_from_stream_set, portable 64-bit file position, short-read checks,
+  resource boundedness and directory discovery tests.
 ```
 
 RT-2 non-goals:
