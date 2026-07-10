@@ -103,3 +103,7 @@ add_test(NAME test_round3 COMMAND test_round3)
 add_executable(test_round5 tests/test_round5.cpp)
 target_link_libraries(test_round5 PRIVATE moex_raw_lib)
 add_test(NAME test_round5 COMMAND test_round5)
+
+add_executable(test_round6 tests/test_round6.cpp)
+target_link_libraries(test_round6 PRIVATE moex_raw_lib)
+add_test(NAME test_round6 COMMAND test_round6)

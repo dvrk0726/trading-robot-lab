@@ -83,7 +83,12 @@ SegmentStatus validate_segment(const std::string& path,
     }
 
     std::size_t header_size = 0;
+    std::size_t issues_before = issues.size();
     if (!deserialize_header(header_buf.data(), header_read_size, meta, header_size, issues)) {
+        // Propagate concrete path to all new low-level issues
+        for (std::size_t i = issues_before; i < issues.size(); ++i) {
+            if (issues[i].path.empty()) issues[i].path = path;
+        }
         // Close the file handle before returning
         f.reset();
 
@@ -143,7 +148,12 @@ SegmentStatus validate_segment(const std::string& path,
         return SegmentStatus::IoError;
     }
 
+    std::size_t footer_issues_before = issues.size();
     if (!deserialize_footer(footer_buf_arr, kFooterSize, footer, issues)) {
+        // Propagate concrete path to all new low-level issues
+        for (std::size_t i = footer_issues_before; i < issues.size(); ++i) {
+            if (issues[i].path.empty()) issues[i].path = path;
+        }
         return SegmentStatus::Corrupt;
     }
 
@@ -273,7 +283,12 @@ SegmentStatus validate_segment(const std::string& path,
 
         RawPacketRecord rec;
         std::size_t record_total_size = 0;
+        std::size_t rec_issues_before = issues.size();
         if (!deserialize_record_header(full_rec.data(), full_rec.size(), rec, record_total_size, issues)) {
+            // Propagate concrete path to all new low-level issues
+            for (std::size_t i = rec_issues_before; i < issues.size(); ++i) {
+                if (issues[i].path.empty()) issues[i].path = path;
+            }
             return SegmentStatus::Corrupt;
         }
 
@@ -350,6 +365,13 @@ SegmentStatus validate_segment(const std::string& path,
     // Output first/last UTC (0 if no records had kRecordFlagUtcValid)
     if (first_utc_ns) *first_utc_ns = local_first_utc;
     if (last_utc_ns) *last_utc_ns = local_last_utc;
+
+    // .mxraw.partial files are always Partial, even if they happen to have valid content
+    if (is_partial_ext) {
+        add_issue(issues, ValidationSeverity::Warning, "PARTIAL_FILE",
+                  "Partial segment file has valid content but .partial extension", path);
+        return SegmentStatus::Partial;
+    }
 
     return SegmentStatus::ValidFinalized;
 }
@@ -570,13 +592,27 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
     }
 
     // Populate UTC bounds across all segments
-    // first_utc from first segment, last_utc from last segment (sorted order)
-    // Zero semantics: 0 if no records had kRecordFlagUtcValid in any segment
+    // Scan all sorted segments for first/last UTC-valid timestamps.
+    // Use 0/0 only when no UTC-valid records exist in any segment.
+    std::uint64_t global_first_utc = 0;
+    std::uint64_t global_last_utc = 0;
+    for (const auto& e : entries) {
+        if (e.first_utc != 0) {
+            if (global_first_utc == 0 || e.first_utc < global_first_utc) {
+                global_first_utc = e.first_utc;
+            }
+        }
+        if (e.last_utc != 0) {
+            if (e.last_utc > global_last_utc) {
+                global_last_utc = e.last_utc;
+            }
+        }
+    }
     if (first_capture_utc_ns) {
-        *first_capture_utc_ns = entries.empty() ? 0 : entries.front().first_utc;
+        *first_capture_utc_ns = global_first_utc;
     }
     if (last_capture_utc_ns) {
-        *last_capture_utc_ns = entries.empty() ? 0 : entries.back().last_utc;
+        *last_capture_utc_ns = global_last_utc;
     }
 
     return SegmentStatus::ValidFinalized;

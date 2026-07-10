@@ -270,35 +270,102 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
         return "capture_index not sequential";
     }
 
-    // Check rotation FIRST — rotation resets record_count_, current_file_bytes_
-    if (should_rotate(rec)) {
-        auto err = finalize_current();
-        if (!err.empty()) return err;
-
-        err = start_new_segment();
-        if (!err.empty()) return err;
-    }
-
-    // Compute prospective state AFTER potential rotation
-    std::uint64_t next_idx;
-    if (!checked_add_u64(next_capture_index_, 1, next_idx)) {
-        return "capture_index overflow";
-    }
-    std::uint64_t next_count;
-    if (!checked_add_u64(record_count_, 1, next_count)) {
-        return "record_count overflow";
-    }
-    std::uint64_t next_payload;
-    if (!checked_add_u64(total_payload_bytes_, rec.payload.size(), next_payload)) {
-        return "total_payload_bytes overflow";
-    }
-
     // Compute actual serialized record size
     std::uint32_t payload_size = static_cast<std::uint32_t>(rec.payload.size());
     std::uint32_t record_size = kRecordHeaderSize + payload_size + 4;
 
-    // Validate first record fits: actual header + record + footer <= max_segment_bytes
-    if (record_count_ == 0 && policy_.max_segment_bytes > 0) {
+    // --- Preflight: validate ALL prospective state BEFORE any mutation ---
+
+    bool needs_rotate = should_rotate(rec);
+
+    // If rotation is needed, validate rotation preconditions
+    if (needs_rotate) {
+        // Check next segment_index overflow
+        std::uint64_t next_seg;
+        if (!checked_add_u64(current_segment_index_, 1, next_seg)) {
+            return "segment_index overflow";
+        }
+
+        // Compute new segment metadata to check target paths
+        RawSegmentMetadata new_meta = metadata_;
+        new_meta.segment_index = next_seg;
+        new_meta.start_capture_index = next_capture_index_;
+
+        // Check target paths don't exist
+        std::string new_partial = output_dir_ + "/" + canonical_filename(
+            new_meta.session.session_id, new_meta.source.source_id,
+            new_meta.source.channel_id, next_seg) + ".partial";
+        std::string new_final = output_dir_ + "/" + canonical_filename(
+            new_meta.session.session_id, new_meta.source.source_id,
+            new_meta.source.channel_id, next_seg);
+        if (fs_->exists(new_partial)) {
+            return "Partial file already exists for new segment: " + new_partial;
+        }
+        if (fs_->exists(new_final)) {
+            return "Final file already exists for new segment: " + new_final;
+        }
+
+        // Check boundary record fits in empty new segment
+        std::vector<std::uint8_t> header_probe;
+        serialize_header(header_probe, new_meta);
+        std::uint64_t new_header_size = header_probe.size();
+
+        if (policy_.max_segment_bytes > 0) {
+            std::uint64_t total;
+            if (!checked_add_u64(new_header_size, record_size, total)) {
+                return "segment size overflow";
+            }
+            if (!checked_add_u64(total, kFooterSize, total)) {
+                return "segment size overflow";
+            }
+            if (total > policy_.max_segment_bytes) {
+                return "Boundary record too large for new segment byte limit";
+            }
+        }
+
+        // Check hard 64 GiB cap for boundary record
+        {
+            std::uint64_t total;
+            if (!checked_add_u64(new_header_size, record_size, total)) {
+                return "segment size overflow (64 GiB cap)";
+            }
+            if (!checked_add_u64(total, kFooterSize, total)) {
+                return "segment size overflow (64 GiB cap)";
+            }
+            if (total > kMaxSegmentBytes) {
+                return "Boundary record would exceed 64 GiB hard limit";
+            }
+        }
+    }
+
+    // Compute prospective capture_index (always: current + 1)
+    std::uint64_t next_idx;
+    if (!checked_add_u64(next_capture_index_, 1, next_idx)) {
+        return "capture_index overflow";
+    }
+
+    // Compute prospective record_count and payload
+    // If rotation: counters reset to 0, so prospective = 1 and payload.size()
+    // If no rotation: prospective = current + 1 and current + payload.size()
+    std::uint64_t next_count;
+    if (needs_rotate) {
+        next_count = 1;  // after rotation reset, 0 + 1
+    } else {
+        if (!checked_add_u64(record_count_, 1, next_count)) {
+            return "record_count overflow";
+        }
+    }
+    std::uint64_t next_payload;
+    if (needs_rotate) {
+        next_payload = payload_size;  // after rotation reset, 0 + payload_size
+    } else {
+        if (!checked_add_u64(total_payload_bytes_, rec.payload.size(), next_payload)) {
+            return "total_payload_bytes overflow";
+        }
+    }
+
+    // Validate current segment: actual header + record + footer <= max_segment_bytes (first record)
+    if (!needs_rotate && record_count_ == 0 && policy_.max_segment_bytes > 0) {
         std::uint64_t total;
         if (!checked_add_u64(current_file_bytes_, record_size, total)) {
             return "segment size overflow";
@@ -312,7 +379,7 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
     }
 
     // Enforce hard 64 GiB cap: current_file_bytes + record + footer <= 64 GiB
-    {
+    if (!needs_rotate) {
         std::uint64_t total;
         if (!checked_add_u64(current_file_bytes_, record_size, total)) {
             return "segment size overflow (64 GiB cap)";
@@ -323,6 +390,16 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
         if (total > kMaxSegmentBytes) {
             return "segment would exceed 64 GiB hard limit";
         }
+    }
+
+    // --- All preflight checks passed. Now perform mutation. ---
+
+    if (needs_rotate) {
+        auto err = finalize_current();
+        if (!err.empty()) return err;
+
+        err = start_new_segment();
+        if (!err.empty()) return err;
     }
 
     auto err = write_record(rec);

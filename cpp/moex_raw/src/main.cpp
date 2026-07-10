@@ -340,18 +340,33 @@ static int cmd_synth(int argc, char* argv[]) {
         policy.max_records_per_segment = records_per_seg;
     }
 
+    // Pre-validate arithmetic BEFORE writer.open() to prevent partial file creation
+    std::uint64_t total_records;
+    if (!checked_mul_u64(records_per_seg, num_segments, total_records)) {
+        std::cerr << "Error: records * segments overflow\n";
+        return 1;
+    }
+
+    // Check max synthetic timestamp won't overflow
+    if (total_records > 0) {
+        std::uint64_t max_ts_offset;
+        if (!checked_mul_u64(total_records - 1, 1000000, max_ts_offset)) {
+            std::cerr << "Error: max synthetic timestamp overflow\n";
+            return 1;
+        }
+        std::uint64_t max_utc;
+        if (!checked_add_u64(meta.created_utc_ns, max_ts_offset, max_utc)) {
+            std::cerr << "Error: max synthetic timestamp overflow\n";
+            return 1;
+        }
+        (void)max_utc;
+    }
+
     RawSegmentWriter writer(meta, out_dir, policy);
 
     auto err = writer.open();
     if (!err.empty()) {
         std::cerr << "Error opening writer: " << err << "\n";
-        return 1;
-    }
-
-    // Checked arithmetic for total records
-    std::uint64_t total_records;
-    if (!checked_mul_u64(records_per_seg, num_segments, total_records)) {
-        std::cerr << "Error: records * segments overflow\n";
         return 1;
     }
 
