@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: active / workflow review gate before RT-1
+Статус: workflow Pull Request prepared and verified; owner acceptance pending before RT-1
 
 ## Архитектура
 
@@ -80,14 +80,15 @@ MOEX requested additional information for login creation;
 private data and connection parameters remain outside Git.
 ```
 
-## Current active work — Issue #1
+## Current active work — Issue #1 / PR #15
 
 ```text
 Issue #1: [ARCH] Establish MiMo branch, Pull Request and CI workflow
 Branch: chore/issue-1-mimo-pr-workflow
 Pull Request: #15
-PR state: draft / review preparation
 Merge: not performed
+Owner acceptance: pending
+RT-1: blocked
 ```
 
 Implemented in PR #15:
@@ -107,21 +108,45 @@ reviewed START_DEMO.cmd / STOP_DEMO.cmd exception;
 label synchronization workflow;
 current AI workflow/protocol documents;
 legacy direct-main documents marked superseded;
-main ruleset setup guide.
+main protection option guide.
 ```
 
-Current verification still required:
+Verified CI evidence from full run #8:
 
 ```text
-CI runs for PR #15;
-full Architecture/Review diff review;
-correction of any failed checks;
-Owner acceptance;
-reviewed merge;
-post-merge label synchronization;
-Protect main ruleset activation;
-auto-merge disabled confirmation.
+Repository hygiene: PASS
+Python tests and contracts: PASS
+C++ QSH M10X regression: PASS
+CTest inventory: exactly 20
+All 20 tests: PASS
 ```
+
+Every later PR head must also pass these checks before merge.
+
+## Remaining Issue #1 acceptance
+
+```text
+current PR #15 head passes all checks;
+Architecture/Review accepts final diff;
+Owner accepts workflow or requests scoped changes;
+Owner chooses branch-protection option;
+PR #15 merged manually;
+labels synchronized after merge;
+auto-merge confirmed disabled;
+selected main protection mode recorded;
+Issue #1 moved to DONE.
+```
+
+For private repositories GitHub plan may limit server-side rulesets/branch protection. No plan purchase or upgrade is automatic. Owner chooses:
+
+```text
+A. Enable server-side ruleset/branch protection if available.
+B. Decide on upgrade or explicitly accept temporary procedural protection.
+```
+
+Procedural protection always requires branch, Pull Request, successful CI, Architecture/Review, manual owner merge, no auto-merge and no direct main work by MiMo.
+
+See `docs/engineering/MAIN_BRANCH_PROTECTION.md`.
 
 ## RT-1 status
 
@@ -129,7 +154,7 @@ auto-merge disabled confirmation.
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
 Status: DRAFT
 Implementation: not started
-Blocked by: Issue #1 / PR #15 acceptance and repository protection setup
+Blocked by: Issue #1 / PR #15 acceptance and post-merge process setup
 ```
 
 RT-1 task package is complete:
@@ -161,15 +186,15 @@ No second MiMo task starts while the previous task is in progress, review or cha
 ## Immediate next actions
 
 ```text
-1. Finish PR #15 documentation and CI evidence.
-2. Review PR #15 diff and all checks.
-3. Fix issues in the same branch/PR if required.
-4. Owner accepts the workflow.
-5. Merge PR #15 manually after acceptance.
-6. Confirm labels, required CI checks and Protect main ruleset.
+1. Confirm final CI on the current PR #15 head.
+2. Complete Architecture/Review of the final diff.
+3. Owner reviews the prepared process.
+4. Owner selects the main protection option without automatic spending.
+5. Merge PR #15 manually only after acceptance.
+6. Synchronize labels and apply/record the selected protection mode.
 7. Move Issue #1 to DONE.
 8. Only then move Issue #14 to READY_FOR_MIMO.
-9. Run MiMo universal command for RT-1.
+9. Run the universal MiMo command once for RT-1.
 ```
 
 ## Explicit non-goals now
