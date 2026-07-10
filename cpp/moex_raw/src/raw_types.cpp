@@ -373,9 +373,9 @@ bool deserialize_record_header(const std::uint8_t* data, std::size_t available,
         return false;
     }
 
-    rec.capture_index = read_u64_le(data + 16);
-    rec.capture_utc_ns = read_u64_le(data + 24);
-    rec.capture_monotonic_ns = read_u64_le(data + 32);
+    rec.capture_index = read_u64_le(data + 12);
+    rec.capture_utc_ns = read_u64_le(data + 20);
+    rec.capture_monotonic_ns = read_u64_le(data + 28);
 
     // payload CRC32C
     std::uint32_t stored_payload_crc = read_u32_le(data + 40);

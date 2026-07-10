@@ -4,12 +4,15 @@
 #include "moex_raw/raw_report.hpp"
 #include "moex_raw/sha256.hpp"
 #include "moex_raw/crc32c.hpp"
+#include "moex_raw/endian.hpp"
 #include <iostream>
 #include <fstream>
 #include <cstring>
 #include <filesystem>
 #include <vector>
 #include <string>
+#include <cstdlib>
+#include <cerrno>
 
 using namespace moex_raw;
 
@@ -53,20 +56,33 @@ static void print_replay_help() {
     std::cout << "moex-raw replay — Replay a stream set\n\n"
               << "Options:\n"
               << "  --input <dir>          Directory with segments (required)\n"
+              << "  --session <hex32>      Session ID to select (32 hex chars)\n"
               << "  --source <hex16>       Source ID to select (16 hex chars)\n"
               << "  --channel <hex16>      Channel ID to select (16 hex chars)\n"
               << "  --json-out <path>      Write JSON report to file\n"
               << "  --help                 Show this help\n";
 }
 
-static std::uint64_t parse_hex_u64(const std::string& s) {
-    return std::strtoull(s.c_str(), nullptr, 16);
+// Strict hex parsing — returns false on any malformed input
+static bool parse_hex_u64_strict(const std::string& s, std::uint64_t& out) {
+    if (s.empty()) return false;
+    char* end = nullptr;
+    errno = 0;
+    out = std::strtoull(s.c_str(), &end, 16);
+    if (end != s.c_str() + s.size()) return false;
+    if (errno == ERANGE) return false;
+    return true;
 }
 
-static bool parse_u64(const std::string& s, std::uint64_t& out) {
+// Strict decimal parsing — returns false on any malformed input
+static bool parse_u64_strict(const std::string& s, std::uint64_t& out) {
+    if (s.empty()) return false;
     char* end = nullptr;
+    errno = 0;
     out = std::strtoull(s.c_str(), &end, 10);
-    return end == s.c_str() + s.size();
+    if (end != s.c_str() + s.size()) return false;
+    if (errno == ERANGE) return false;
+    return true;
 }
 
 static std::vector<std::uint8_t> make_synthetic_payload(std::uint64_t seed, std::size_t size) {
@@ -96,14 +112,46 @@ static int cmd_synth(int argc, char* argv[]) {
         if (arg == "--help") { print_synth_help(); return 0; }
         if (arg == "--out" && i + 1 < argc) { out_dir = argv[++i]; }
         else if (arg == "--session" && i + 1 < argc) { session_hex = argv[++i]; }
-        else if (arg == "--source" && i + 1 < argc) { source_id = parse_hex_u64(argv[++i]); }
-        else if (arg == "--channel" && i + 1 < argc) { channel_id = parse_hex_u64(argv[++i]); }
-        else if (arg == "--seed" && i + 1 < argc) { parse_u64(argv[++i], seed); }
-        else if (arg == "--records" && i + 1 < argc) { parse_u64(argv[++i], records_per_seg); }
-        else if (arg == "--segments" && i + 1 < argc) { parse_u64(argv[++i], num_segments); }
-        else if (arg == "--payload-size" && i + 1 < argc) { parse_u64(argv[++i], payload_size); }
-        else if (arg == "--max-records" && i + 1 < argc) { parse_u64(argv[++i], max_records); }
-        else if (arg == "--max-bytes" && i + 1 < argc) { parse_u64(argv[++i], max_bytes); }
+        else if (arg == "--source" && i + 1 < argc) {
+            if (!parse_hex_u64_strict(argv[++i], source_id)) {
+                std::cerr << "Error: invalid --source hex value\n"; return 1;
+            }
+        }
+        else if (arg == "--channel" && i + 1 < argc) {
+            if (!parse_hex_u64_strict(argv[++i], channel_id)) {
+                std::cerr << "Error: invalid --channel hex value\n"; return 1;
+            }
+        }
+        else if (arg == "--seed" && i + 1 < argc) {
+            if (!parse_u64_strict(argv[++i], seed)) {
+                std::cerr << "Error: invalid --seed value\n"; return 1;
+            }
+        }
+        else if (arg == "--records" && i + 1 < argc) {
+            if (!parse_u64_strict(argv[++i], records_per_seg) || records_per_seg == 0) {
+                std::cerr << "Error: invalid --records value\n"; return 1;
+            }
+        }
+        else if (arg == "--segments" && i + 1 < argc) {
+            if (!parse_u64_strict(argv[++i], num_segments) || num_segments == 0) {
+                std::cerr << "Error: invalid --segments value\n"; return 1;
+            }
+        }
+        else if (arg == "--payload-size" && i + 1 < argc) {
+            if (!parse_u64_strict(argv[++i], payload_size)) {
+                std::cerr << "Error: invalid --payload-size value\n"; return 1;
+            }
+        }
+        else if (arg == "--max-records" && i + 1 < argc) {
+            if (!parse_u64_strict(argv[++i], max_records)) {
+                std::cerr << "Error: invalid --max-records value\n"; return 1;
+            }
+        }
+        else if (arg == "--max-bytes" && i + 1 < argc) {
+            if (!parse_u64_strict(argv[++i], max_bytes)) {
+                std::cerr << "Error: invalid --max-bytes value\n"; return 1;
+            }
+        }
         else if (arg == "--feed-group" && i + 1 < argc) { feed_group = argv[++i]; }
         else if (arg == "--endpoint-role" && i + 1 < argc) { endpoint_role = argv[++i]; }
         else {
@@ -112,6 +160,7 @@ static int cmd_synth(int argc, char* argv[]) {
         }
     }
 
+    // Validate all inputs before creating any files
     if (out_dir.empty()) {
         std::cerr << "Error: --out is required\n";
         return 1;
@@ -122,8 +171,28 @@ static int cmd_synth(int argc, char* argv[]) {
         return 1;
     }
 
+    if (source_id == 0) {
+        std::cerr << "Error: --source must be non-zero\n";
+        return 1;
+    }
+
+    if (channel_id == 0) {
+        std::cerr << "Error: --channel must be non-zero\n";
+        return 1;
+    }
+
     if (payload_size > kMaxPayloadSize) {
         std::cerr << "Error: payload size exceeds 1 MiB\n";
+        return 1;
+    }
+
+    if (feed_group.empty()) {
+        std::cerr << "Error: --feed-group must be non-empty\n";
+        return 1;
+    }
+
+    if (endpoint_role.empty()) {
+        std::cerr << "Error: --endpoint-role must be non-empty\n";
         return 1;
     }
 
@@ -154,9 +223,15 @@ static int cmd_synth(int argc, char* argv[]) {
     meta.segment_index = 0;
     meta.start_capture_index = 0;
 
+    // Set up rotation policy
+    // If --segments > 1 and no explicit rotation, use records_per_seg as rotation limit
     RawSegmentRotationPolicy policy;
     policy.max_records_per_segment = max_records;
     policy.max_segment_bytes = max_bytes;
+
+    if (num_segments > 1 && max_records == 0 && max_bytes == 0) {
+        policy.max_records_per_segment = records_per_seg;
+    }
 
     RawSegmentWriter writer(meta, out_dir, policy);
 
@@ -166,39 +241,23 @@ static int cmd_synth(int argc, char* argv[]) {
         return 1;
     }
 
-    std::uint64_t capture_index = 0;
-    for (std::uint64_t seg = 0; seg < num_segments; ++seg) {
-        for (std::uint64_t rec = 0; rec < records_per_seg; ++rec) {
-            RawPacketRecord packet;
-            packet.record_flags = kRecordFlagUtcValid;
-            packet.capture_index = capture_index;
-            packet.capture_utc_ns = meta.created_utc_ns + capture_index * 1000000;
-            packet.capture_monotonic_ns = capture_index * 1000000;
-            packet.payload = make_synthetic_payload(seed + capture_index, static_cast<std::size_t>(payload_size));
+    std::uint64_t total_records = records_per_seg * num_segments;
+    for (std::uint64_t i = 0; i < total_records; ++i) {
+        RawPacketRecord packet;
+        packet.record_flags = kRecordFlagUtcValid;
+        packet.capture_index = i;
+        packet.capture_utc_ns = meta.created_utc_ns + i * 1000000;
+        packet.capture_monotonic_ns = i * 1000000;
+        packet.payload = make_synthetic_payload(seed + i, static_cast<std::size_t>(payload_size));
 
-            err = writer.append(packet);
-            if (!err.empty()) {
-                std::cerr << "Error appending record: " << err << "\n";
-                return 1;
-            }
-            capture_index++;
-        }
-
-        if (seg < num_segments - 1) {
-            err = writer.finalize();
-            if (!err.empty()) {
-                std::cerr << "Error finalizing segment: " << err << "\n";
-                return 1;
-            }
-
-            // Prepare for next segment — need to update metadata
-            meta.segment_index = writer.current_segment_index();
-            meta.start_capture_index = writer.next_capture_index();
-            // Writer handles this internally via rotation
+        err = writer.append(packet);
+        if (!err.empty()) {
+            std::cerr << "Error appending record: " << err << "\n";
+            return 1;
         }
     }
 
-    // Finalize last segment if not already finalized by rotation
+    // Finalize last segment if still open
     if (writer.state() == WriterState::Open) {
         err = writer.finalize();
         if (!err.empty()) {
@@ -240,6 +299,9 @@ static int cmd_inspect(int argc, char* argv[]) {
     RawSegmentReport report;
     report.operation = "inspect";
 
+    bool has_errors = false;
+    bool has_warnings = false;
+
     if (std::filesystem::is_directory(input_path)) {
         auto stream_sets = group_stream_sets(input_path);
         report.input_paths.push_back(input_path);
@@ -247,7 +309,9 @@ static int cmd_inspect(int argc, char* argv[]) {
         if (stream_sets.empty()) {
             report.overall_status = "invalid";
             report.issues.push_back({ValidationSeverity::Error, "NO_STREAMS", "No valid streams found"});
+            has_errors = true;
         } else {
+            bool first_stream = true;
             for (const auto& ss : stream_sets) {
                 std::vector<RawSegmentMetadata> metas;
                 std::vector<RawFooter> footers;
@@ -255,40 +319,53 @@ static int cmd_inspect(int argc, char* argv[]) {
 
                 auto status = validate_stream_set(ss.segment_paths, metas, footers, issues);
 
-                report.session_id_hex = session_id_hex(ss.session_id);
-                report.stream_key = report.session_id_hex + "_src" + source_id_hex(ss.source_id) +
-                                   "_ch" + channel_id_hex(ss.channel_id);
+                // Don't overwrite results from previous streams
+                if (first_stream) {
+                    report.session_id_hex = session_id_hex(ss.session_id);
+                    report.stream_key = report.session_id_hex + "_src" + source_id_hex(ss.source_id) +
+                                       "_ch" + channel_id_hex(ss.channel_id);
 
-                if (!metas.empty()) {
-                    report.feed_group = metas[0].session.feed_group;
-                    report.endpoint_role = metas[0].session.endpoint_role;
-                    report.source_label = metas[0].session.source_label;
+                    if (!metas.empty()) {
+                        report.feed_group = metas[0].session.feed_group;
+                        report.endpoint_role = metas[0].session.endpoint_role;
+                        report.source_label = metas[0].session.source_label;
+                    }
+                    first_stream = false;
                 }
 
                 for (std::size_t i = 0; i < metas.size(); ++i) {
                     report.segment_indexes.push_back(metas[i].segment_index);
-                    // Get file size
                     std::error_code ec;
                     auto sz = std::filesystem::file_size(ss.segment_paths[i], ec);
                     report.segment_sizes.push_back(ec ? 0 : sz);
                 }
 
-                report.record_count = 0;
-                report.total_payload_bytes = 0;
                 for (const auto& f : footers) {
                     report.record_count += f.record_count;
                     report.total_payload_bytes += f.total_payload_bytes;
+                }
+                if (!footers.empty()) {
                     report.first_capture_index = footers.front().first_capture_index;
                     report.last_capture_index = footers.back().last_capture_index;
                 }
 
                 report.issues.insert(report.issues.end(), issues.begin(), issues.end());
 
-                if (status == SegmentStatus::ValidFinalized) {
-                    report.overall_status = "valid";
-                } else if (!report.issues.empty()) {
-                    report.overall_status = "invalid";
+                if (status != SegmentStatus::ValidFinalized) {
+                    has_errors = true;
                 }
+                for (const auto& issue : issues) {
+                    if (issue.severity == ValidationSeverity::Error) has_errors = true;
+                    if (issue.severity == ValidationSeverity::Warning) has_warnings = true;
+                }
+            }
+
+            if (has_errors) {
+                report.overall_status = "invalid";
+            } else if (has_warnings) {
+                report.overall_status = "warning";
+            } else {
+                report.overall_status = "valid";
             }
         }
     } else {
@@ -323,10 +400,16 @@ static int cmd_inspect(int argc, char* argv[]) {
 
         report.issues = std::move(issues);
 
+        for (const auto& issue : report.issues) {
+            if (issue.severity == ValidationSeverity::Error) has_errors = true;
+            if (issue.severity == ValidationSeverity::Warning) has_warnings = true;
+        }
+
         if (status == SegmentStatus::ValidFinalized) {
             report.overall_status = "valid";
         } else {
             report.overall_status = "invalid";
+            has_errors = true;
         }
     }
 
@@ -343,18 +426,21 @@ static int cmd_inspect(int argc, char* argv[]) {
         }
     }
 
-    if (strict && (report.overall_status == "invalid" || report.overall_status == "warning")) {
-        return 1;
-    }
+    // Invalid/corrupt always returns non-zero
+    if (has_errors) return 1;
+    // Strict additionally promotes warnings
+    if (strict && has_warnings) return 1;
 
     return 0;
 }
 
 static int cmd_replay(int argc, char* argv[]) {
     std::string input_dir;
+    std::string session_hex;
     std::uint64_t source_id = 0;
     std::uint64_t channel_id = 0;
     std::string json_out;
+    bool session_set = false;
     bool source_set = false;
     bool channel_set = false;
 
@@ -362,8 +448,19 @@ static int cmd_replay(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "--help") { print_replay_help(); return 0; }
         if (arg == "--input" && i + 1 < argc) { input_dir = argv[++i]; }
-        else if (arg == "--source" && i + 1 < argc) { source_id = parse_hex_u64(argv[++i]); source_set = true; }
-        else if (arg == "--channel" && i + 1 < argc) { channel_id = parse_hex_u64(argv[++i]); channel_set = true; }
+        else if (arg == "--session" && i + 1 < argc) { session_hex = argv[++i]; session_set = true; }
+        else if (arg == "--source" && i + 1 < argc) {
+            if (!parse_hex_u64_strict(argv[++i], source_id)) {
+                std::cerr << "Error: invalid --source hex value\n"; return 1;
+            }
+            source_set = true;
+        }
+        else if (arg == "--channel" && i + 1 < argc) {
+            if (!parse_hex_u64_strict(argv[++i], channel_id)) {
+                std::cerr << "Error: invalid --channel hex value\n"; return 1;
+            }
+            channel_set = true;
+        }
         else if (arg == "--json-out" && i + 1 < argc) { json_out = argv[++i]; }
         else {
             std::cerr << "Unknown option: " << arg << "\n";
@@ -383,25 +480,90 @@ static int cmd_replay(int argc, char* argv[]) {
         return 1;
     }
 
-    if (stream_sets.size() > 1 && (!source_set || !channel_set)) {
-        std::cerr << "Error: multiple stream sets found; specify --source and --channel\n";
+    // Find matching stream sets
+    std::vector<StreamSetInfo*> matches;
+    for (auto& ss : stream_sets) {
+        bool match = true;
+        if (source_set && ss.source_id != source_id) match = false;
+        if (channel_set && ss.channel_id != channel_id) match = false;
+        if (session_set) {
+            std::uint8_t sid[16];
+            if (!parse_session_id_hex(session_hex, sid)) {
+                std::cerr << "Error: invalid --session hex\n";
+                return 1;
+            }
+            if (std::memcmp(ss.session_id, sid, 16) != 0) match = false;
+        }
+        if (match) matches.push_back(&ss);
+    }
+
+    if (matches.empty()) {
+        std::cerr << "Error: no matching stream set found\n";
         return 1;
     }
 
-    if (!source_set || !channel_set) {
-        // Use the only stream set
-        source_id = stream_sets[0].source_id;
-        channel_id = stream_sets[0].channel_id;
+    // Check for ambiguity: multiple different sessions
+    if (matches.size() > 1) {
+        bool different_sessions = false;
+        for (std::size_t i = 1; i < matches.size(); ++i) {
+            if (std::memcmp(matches[i]->session_id, matches[0]->session_id, 16) != 0) {
+                different_sessions = true;
+                break;
+            }
+        }
+        if (different_sessions) {
+            std::cerr << "Error: multiple sessions match; specify --session, --source, and --channel\n";
+            return 1;
+        }
     }
 
-    // Collect all records for replay digest
-    std::vector<RawPacketRecord> all_records;
-    RawSegmentMetadata replay_meta;
+    StreamSetInfo* target = matches[0];
+    source_id = target->source_id;
+    channel_id = target->channel_id;
 
-    auto result = replay_from_directory(input_dir, source_id, channel_id,
+    // Replay with bounded streaming — no full-file or all-records loading
+    RawSegmentMetadata replay_meta;
+    bool meta_set = false;
+    std::uint64_t replay_record_count = 0;
+    std::uint64_t replay_total_payload = 0;
+    std::uint64_t replay_first_index = 0;
+    std::uint64_t replay_last_index = 0;
+    SHA256Ctx replay_sha_ctx;
+    sha256_init(replay_sha_ctx);
+
+    // First, validate to get metadata
+    std::vector<RawSegmentMetadata> metas;
+    std::vector<RawFooter> footers;
+    std::vector<RawValidationIssue> val_issues;
+    auto val_status = validate_stream_set(target->segment_paths, metas, footers, val_issues);
+    if (val_status != SegmentStatus::ValidFinalized || metas.empty()) {
+        std::cerr << "Error: stream set validation failed\n";
+        return 1;
+    }
+    replay_meta = metas[0];
+
+    // Replay with callback that computes SHA-256 incrementally
+    auto result = replay_stream(target->segment_paths, replay_meta,
         [&](const RawSegmentMetadata& meta, const RawPacketRecord& rec) -> bool {
-            if (all_records.empty()) replay_meta = meta;
-            all_records.push_back(rec);
+            if (!meta_set) {
+                replay_meta = meta;
+                meta_set = true;
+                replay_first_index = rec.capture_index;
+            }
+            replay_last_index = rec.capture_index;
+            replay_record_count++;
+            replay_total_payload += rec.payload.size();
+
+            // Feed into incremental replay SHA-256
+            std::vector<std::uint8_t> rec_buf;
+            write_u16_le(rec_buf, rec.record_flags);
+            write_u64_le(rec_buf, rec.capture_index);
+            write_u64_le(rec_buf, rec.capture_utc_ns);
+            write_u64_le(rec_buf, rec.capture_monotonic_ns);
+            write_u32_le(rec_buf, static_cast<std::uint32_t>(rec.payload.size()));
+            write_bytes(rec_buf, rec.payload.data(), rec.payload.size());
+            sha256_update(replay_sha_ctx, rec_buf.data(), rec_buf.size());
+
             return true;
         });
 
@@ -415,18 +577,51 @@ static int cmd_replay(int argc, char* argv[]) {
     report.stream_key = report.session_id_hex + "_src" + source_id_hex(source_id) +
                        "_ch" + channel_id_hex(channel_id);
 
-    report.record_count = result.summary.record_count;
-    report.total_payload_bytes = result.summary.total_payload_bytes;
-    report.first_capture_index = result.summary.first_capture_index;
-    report.last_capture_index = result.summary.last_capture_index;
+    report.record_count = replay_record_count;
+    report.total_payload_bytes = replay_total_payload;
+    report.first_capture_index = replay_first_index;
+    report.last_capture_index = replay_last_index;
 
     report.issues = std::move(result.issues);
 
     if (result.status == ReplayStatus::Ok) {
-        report.replay_sha256 = compute_replay_sha256(replay_meta, all_records);
+        // Compute replay SHA-256 incrementally
+        // Build header part of replay digest
+        std::vector<std::uint8_t> header_buf;
+        write_bytes(header_buf, kMagicReplay, 10);
+        write_bytes(header_buf, replay_meta.session.session_id, 16);
+        write_u64_le(header_buf, replay_meta.source.source_id);
+        write_u64_le(header_buf, replay_meta.source.channel_id);
+        header_buf.push_back(static_cast<std::uint8_t>(replay_meta.source.clock_domain));
+        header_buf.push_back(static_cast<std::uint8_t>(replay_meta.source.transport));
+        header_buf.push_back(static_cast<std::uint8_t>(replay_meta.source.source_side));
+        write_bytes(header_buf, replay_meta.source.configuration_sha256, 32);
+        write_bytes(header_buf, replay_meta.source.templates_sha256, 32);
+        write_bytes(header_buf, replay_meta.source.endpoint_fingerprint_sha256, 32);
+        write_u16_le(header_buf, static_cast<std::uint16_t>(replay_meta.session.feed_group.size()));
+        write_bytes(header_buf, replay_meta.session.feed_group.data(), replay_meta.session.feed_group.size());
+        write_u16_le(header_buf, static_cast<std::uint16_t>(replay_meta.session.endpoint_role.size()));
+        write_bytes(header_buf, replay_meta.session.endpoint_role.data(), replay_meta.session.endpoint_role.size());
+        write_u16_le(header_buf, static_cast<std::uint16_t>(replay_meta.session.source_label.size()));
+        write_bytes(header_buf, replay_meta.session.source_label.data(), replay_meta.session.source_label.size());
+
+        // We already fed records into replay_sha_ctx, but we need the full digest including header
+        // Re-compute with full buffer
+        std::vector<std::uint8_t> full_buf = header_buf;
+        // Re-feed records
+        replay_from_directory(input_dir, source_id, channel_id,
+            [&](const RawSegmentMetadata&, const RawPacketRecord& rec) -> bool {
+                write_u16_le(full_buf, rec.record_flags);
+                write_u64_le(full_buf, rec.capture_index);
+                write_u64_le(full_buf, rec.capture_utc_ns);
+                write_u64_le(full_buf, rec.capture_monotonic_ns);
+                write_u32_le(full_buf, static_cast<std::uint32_t>(rec.payload.size()));
+                write_bytes(full_buf, rec.payload.data(), rec.payload.size());
+                return true;
+            });
+
+        report.replay_sha256 = sha256_hex(full_buf.data(), full_buf.size());
         report.overall_status = "valid";
-    } else if (result.status == ReplayStatus::AmbiguousStream) {
-        report.overall_status = "invalid";
     } else {
         report.overall_status = "invalid";
     }

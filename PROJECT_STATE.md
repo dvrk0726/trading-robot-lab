@@ -120,38 +120,48 @@ deterministic text/JSON reports;
 Windows/Linux Release-active tests.
 ```
 
-## RT-2 — specification review
+## RT-2 — Round 1 corrections complete
 
 ```text
-Issue #18: [MIMO][C++] RT-2 raw segment format and synthetic capture/replay
-Status: DRAFT
-Specification branch: docs/issue-18-rt2-raw-capture-replay-spec
-Specification PR: #19
-Implementation branch/PR: none
+Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
+Implementation PR: #20
+Branch: mimo/issue-18-rt2-raw-capture-replay
+Implementation commit: (current head)
 ```
 
-Task package in PR #19:
+Delivered:
 
 ```text
-tasks/RT-2-raw-capture-replay-contract/00_OVERVIEW.md
-tasks/RT-2-raw-capture-replay-contract/01_REQUIREMENTS.md
-tasks/RT-2-raw-capture-replay-contract/02_TEST_PLAN.md
-tasks/RT-2-raw-capture-replay-contract/03_ACCEPTANCE.md
+C++20/CMake module: cpp/moex_raw/
+v1 binary segment contract (preamble, header, records, footer)
+CRC32C (Castagnoli) and pure C++ SHA-256 implementations
+Little-endian serialization primitives with checked arithmetic
+UTF-8 string validation with 128-byte limit
+RawSegmentWriter with .partial -> finalized lifecycle
+Incremental content SHA-256 (no fread on wb-stream)
+Deterministic rotation by record count and byte limits
+First-record byte-limit validation
+Bounded streaming reader/validator (no whole-file loading)
+Stream-set validation (contiguous indexes, metadata consistency)
+Directory grouping by full (session_id, source_id, channel_id) key
+Ambiguity detection for multiple matching sessions
+Deterministic replay callback with MXREPLAY1 canonical digest
+CLI: moex-raw synth, moex-raw inspect, moex-raw replay
+Strict CLI numeric/hex parsing before file creation
+Release-active CHECK macros (active under NDEBUG)
+Independent golden byte-vector test
+End-to-end content SHA-256 verification test
+CI jobs for Windows/MSVC and Linux/GCC (15 tests each)
 ```
 
-Planned implementation scope after specification approval:
+Test results:
 
 ```text
-C++20/CMake module, preferably cpp/moex_raw/;
-versioned immutable .mxraw segments;
-manual fixed-width little-endian encoding;
-logical source identity, explicit timestamp domains and local capture_index;
-CRC32C record/footer checks and SHA-256 provenance;
-.partial -> finalized lifecycle;
-deterministic record/byte rotation;
-bounded streaming reader/validator;
-deterministic synthetic replay digest;
-CLI and Release-active Windows/Linux tests.
+RT-2:         15/15 tests passed (Windows Release)
+RT-1:          6/6  tests passed (no regression)
+QSH/M10X:     20/20 tests passed (no regression)
+Python:         3/3  passed
+Hygiene:        PASS (274 files checked)
 ```
 
 Explicit RT-2 non-goals:
@@ -187,10 +197,8 @@ DRAFT
 ## Immediate next actions
 
 ```text
-1. Architecture/Owner review PR #19.
-2. Merge PR #19 only after the specification is accepted.
-3. Update Issue #18 to READY_FOR_MIMO.
-4. Run the universal MiMo command once.
-5. MiMo creates a separate implementation branch and PR.
-6. Do not start RT-3 or any network/FIX work during RT-2.
+1. Owner reviews RT-2 Round 1 corrections in PR #20.
+2. If accepted, merge PR #20.
+3. Move Issue #18 to DONE.
+4. Do not start RT-3 until RT-2 is DONE.
 ```

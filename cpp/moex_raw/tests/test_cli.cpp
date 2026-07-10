@@ -2,7 +2,7 @@
 #pragma warning(disable : 4189 4101 4309)
 #endif
 
-#include <cassert>
+#include "test_check.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -38,7 +38,11 @@ static int run_cmd_exit(const std::string& cmd) {
 
 static std::string temp_dir() {
     static int counter = 0;
-    auto dir = fs::temp_directory_path() / "moex_raw_test" / ("cli_" + std::to_string(counter++));
+    auto base = fs::temp_directory_path() / "moex_raw_test";
+    auto dir = base / ("cli_" + std::to_string(counter++));
+    // Clean up if exists from previous run
+    std::error_code ec;
+    fs::remove_all(dir, ec);
     fs::create_directories(dir);
     return dir.string();
 }
@@ -53,34 +57,34 @@ int main() {
     // --help
     {
         auto out = run_cmd(exe + " --help");
-        assert(out.find("synth") != std::string::npos);
-        assert(out.find("inspect") != std::string::npos);
-        assert(out.find("replay") != std::string::npos);
+        CHECK(out.find("synth") != std::string::npos);
+        CHECK(out.find("inspect") != std::string::npos);
+        CHECK(out.find("replay") != std::string::npos);
     }
 
     // no args => non-zero
     {
         int rc = run_cmd_exit(exe + " 2>NUL");
-        assert(rc != 0);
+        CHECK(rc != 0);
     }
 
     // unknown command => non-zero
     {
         int rc = run_cmd_exit(exe + " unknown 2>NUL");
-        assert(rc != 0);
+        CHECK(rc != 0);
     }
 
     // synth --help
     {
         auto out = run_cmd(exe + " synth --help");
-        assert(out.find("--out") != std::string::npos);
-        assert(out.find("--session") != std::string::npos);
+        CHECK(out.find("--out") != std::string::npos);
+        CHECK(out.find("--session") != std::string::npos);
     }
 
     // synth: missing --out
     {
         int rc = run_cmd_exit(exe + " synth 2>NUL");
-        assert(rc != 0);
+        CHECK(rc != 0);
     }
 
     // synth: valid
@@ -89,15 +93,15 @@ int main() {
         auto out_dir = dir + "/segments";
         int rc = run_cmd_exit(exe + " synth --out " + out_dir +
                               " --records 5 --payload-size 32");
-        assert(rc == 0);
-        assert(fs::exists(out_dir));
+        CHECK(rc == 0);
+        CHECK(fs::exists(out_dir));
 
         // Check that .mxraw files were created
         int mxraw_count = 0;
         for (const auto& entry : fs::directory_iterator(out_dir)) {
             if (entry.path().extension() == ".mxraw") mxraw_count++;
         }
-        assert(mxraw_count == 1);
+        CHECK(mxraw_count == 1);
     }
 
     // synth: multi-segment with rotation
@@ -106,25 +110,25 @@ int main() {
         auto out_dir = dir + "/segments_rot";
         int rc = run_cmd_exit(exe + " synth --out " + out_dir +
                               " --records 10 --max-records 3");
-        assert(rc == 0);
+        CHECK(rc == 0);
 
         int mxraw_count = 0;
         for (const auto& entry : fs::directory_iterator(out_dir)) {
             if (entry.path().extension() == ".mxraw") mxraw_count++;
         }
-        assert(mxraw_count >= 3);
+        CHECK(mxraw_count >= 3);
     }
 
     // inspect --help
     {
         auto out = run_cmd(exe + " inspect --help");
-        assert(out.find("--input") != std::string::npos);
+        CHECK(out.find("--input") != std::string::npos);
     }
 
     // inspect: missing --input
     {
         int rc = run_cmd_exit(exe + " inspect 2>NUL");
-        assert(rc != 0);
+        CHECK(rc != 0);
     }
 
     // inspect: valid single file
@@ -145,7 +149,7 @@ int main() {
         }
 
         int rc = run_cmd_exit(exe + " inspect --input " + mxraw_path);
-        assert(rc == 0);
+        CHECK(rc == 0);
     }
 
     // inspect: directory
@@ -155,7 +159,7 @@ int main() {
         run_cmd_exit(exe + " synth --out " + out_dir + " --records 5");
 
         int rc = run_cmd_exit(exe + " inspect --input " + out_dir);
-        assert(rc == 0);
+        CHECK(rc == 0);
     }
 
     // inspect: JSON output
@@ -174,28 +178,28 @@ int main() {
 
         auto json_path = dir + "/report.json";
         int rc = run_cmd_exit(exe + " inspect --input " + mxraw_path + " --json-out " + json_path);
-        assert(rc == 0);
-        assert(fs::exists(json_path));
+        CHECK(rc == 0);
+        CHECK(fs::exists(json_path));
 
         // Verify JSON is valid (has expected fields)
         std::ifstream ifs(json_path);
         std::string content((std::istreambuf_iterator<char>(ifs)),
                             std::istreambuf_iterator<char>());
-        assert(content.find("schema_version") != std::string::npos);
-        assert(content.find("overall_status") != std::string::npos);
+        CHECK(content.find("schema_version") != std::string::npos);
+        CHECK(content.find("overall_status") != std::string::npos);
     }
 
     // replay --help
     {
         auto out = run_cmd(exe + " replay --help");
-        assert(out.find("--input") != std::string::npos);
-        assert(out.find("--source") != std::string::npos);
+        CHECK(out.find("--input") != std::string::npos);
+        CHECK(out.find("--source") != std::string::npos);
     }
 
     // replay: missing --input
     {
         int rc = run_cmd_exit(exe + " replay 2>NUL");
-        assert(rc != 0);
+        CHECK(rc != 0);
     }
 
     // replay: valid stream
@@ -205,7 +209,7 @@ int main() {
         run_cmd_exit(exe + " synth --out " + out_dir + " --records 5");
 
         int rc = run_cmd_exit(exe + " replay --input " + out_dir);
-        assert(rc == 0);
+        CHECK(rc == 0);
     }
 
     // replay: corrupt segment rejected
@@ -228,7 +232,7 @@ int main() {
         }
 
         int rc = run_cmd_exit(exe + " replay --input " + out_dir + " 2>NUL");
-        assert(rc != 0);
+        CHECK(rc != 0);
     }
 
     // inspect: strict mode returns non-zero for invalid
@@ -251,7 +255,7 @@ int main() {
         }
 
         int rc = run_cmd_exit(exe + " inspect --input " + out_dir + " --strict 2>NUL");
-        assert(rc != 0);
+        CHECK(rc != 0);
     }
 
     std::cout << "test_cli: ALL PASSED\n";

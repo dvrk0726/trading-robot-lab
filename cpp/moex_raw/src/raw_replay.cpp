@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <vector>
 
 namespace moex_raw {
 
@@ -36,7 +37,7 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
         return result;
     }
 
-    // Replay records in order
+    // Replay records in order — bounded streaming per segment
     std::uint64_t total_records = 0;
     std::uint64_t total_payload = 0;
     std::uint64_t first_index = 0;
@@ -44,48 +45,80 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
     bool first = true;
 
     for (std::size_t si = 0; si < sorted_paths.size(); ++si) {
-        // Read file
         std::FILE* f = std::fopen(sorted_paths[si].c_str(), "rb");
         if (!f) {
             result.status = ReplayStatus::IoError;
             return result;
         }
 
-        std::fseek(f, 0, SEEK_END);
-        auto file_size = static_cast<std::size_t>(std::ftell(f));
-        std::fseek(f, 0, SEEK_SET);
+        // Get file size
+        if (std::fseek(f, 0, SEEK_END) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
+        long file_size_long = std::ftell(f);
+        if (file_size_long < 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
+        auto file_size = static_cast<std::uint64_t>(file_size_long);
+        if (std::fseek(f, 0, SEEK_SET) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
 
-        std::vector<std::uint8_t> data(file_size);
-        if (std::fread(data.data(), 1, file_size, f) != file_size) {
-            std::fclose(f);
-            result.status = ReplayStatus::IoError;
-            return result;
-        }
-        std::fclose(f);
+        // Read header size (bounded: first 14 bytes)
+        std::uint8_t preamble[14];
+        if (std::fread(preamble, 1, 14, f) != 14) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
+        std::size_t header_size = read_u32_le(preamble + 10);
 
-        // Find header size
-        std::size_t header_size = 0;
-        if (data.size() < 14) continue;
-        header_size = read_u32_le(data.data() + 10);
+        // Seek past header
+        if (std::fseek(f, static_cast<long>(header_size), SEEK_SET) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
 
-        // Read records
-        std::size_t pos = header_size;
-        std::size_t data_end = file_size - kFooterSize;
+        std::uint64_t data_end = file_size - kFooterSize;
+        std::uint64_t pos = header_size;
 
+        // Read records one at a time (bounded streaming)
         while (pos < data_end) {
+            // Read record header
+            std::uint8_t rec_hdr[kRecordHeaderSize];
+            if (std::fread(rec_hdr, 1, kRecordHeaderSize, f) != kRecordHeaderSize) {
+                std::fclose(f);
+                result.status = ReplayStatus::IoError;
+                return result;
+            }
+
+            // Parse record size
+            std::uint32_t record_size = read_u32_le(rec_hdr + 8);
+            std::uint32_t payload_size = read_u32_le(rec_hdr + 36);
+
+            if (record_size != kRecordHeaderSize + payload_size + 4) {
+                std::fclose(f);
+                result.status = ReplayStatus::ValidationFailed;
+                add_replay_issue(result.issues, ValidationSeverity::Error,
+                                 "WRONG_RECORD_SIZE", "record_size mismatch");
+                return result;
+            }
+
+            // Read remaining record bytes
+            std::size_t tail_bytes = record_size - kRecordHeaderSize;
+            std::vector<std::uint8_t> rec_tail(tail_bytes);
+            if (std::fread(rec_tail.data(), 1, tail_bytes, f) != tail_bytes) {
+                std::fclose(f);
+                result.status = ReplayStatus::IoError;
+                return result;
+            }
+
+            // Build full record buffer for deserialization
+            std::vector<std::uint8_t> full_rec(rec_hdr, rec_hdr + kRecordHeaderSize);
+            full_rec.insert(full_rec.end(), rec_tail.begin(), rec_tail.end());
+
             RawPacketRecord rec;
             std::size_t record_total_size = 0;
             std::vector<RawValidationIssue> rec_issues;
 
-            if (!deserialize_record_header(data.data() + pos, data_end - pos,
+            if (!deserialize_record_header(full_rec.data(), full_rec.size(),
                                            rec, record_total_size, rec_issues)) {
+                std::fclose(f);
                 result.status = ReplayStatus::ValidationFailed;
                 result.issues.insert(result.issues.end(), rec_issues.begin(), rec_issues.end());
                 return result;
             }
 
-            // Call callback
+            // Call callback with bounded payload (rec.payload lifetime = callback scope)
             if (!callback(metas[si], rec)) {
+                std::fclose(f);
                 result.status = ReplayStatus::Aborted;
                 result.summary.record_count = total_records;
                 result.summary.total_payload_bytes = total_payload;
@@ -104,8 +137,10 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
             total_records++;
             total_payload += rec.payload.size();
 
-            pos += record_total_size;
+            pos += record_size;
         }
+
+        std::fclose(f);
     }
 
     result.summary.record_count = total_records;
@@ -125,23 +160,16 @@ ReplayResult replay_from_directory(const std::string& directory,
 
     auto stream_sets = group_stream_sets(directory);
 
-    // Find matching stream set
-    StreamSetInfo* target = nullptr;
+    // Find matching stream sets by (source_id, channel_id)
+    std::vector<StreamSetInfo*> matches;
     for (auto& ss : stream_sets) {
         if (ss.source_id == source_id && ss.channel_id == channel_id) {
-            target = &ss;
-            break;
+            matches.push_back(&ss);
         }
     }
 
-    if (!target) {
-        // Check if ambiguous
-        if (stream_sets.size() > 1) {
-            result.status = ReplayStatus::AmbiguousStream;
-            add_replay_issue(result.issues, ValidationSeverity::Error,
-                             "AMBIGUOUS_STREAM",
-                             "Multiple stream sets found; specify source_id and channel_id");
-        } else if (stream_sets.empty()) {
+    if (matches.empty()) {
+        if (stream_sets.empty()) {
             result.status = ReplayStatus::StreamNotFound;
             add_replay_issue(result.issues, ValidationSeverity::Error,
                              "NO_STREAM", "No valid stream sets found in directory");
@@ -153,6 +181,27 @@ ReplayResult replay_from_directory(const std::string& directory,
         }
         return result;
     }
+
+    // Check for ambiguity: multiple sessions with same source_id/channel_id
+    if (matches.size() > 1) {
+        // Check if they have different session_ids
+        bool different_sessions = false;
+        for (std::size_t i = 1; i < matches.size(); ++i) {
+            if (std::memcmp(matches[i]->session_id, matches[0]->session_id, 16) != 0) {
+                different_sessions = true;
+                break;
+            }
+        }
+        if (different_sessions) {
+            result.status = ReplayStatus::AmbiguousStream;
+            add_replay_issue(result.issues, ValidationSeverity::Error,
+                             "AMBIGUOUS_STREAM",
+                             "Multiple sessions with same source_id/channel_id; specify session_id");
+            return result;
+        }
+    }
+
+    StreamSetInfo* target = matches[0];
 
     // Build metadata from first segment
     RawSegmentMetadata meta;

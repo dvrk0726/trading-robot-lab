@@ -5,7 +5,7 @@
 #include "moex_raw/raw_segment.hpp"
 #include "moex_raw/raw_types.hpp"
 #include "moex_raw/sha256.hpp"
-#include <cassert>
+#include "test_check.hpp"
 #include <iostream>
 #include <filesystem>
 
@@ -13,7 +13,10 @@ namespace fs = std::filesystem;
 
 static std::string temp_dir() {
     static int counter = 0;
-    auto dir = fs::temp_directory_path() / "moex_raw_test" / ("stream_set_" + std::to_string(counter++));
+    auto base = fs::temp_directory_path() / "moex_raw_test";
+    auto dir = base / ("stream_set_" + std::to_string(counter++));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
     fs::create_directories(dir);
     return dir.string();
 }
@@ -58,18 +61,18 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
-        assert(paths.size() == 3);
+        CHECK(paths.size() == 3);
 
         std::vector<RawSegmentMetadata> metas;
         std::vector<RawFooter> footers;
         std::vector<RawValidationIssue> issues;
-        assert(validate_stream_set(paths, metas, footers, issues) == SegmentStatus::ValidFinalized);
-        assert(metas.size() == 3);
-        assert(footers.size() == 3);
+        CHECK(validate_stream_set(paths, metas, footers, issues) == SegmentStatus::ValidFinalized);
+        CHECK(metas.size() == 3);
+        CHECK(footers.size() == 3);
 
         // Contiguous capture indexes across segments
-        assert(footers[0].last_capture_index + 1 == footers[1].first_capture_index);
-        assert(footers[1].last_capture_index + 1 == footers[2].first_capture_index);
+        CHECK(footers[0].last_capture_index + 1 == footers[1].first_capture_index);
+        CHECK(footers[1].last_capture_index + 1 == footers[2].first_capture_index);
     }
 
     // Negative: duplicate segment_index
@@ -95,7 +98,7 @@ int main() {
         std::vector<RawFooter> footers;
         std::vector<RawValidationIssue> issues;
         auto result = validate_stream_set({paths[0], dup_path}, metas, footers, issues);
-        assert(result != SegmentStatus::ValidFinalized);
+        CHECK(result != SegmentStatus::ValidFinalized);
         (void)result;
     }
 
@@ -127,7 +130,7 @@ int main() {
         w2.finalize();
 
         auto sets = group_stream_sets(dir);
-        assert(sets.size() == 2);
+        CHECK(sets.size() == 2);
     }
 
     // Partial files not included in stream sets
@@ -155,7 +158,7 @@ int main() {
 
         auto sets = group_stream_sets(dir);
         // Should only have 1 stream set (the valid one)
-        assert(sets.size() == 1);
+        CHECK(sets.size() == 1);
     }
 
     std::cout << "test_stream_set: ALL PASSED\n";

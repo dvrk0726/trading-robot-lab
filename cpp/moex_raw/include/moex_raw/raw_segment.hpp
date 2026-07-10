@@ -1,5 +1,6 @@
 #pragma once
 #include "moex_raw/raw_types.hpp"
+#include "moex_raw/sha256.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -91,6 +92,8 @@ private:
     std::uint64_t next_capture_index_ = 0;
     std::uint64_t current_file_bytes_ = 0;
     std::vector<std::uint8_t> content_buffer_;  // for SHA-256
+    SHA256Ctx content_sha_ctx_;                  // incremental content SHA-256
+    bool content_sha_initialized_ = false;
     std::vector<std::string> finalized_paths_;
 };
 

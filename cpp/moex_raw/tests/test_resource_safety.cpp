@@ -7,7 +7,7 @@
 #include "moex_raw/endian.hpp"
 #include "moex_raw/crc32c.hpp"
 #include "moex_raw/sha256.hpp"
-#include <cassert>
+#include "test_check.hpp"
 #include <iostream>
 #include <cstring>
 #include <vector>
@@ -28,7 +28,7 @@ int main() {
         RawSegmentMetadata meta;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), meta, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), meta, hs, issues));
     }
 
     // Huge payload_size rejected
@@ -46,7 +46,7 @@ int main() {
         RawPacketRecord rec;
         std::size_t ts = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_record_header(buf.data(), buf.size(), rec, ts, issues));
+        CHECK(!deserialize_record_header(buf.data(), buf.size(), rec, ts, issues));
     }
 
     // Truncated file at header boundary
@@ -60,7 +60,7 @@ int main() {
         RawSegmentMetadata meta;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), meta, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), meta, hs, issues));
     }
 
     // Truncated file at record boundary
@@ -78,14 +78,14 @@ int main() {
         RawPacketRecord rec;
         std::size_t ts = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_record_header(buf.data(), buf.size(), rec, ts, issues));
+        CHECK(!deserialize_record_header(buf.data(), buf.size(), rec, ts, issues));
     }
 
     // Checked arithmetic rejects overflow
     {
         std::uint64_t r;
-        assert(!checked_add_u64(0xFFFFFFFFFFFFFFFFULL, 1, r));
-        assert(!checked_mul_u64(0xFFFFFFFFFFFFFFFFULL, 2, r));
+        CHECK(!checked_add_u64(0xFFFFFFFFFFFFFFFFULL, 1, r));
+        CHECK(!checked_mul_u64(0xFFFFFFFFFFFFFFFFULL, 2, r));
     }
 
     // No unbounded allocation from file values
@@ -124,7 +124,7 @@ int main() {
         pol.max_segment_bytes = kMaxSegmentBytes + 1;
 
         RawSegmentWriter writer(meta, "/tmp/test_overflow", pol);
-        assert(!writer.open().empty());
+        CHECK(!writer.open().empty());
     }
 
     // Empty file
@@ -135,7 +135,7 @@ int main() {
         std::string ch, fh;
         // This would fail to open a non-existent file
         auto status = validate_segment("/nonexistent/path.mxraw", meta, footer, issues, ch, fh);
-        assert(status == SegmentStatus::IoError);
+        CHECK(status == SegmentStatus::IoError);
     }
 
     std::cout << "test_resource_safety: ALL PASSED\n";

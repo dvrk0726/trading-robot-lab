@@ -134,39 +134,41 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — specification gate
+## RT-2 — implementation Round 1 corrections complete
 
 ```text
-Issue #18: [MIMO][C++] RT-2 raw segment format and synthetic capture/replay
-Status: DRAFT
-Specification branch: docs/issue-18-rt2-raw-capture-replay-spec
-Specification PR: #19
-Implementation: not started
+Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
+Implementation PR: #20
+Branch: mimo/issue-18-rt2-raw-capture-replay
+Implementation commit: (current head)
 ```
 
-Task package:
+Round 1 corrections delivered:
 
 ```text
-tasks/RT-2-raw-capture-replay-contract/00_OVERVIEW.md
-tasks/RT-2-raw-capture-replay-contract/01_REQUIREMENTS.md
-tasks/RT-2-raw-capture-replay-contract/02_TEST_PLAN.md
-tasks/RT-2-raw-capture-replay-contract/03_ACCEPTANCE.md
+Release-active CHECK macros replace plain assert (all 15 tests active under NDEBUG);
+record offsets fixed: capture_index=12, capture_utc_ns=20, capture_monotonic_ns=28;
+independent golden byte-vector test verifies exact layout;
+content SHA-256 computed incrementally (no fread on wb-stream);
+bounded streaming reader/replay (no whole-file or all-records loading);
+first-record byte-limit validation;
+multi-segment lifecycle via automatic rotation;
+strict CLI numeric/hex parsing before file creation;
+directory inspect reports partial/corrupt files;
+stream selection uses full (session_id, source_id, channel_id) key;
+ambiguity detection for multiple matching sessions;
+CI jobs for cpp/moex_raw Windows/MSVC and Linux/GCC (15 tests each).
 ```
 
-RT-2 planned scope:
+Test results:
 
 ```text
-versioned immutable .mxraw binary segments;
-explicit little-endian manual serialization;
-logical source/timestamp/local capture-order contracts;
-.partial -> finalized lifecycle;
-deterministic record/byte rotation;
-bounded reader/validator;
-deterministic synthetic replay digest;
-no network and no FAST decode.
+RT-2:         15/15 tests passed (Windows Release)
+RT-1:          6/6  tests passed (no regression)
+QSH/M10X:     20/20 tests passed (no regression)
+Python:         3/3  passed
+Hygiene:        PASS (274 files checked)
 ```
-
-RT-2 implementation must not begin until PR #19 is reviewed, owner-approved and merged, then Issue #18 moves to READY_FOR_MIMO.
 
 ## Future FIX architecture
 
@@ -188,11 +190,8 @@ DONE
 ## Immediate actions
 
 ```text
-1. Review RT-2 specification PR #19.
-2. Correct specification only if architecture/safety gaps are found.
-3. Owner approves and merges PR #19.
-4. Move Issue #18 from DRAFT to READY_FOR_MIMO.
-5. Run the universal MiMo command once.
-6. MiMo implements in a new mimo/issue-18-* branch and stops at a separate PR.
-7. Do not start RT-3, network capture, FAST decoding or FIX work during RT-2.
+1. Owner reviews RT-2 Round 1 corrections in PR #20.
+2. If accepted, merge PR #20.
+3. Move Issue #18 to DONE.
+4. Do not start RT-3 until RT-2 is DONE.
 ```

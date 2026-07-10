@@ -71,9 +71,14 @@ std::string RawSegmentWriter::open() {
         return "max_segment_bytes exceeds 64 GiB";
     }
 
+    // Compute actual header size for limit checks
+    std::vector<std::uint8_t> header_probe;
+    serialize_header(header_probe, metadata_);
+    std::size_t actual_header_size = header_probe.size();
+
     // Check that limits fit header + one record + footer
     if (policy_.max_segment_bytes > 0) {
-        std::size_t min_size = kMaxHeaderSize + kRecordHeaderSize + 4 + kFooterSize;
+        std::size_t min_size = actual_header_size + kRecordHeaderSize + 4 + kFooterSize;
         if (policy_.max_segment_bytes < min_size) {
             return "max_segment_bytes too small for header + one record + footer";
         }
@@ -102,7 +107,11 @@ std::string RawSegmentWriter::open() {
         return "Cannot open partial file for writing";
     }
 
-    // Write header
+    // Initialize incremental content SHA-256
+    sha256_init(content_sha_ctx_);
+    content_sha_initialized_ = true;
+
+    // Write header and feed into SHA-256
     content_buffer_.clear();
     serialize_header(content_buffer_, metadata_);
 
@@ -110,6 +119,7 @@ std::string RawSegmentWriter::open() {
         state_ = WriterState::Failed;
         return "Failed to write header";
     }
+    sha256_update(content_sha_ctx_, content_buffer_.data(), content_buffer_.size());
     current_file_bytes_ = content_buffer_.size();
 
     state_ = WriterState::Open;
@@ -131,7 +141,17 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
         return "capture_index not sequential";
     }
 
-    // Check rotation
+    // Validate first record fits: actual header + record + footer <= max_segment_bytes
+    if (record_count_ == 0 && policy_.max_segment_bytes > 0) {
+        std::uint32_t payload_size = static_cast<std::uint32_t>(rec.payload.size());
+        std::uint32_t record_size = kRecordHeaderSize + payload_size + 4;
+        std::uint64_t total = current_file_bytes_ + record_size + kFooterSize;
+        if (total > policy_.max_segment_bytes) {
+            return "First record too large for segment byte limit";
+        }
+    }
+
+    // Check rotation (only for subsequent records)
     if (should_rotate(rec)) {
         auto err = finalize_current();
         if (!err.empty()) return err;
@@ -165,17 +185,20 @@ std::size_t RawSegmentWriter::estimate_segment_bytes() const {
 }
 
 bool RawSegmentWriter::should_rotate(const RawPacketRecord& rec) const {
+    // Don't rotate for the first record — it was validated in append()
     if (record_count_ == 0) return false;
 
     std::uint32_t payload_size = static_cast<std::uint32_t>(rec.payload.size());
     std::uint32_t record_size = kRecordHeaderSize + payload_size + 4;
     std::uint64_t new_file_bytes = current_file_bytes_ + record_size;
 
+    // Check record count limit
     if (policy_.max_records_per_segment > 0 &&
         record_count_ >= policy_.max_records_per_segment) {
         return true;
     }
 
+    // Check byte limit
     if (policy_.max_segment_bytes > 0 &&
         new_file_bytes + kFooterSize > policy_.max_segment_bytes) {
         return true;
@@ -193,14 +216,17 @@ std::string RawSegmentWriter::write_record(const RawPacketRecord& rec) {
         return "Failed to write record";
     }
 
+    // Feed into incremental SHA-256
+    sha256_update(content_sha_ctx_, rec_buf.data(), rec_buf.size());
     current_file_bytes_ += rec_buf.size();
     return "";
 }
 
 std::string RawSegmentWriter::finalize_current() {
-    // Compute content SHA-256
+    // Finalize incremental content SHA-256
     std::uint8_t content_hash[32];
-    sha256(content_buffer_.data(), content_buffer_.size(), content_hash);
+    sha256_final(content_sha_ctx_, content_hash);
+    content_sha_initialized_ = false;
 
     RawFooter footer;
     footer.record_count = record_count_;
@@ -209,32 +235,6 @@ std::string RawSegmentWriter::finalize_current() {
     footer.total_payload_bytes = total_payload_bytes_;
     footer.data_bytes_before_footer = current_file_bytes_;
     std::memcpy(footer.content_sha256, content_hash, 32);
-
-    // Actually we need to hash ALL bytes written so far (header + records).
-    // Let me fix this: content_buffer_ was only the header. We need to hash everything before footer.
-    // We'll read the file content and hash it.
-    if (file_) {
-        std::fflush(file_);
-        // Re-read file to compute content SHA-256
-        auto pos = std::ftell(file_);
-        std::fseek(file_, 0, SEEK_SET);
-
-        SHA256Ctx sha_ctx;
-        sha256_init(sha_ctx);
-        std::uint8_t buf[4096];
-        std::size_t total_read = 0;
-        while (total_read < current_file_bytes_) {
-            std::size_t to_read = std::min(sizeof(buf), current_file_bytes_ - total_read);
-            std::size_t n = std::fread(buf, 1, to_read, file_);
-            if (n == 0) break;
-            sha256_update(sha_ctx, buf, n);
-            total_read += n;
-        }
-        sha256_final(sha_ctx, content_hash);
-        std::memcpy(footer.content_sha256, content_hash, 32);
-
-        std::fseek(file_, pos, SEEK_SET);
-    }
 
     std::vector<std::uint8_t> footer_buf;
     serialize_footer(footer_buf, footer);
@@ -249,7 +249,11 @@ std::string RawSegmentWriter::finalize_current() {
         return "Failed to flush";
     }
 
-    std::fclose(file_);
+    if (std::fclose(file_) != 0) {
+        file_ = nullptr;
+        state_ = WriterState::Failed;
+        return "Failed to close file";
+    }
     file_ = nullptr;
 
     // Rename partial to final
@@ -263,7 +267,7 @@ std::string RawSegmentWriter::finalize_current() {
 
     finalized_paths_.push_back(final_path);
 
-    // Reset content buffer for next segment
+    // Reset for next segment
     content_buffer_.clear();
     current_file_bytes_ = 0;
     record_count_ = 0;
@@ -293,7 +297,11 @@ std::string RawSegmentWriter::start_new_segment() {
         return "Cannot open new segment partial file";
     }
 
-    // Write header for new segment
+    // Initialize incremental content SHA-256 for new segment
+    sha256_init(content_sha_ctx_);
+    content_sha_initialized_ = true;
+
+    // Write header for new segment and feed into SHA-256
     content_buffer_.clear();
     serialize_header(content_buffer_, metadata_);
 
@@ -301,6 +309,7 @@ std::string RawSegmentWriter::start_new_segment() {
         state_ = WriterState::Failed;
         return "Failed to write header for new segment";
     }
+    sha256_update(content_sha_ctx_, content_buffer_.data(), content_buffer_.size());
     current_file_bytes_ = content_buffer_.size();
 
     state_ = WriterState::Open;

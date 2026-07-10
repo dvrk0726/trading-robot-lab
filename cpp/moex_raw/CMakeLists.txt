@@ -87,3 +87,11 @@ add_test(NAME test_json_report COMMAND test_json_report)
 add_executable(test_resource_safety tests/test_resource_safety.cpp)
 target_link_libraries(test_resource_safety PRIVATE moex_raw_lib)
 add_test(NAME test_resource_safety COMMAND test_resource_safety)
+
+add_executable(test_golden_record_layout tests/test_golden_record_layout.cpp)
+target_link_libraries(test_golden_record_layout PRIVATE moex_raw_lib)
+add_test(NAME test_golden_record_layout COMMAND test_golden_record_layout)
+
+add_executable(test_content_sha256_e2e tests/test_content_sha256_e2e.cpp)
+target_link_libraries(test_content_sha256_e2e PRIVATE moex_raw_lib)
+add_test(NAME test_content_sha256_e2e COMMAND test_content_sha256_e2e)

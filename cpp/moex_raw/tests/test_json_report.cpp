@@ -4,7 +4,7 @@
 
 #include "moex_raw/raw_report.hpp"
 #include "moex_raw/raw_types.hpp"
-#include <cassert>
+#include "test_check.hpp"
 #include <iostream>
 #include <sstream>
 
@@ -32,18 +32,18 @@ int main() {
         report.overall_status = "valid";
 
         auto json = generate_json_report(report);
-        assert(json.find("\"schema_version\"") != std::string::npos);
-        assert(json.find("\"tool_version\"") != std::string::npos);
-        assert(json.find("\"operation\"") != std::string::npos);
-        assert(json.find("\"session_id\"") != std::string::npos);
-        assert(json.find("\"feed_group\"") != std::string::npos);
-        assert(json.find("\"endpoint_role\"") != std::string::npos);
-        assert(json.find("\"stream_key\"") != std::string::npos);
-        assert(json.find("\"segment_indexes\"") != std::string::npos);
-        assert(json.find("\"record_count\"") != std::string::npos);
-        assert(json.find("\"replay_sha256\"") != std::string::npos);
-        assert(json.find("\"overall_status\"") != std::string::npos);
-        assert(json.find("\"issues\"") != std::string::npos);
+        CHECK(json.find("\"schema_version\"") != std::string::npos);
+        CHECK(json.find("\"tool_version\"") != std::string::npos);
+        CHECK(json.find("\"operation\"") != std::string::npos);
+        CHECK(json.find("\"session_id\"") != std::string::npos);
+        CHECK(json.find("\"feed_group\"") != std::string::npos);
+        CHECK(json.find("\"endpoint_role\"") != std::string::npos);
+        CHECK(json.find("\"stream_key\"") != std::string::npos);
+        CHECK(json.find("\"segment_indexes\"") != std::string::npos);
+        CHECK(json.find("\"record_count\"") != std::string::npos);
+        CHECK(json.find("\"replay_sha256\"") != std::string::npos);
+        CHECK(json.find("\"overall_status\"") != std::string::npos);
+        CHECK(json.find("\"issues\"") != std::string::npos);
     }
 
     // Issues in JSON
@@ -54,10 +54,10 @@ int main() {
         report.overall_status = "invalid";
 
         auto json = generate_json_report(report);
-        assert(json.find("TEST_ERR") != std::string::npos);
-        assert(json.find("TEST_WARN") != std::string::npos);
-        assert(json.find("error") != std::string::npos);
-        assert(json.find("warning") != std::string::npos);
+        CHECK(json.find("TEST_ERR") != std::string::npos);
+        CHECK(json.find("TEST_WARN") != std::string::npos);
+        CHECK(json.find("error") != std::string::npos);
+        CHECK(json.find("warning") != std::string::npos);
     }
 
     // Text report
@@ -68,12 +68,12 @@ int main() {
         report.record_count = 42;
 
         auto text = generate_text_report(report);
-        assert(text.find("inspect") != std::string::npos);
-        assert(text.find("valid") != std::string::npos);
-        assert(text.find("42") != std::string::npos);
+        CHECK(text.find("inspect") != std::string::npos);
+        CHECK(text.find("valid") != std::string::npos);
+        CHECK(text.find("42") != std::string::npos);
     }
 
-    // No payload bytes in report
+    // No raw packet dumps in report
     {
         RawSegmentReport report;
         report.operation = "inspect";
@@ -81,8 +81,9 @@ int main() {
 
         auto json = generate_json_report(report);
         // Should not contain raw packet dumps
-        assert(json.find("payload_bytes") == std::string::npos);
-        assert(json.find("raw_dump") == std::string::npos);
+        CHECK(json.find("raw_dump") == std::string::npos);
+        CHECK(json.find("payload_dump") == std::string::npos);
+        CHECK(json.find("packet_hex") == std::string::npos);
     }
 
     // Deterministic JSON key order
@@ -95,7 +96,7 @@ int main() {
 
         auto json1 = generate_json_report(report);
         auto json2 = generate_json_report(report);
-        assert(json1 == json2);
+        CHECK(json1 == json2);
     }
 
     std::cout << "test_json_report: ALL PASSED\n";

@@ -5,7 +5,7 @@
 #include "moex_raw/raw_types.hpp"
 #include "moex_raw/endian.hpp"
 #include "moex_raw/sha256.hpp"
-#include <cassert>
+#include "test_check.hpp"
 #include <iostream>
 #include <cstring>
 
@@ -44,19 +44,19 @@ int main() {
         serialize_header(buf, meta);
 
         // Magic
-        assert(buf.size() >= 8);
-        assert(std::memcmp(buf.data(), kMagicRaw, 8) == 0);
+        CHECK(buf.size() >= 8);
+        CHECK(std::memcmp(buf.data(), kMagicRaw, 8) == 0);
 
         // Version
-        assert(read_u16_le(buf.data() + 8) == 1);
+        CHECK(read_u16_le(buf.data() + 8) == 1);
 
         // Header size
         std::uint32_t header_size = read_u32_le(buf.data() + 10);
-        assert(header_size == buf.size());
-        assert(header_size <= kMaxHeaderSize);
+        CHECK(header_size == buf.size());
+        CHECK(header_size <= kMaxHeaderSize);
 
         // Format flags
-        assert(read_u32_le(buf.data() + 14) == 0);
+        CHECK(read_u32_le(buf.data() + 14) == 0);
     }
 
     // Positive: deserialize round-trip
@@ -68,21 +68,21 @@ int main() {
         RawSegmentMetadata out;
         std::size_t header_size = 0;
         std::vector<RawValidationIssue> issues;
-        assert(deserialize_header(buf.data(), buf.size(), out, header_size, issues));
+        CHECK(deserialize_header(buf.data(), buf.size(), out, header_size, issues));
 
-        assert(std::memcmp(out.session.session_id, meta.session.session_id, 16) == 0);
-        assert(out.segment_index == meta.segment_index);
-        assert(out.start_capture_index == meta.start_capture_index);
-        assert(out.created_utc_ns == meta.created_utc_ns);
-        assert(out.source.clock_domain == meta.source.clock_domain);
-        assert(out.source.transport == meta.source.transport);
-        assert(out.source.source_side == meta.source.source_side);
-        assert(out.source.source_id == meta.source.source_id);
-        assert(out.source.channel_id == meta.source.channel_id);
-        assert(std::memcmp(out.source.configuration_sha256, meta.source.configuration_sha256, 32) == 0);
-        assert(out.session.feed_group == meta.session.feed_group);
-        assert(out.session.endpoint_role == meta.session.endpoint_role);
-        assert(out.session.source_label == meta.session.source_label);
+        CHECK(std::memcmp(out.session.session_id, meta.session.session_id, 16) == 0);
+        CHECK(out.segment_index == meta.segment_index);
+        CHECK(out.start_capture_index == meta.start_capture_index);
+        CHECK(out.created_utc_ns == meta.created_utc_ns);
+        CHECK(out.source.clock_domain == meta.source.clock_domain);
+        CHECK(out.source.transport == meta.source.transport);
+        CHECK(out.source.source_side == meta.source.source_side);
+        CHECK(out.source.source_id == meta.source.source_id);
+        CHECK(out.source.channel_id == meta.source.channel_id);
+        CHECK(std::memcmp(out.source.configuration_sha256, meta.source.configuration_sha256, 32) == 0);
+        CHECK(out.session.feed_group == meta.session.feed_group);
+        CHECK(out.session.endpoint_role == meta.session.endpoint_role);
+        CHECK(out.session.source_label == meta.session.source_label);
     }
 
     // Positive: repeated serialization is byte-identical
@@ -91,7 +91,7 @@ int main() {
         std::vector<std::uint8_t> buf1, buf2;
         serialize_header(buf1, meta);
         serialize_header(buf2, meta);
-        assert(buf1 == buf2);
+        CHECK(buf1 == buf2);
     }
 
     // Negative: all-zero session ID
@@ -104,7 +104,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: zero created_utc_ns
@@ -117,7 +117,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: zero source_id
@@ -130,7 +130,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: zero channel_id
@@ -143,7 +143,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: zero SHA-256
@@ -156,7 +156,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: empty feed_group
@@ -169,7 +169,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: wrong magic
@@ -182,7 +182,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: wrong version
@@ -195,7 +195,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: unsupported enum
@@ -208,7 +208,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Negative: non-zero reserved byte
@@ -216,13 +216,13 @@ int main() {
         auto meta = make_test_meta();
         std::vector<std::uint8_t> buf;
         serialize_header(buf, meta);
-        // Reserved byte is at offset 18+16+8+8+8+2 = 60 (after session_id, seg, start, created, clock, transport)
-        buf[60 + 2] = 1;  // reserved byte
+        // Reserved byte is at offset 18+16+8+8+8+1+1+1 = 61 (after session_id, seg, start, created, clock, transport, side)
+        buf[61] = 1;  // reserved byte
 
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), buf.size(), out, hs, issues));
     }
 
     // Truncated header
@@ -234,7 +234,7 @@ int main() {
         RawSegmentMetadata out;
         std::size_t hs = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_header(buf.data(), 10, out, hs, issues));
+        CHECK(!deserialize_header(buf.data(), 10, out, hs, issues));
     }
 
     // Header SHA-256 deterministic cross-platform check
@@ -243,13 +243,13 @@ int main() {
         std::vector<std::uint8_t> buf;
         serialize_header(buf, meta);
         std::string hex = sha256_hex(buf.data(), buf.size());
-        assert(!hex.empty());
-        assert(hex.size() == 64);
+        CHECK(!hex.empty());
+        CHECK(hex.size() == 64);
 
         // Same metadata gives same hash
         std::vector<std::uint8_t> buf2;
         serialize_header(buf2, meta);
-        assert(sha256_hex(buf2.data(), buf2.size()) == hex);
+        CHECK(sha256_hex(buf2.data(), buf2.size()) == hex);
     }
 
     std::cout << "test_header_contract: ALL PASSED\n";

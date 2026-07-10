@@ -5,7 +5,7 @@
 #include "moex_raw/raw_segment.hpp"
 #include "moex_raw/raw_types.hpp"
 #include "moex_raw/sha256.hpp"
-#include <cassert>
+#include "test_check.hpp"
 #include <iostream>
 #include <filesystem>
 
@@ -13,7 +13,10 @@ namespace fs = std::filesystem;
 
 static std::string temp_dir() {
     static int counter = 0;
-    auto dir = fs::temp_directory_path() / "moex_raw_test" / ("rotation_" + std::to_string(counter++));
+    auto base = fs::temp_directory_path() / "moex_raw_test";
+    auto dir = base / ("rotation_" + std::to_string(counter++));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
     fs::create_directories(dir);
     return dir.string();
 }
@@ -53,14 +56,14 @@ int main() {
             rec.capture_index = i;
             rec.capture_monotonic_ns = i;
             rec.payload = {static_cast<std::uint8_t>(i)};
-            assert(writer.append(rec).empty());
+            CHECK(writer.append(rec).empty());
         }
 
         // Finalize last segment
         writer.finalize();
 
         // Should have 3 segments (9 records / 3 per segment)
-        assert(writer.finalized_paths().size() == 3);
+        CHECK(writer.finalized_paths().size() == 3);
     }
 
     // Rotation preserves contiguous capture_index
@@ -81,7 +84,7 @@ int main() {
         }
         writer.finalize();
 
-        assert(writer.finalized_paths().size() == 3);
+        CHECK(writer.finalized_paths().size() == 3);
 
         // Validate each segment
         for (const auto& path : writer.finalized_paths()) {
@@ -89,7 +92,7 @@ int main() {
             RawFooter f;
             std::vector<RawValidationIssue> issues;
             std::string ch, fh;
-            assert(validate_segment(path, m, f, issues, ch, fh) == SegmentStatus::ValidFinalized);
+            CHECK(validate_segment(path, m, f, issues, ch, fh) == SegmentStatus::ValidFinalized);
         }
     }
 
@@ -98,10 +101,10 @@ int main() {
         std::uint8_t sid[16] = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,
                                  0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,0x10};
         auto name = canonical_filename(sid, 42, 7, 0);
-        assert(name.find("_src") != std::string::npos);
-        assert(name.find("_ch") != std::string::npos);
-        assert(name.find("_seg") != std::string::npos);
-        assert(name.find(".mxraw") != std::string::npos);
+        CHECK(name.find("_src") != std::string::npos);
+        CHECK(name.find("_ch") != std::string::npos);
+        CHECK(name.find("_seg") != std::string::npos);
+        CHECK(name.find(".mxraw") != std::string::npos);
     }
 
     // Parse segment index from filename
@@ -109,8 +112,8 @@ int main() {
         std::uint8_t sid[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
         auto name = canonical_filename(sid, 1, 1, 0xABCD);
         std::uint64_t parsed = 0;
-        assert(parse_segment_index_from_filename(name, parsed));
-        assert(parsed == 0xABCD);
+        CHECK(parse_segment_index_from_filename(name, parsed));
+        CHECK(parsed == 0xABCD);
     }
 
     // Identical input produces byte-identical files
@@ -137,18 +140,18 @@ int main() {
         w2.finalize();
 
         // Read both files and compare
-        assert(w1.finalized_paths().size() == 1);
-        assert(w2.finalized_paths().size() == 1);
+        CHECK(w1.finalized_paths().size() == 1);
+        CHECK(w2.finalized_paths().size() == 1);
 
         std::FILE* f1 = std::fopen(w1.finalized_paths()[0].c_str(), "rb");
         std::FILE* f2 = std::fopen(w2.finalized_paths()[0].c_str(), "rb");
-        assert(f1 && f2);
+        CHECK(f1 && f2);
 
         std::fseek(f1, 0, SEEK_END);
         std::fseek(f2, 0, SEEK_END);
         auto sz1 = std::ftell(f1);
         auto sz2 = std::ftell(f2);
-        assert(sz1 == sz2);
+        CHECK(sz1 == sz2);
 
         std::fseek(f1, 0, SEEK_SET);
         std::fseek(f2, 0, SEEK_SET);
@@ -157,7 +160,7 @@ int main() {
         std::fread(b2.data(), 1, sz2, f2);
         std::fclose(f1);
         std::fclose(f2);
-        assert(b1 == b2);
+        CHECK(b1 == b2);
     }
 
     std::cout << "test_rotation: ALL PASSED\n";

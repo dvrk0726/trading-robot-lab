@@ -6,7 +6,7 @@
 #include "moex_raw/endian.hpp"
 #include "moex_raw/crc32c.hpp"
 #include "moex_raw/sha256.hpp"
-#include <cassert>
+#include "test_check.hpp"
 #include <iostream>
 #include <cstring>
 
@@ -26,20 +26,20 @@ int main() {
         std::vector<std::uint8_t> buf;
         serialize_footer(buf, footer);
 
-        assert(buf.size() == kFooterSize);
-        assert(std::memcmp(buf.data(), kMagicEnd, 8) == 0);
-        assert(read_u32_le(buf.data() + 8) == kFooterSize);
-        assert(read_u32_le(buf.data() + 12) == 0);  // flags
+        CHECK(buf.size() == kFooterSize);
+        CHECK(std::memcmp(buf.data(), kMagicEnd, 8) == 0);
+        CHECK(read_u32_le(buf.data() + 8) == kFooterSize);
+        CHECK(read_u32_le(buf.data() + 12) == 0);  // flags
 
         RawFooter out;
         std::vector<RawValidationIssue> issues;
-        assert(deserialize_footer(buf.data(), buf.size(), out, issues));
-        assert(out.record_count == 5);
-        assert(out.first_capture_index == 0);
-        assert(out.last_capture_index == 4);
-        assert(out.total_payload_bytes == 320);
-        assert(out.data_bytes_before_footer == 1024);
-        assert(std::memcmp(out.content_sha256, footer.content_sha256, 32) == 0);
+        CHECK(deserialize_footer(buf.data(), buf.size(), out, issues));
+        CHECK(out.record_count == 5);
+        CHECK(out.first_capture_index == 0);
+        CHECK(out.last_capture_index == 4);
+        CHECK(out.total_payload_bytes == 320);
+        CHECK(out.data_bytes_before_footer == 1024);
+        CHECK(std::memcmp(out.content_sha256, footer.content_sha256, 32) == 0);
     }
 
     // Positive: footer CRC32C over first 88 bytes
@@ -52,7 +52,7 @@ int main() {
         // Verify CRC is correct
         std::uint32_t computed = crc32c(buf.data(), 88);
         std::uint32_t stored = read_u32_le(buf.data() + 88);
-        assert(computed == stored);
+        CHECK(computed == stored);
     }
 
     // Negative: wrong footer magic
@@ -64,7 +64,7 @@ int main() {
 
         RawFooter out;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_footer(buf.data(), buf.size(), out, issues));
+        CHECK(!deserialize_footer(buf.data(), buf.size(), out, issues));
     }
 
     // Negative: wrong footer size
@@ -76,7 +76,7 @@ int main() {
 
         RawFooter out;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_footer(buf.data(), buf.size(), out, issues));
+        CHECK(!deserialize_footer(buf.data(), buf.size(), out, issues));
     }
 
     // Negative: non-zero footer flags
@@ -88,7 +88,7 @@ int main() {
 
         RawFooter out;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_footer(buf.data(), buf.size(), out, issues));
+        CHECK(!deserialize_footer(buf.data(), buf.size(), out, issues));
     }
 
     // Negative: wrong footer CRC
@@ -100,7 +100,7 @@ int main() {
 
         RawFooter out;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_footer(buf.data(), buf.size(), out, issues));
+        CHECK(!deserialize_footer(buf.data(), buf.size(), out, issues));
     }
 
     // Negative: truncated footer
@@ -108,7 +108,7 @@ int main() {
         std::vector<std::uint8_t> buf(50, 0);
         RawFooter out;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_footer(buf.data(), buf.size(), out, issues));
+        CHECK(!deserialize_footer(buf.data(), buf.size(), out, issues));
     }
 
     std::cout << "test_footer_validation: ALL PASSED\n";

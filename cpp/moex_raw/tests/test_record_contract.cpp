@@ -5,7 +5,7 @@
 #include "moex_raw/raw_types.hpp"
 #include "moex_raw/endian.hpp"
 #include "moex_raw/crc32c.hpp"
-#include <cassert>
+#include "test_check.hpp"
 #include <iostream>
 #include <cstring>
 
@@ -23,13 +23,13 @@ int main() {
 
         std::vector<std::uint8_t> buf;
         serialize_record(buf, rec);
-        assert(buf.size() == kRecordHeaderSize + 4);
+        CHECK(buf.size() == kRecordHeaderSize + 4);
 
-        assert(std::memcmp(buf.data(), kMagicRec, 4) == 0);
-        assert(read_u16_le(buf.data() + 4) == kRecordHeaderSize);
-        assert(read_u32_le(buf.data() + 8) == kRecordHeaderSize + 4);
-        assert(read_u32_le(buf.data() + 36) == 0);
-        assert(read_u32_le(buf.data() + 40) == 0);
+        CHECK(std::memcmp(buf.data(), kMagicRec, 4) == 0);
+        CHECK(read_u16_le(buf.data() + 4) == kRecordHeaderSize);
+        CHECK(read_u32_le(buf.data() + 8) == kRecordHeaderSize + 4);
+        CHECK(read_u32_le(buf.data() + 36) == 0);
+        CHECK(read_u32_le(buf.data() + 40) == 0);
     }
 
     // Positive: normal payload round-trip
@@ -47,12 +47,12 @@ int main() {
         RawPacketRecord out;
         std::size_t total_size = 0;
         std::vector<RawValidationIssue> issues;
-        assert(deserialize_record_header(buf.data(), buf.size(), out, total_size, issues));
-        assert(out.capture_index == 42);
-        assert(out.capture_utc_ns == 1700000000000000000ULL);
-        assert(out.capture_monotonic_ns == 1000000);
-        assert(out.payload == rec.payload);
-        assert(total_size == buf.size());
+        CHECK(deserialize_record_header(buf.data(), buf.size(), out, total_size, issues));
+        CHECK(out.capture_index == 42);
+        CHECK(out.capture_utc_ns == 1700000000000000000ULL);
+        CHECK(out.capture_monotonic_ns == 1000000);
+        CHECK(out.payload == rec.payload);
+        CHECK(total_size == buf.size());
     }
 
     // Positive: exact payload bytes preserved
@@ -70,11 +70,11 @@ int main() {
         RawPacketRecord out;
         std::size_t total_size = 0;
         std::vector<RawValidationIssue> issues;
-        assert(deserialize_record_header(buf.data(), buf.size(), out, total_size, issues));
-        assert(out.payload[0] == 0x00);
-        assert(out.payload[1] == 0xFF);
-        assert(out.payload[2] == 0x00);
-        assert(out.payload[3] == 0xFF);
+        CHECK(deserialize_record_header(buf.data(), buf.size(), out, total_size, issues));
+        CHECK(out.payload[0] == 0x00);
+        CHECK(out.payload[1] == 0xFF);
+        CHECK(out.payload[2] == 0x00);
+        CHECK(out.payload[3] == 0xFF);
     }
 
     // Positive: record_size = 44 + payload_size + 4
@@ -88,7 +88,7 @@ int main() {
 
         std::vector<std::uint8_t> buf;
         serialize_record(buf, rec);
-        assert(read_u32_le(buf.data() + 8) == 44 + 100 + 4);
+        CHECK(read_u32_le(buf.data() + 8) == 44 + 100 + 4);
     }
 
     // Negative: wrong record magic
@@ -102,7 +102,7 @@ int main() {
         RawPacketRecord out;
         std::size_t ts = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
+        CHECK(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
         (void)ts;
     }
 
@@ -117,7 +117,7 @@ int main() {
         RawPacketRecord out;
         std::size_t ts = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
+        CHECK(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
         (void)ts;
     }
 
@@ -132,7 +132,7 @@ int main() {
         RawPacketRecord out;
         std::size_t ts = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
+        CHECK(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
         (void)ts;
     }
 
@@ -142,7 +142,7 @@ int main() {
         RawPacketRecord out;
         std::size_t ts = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
+        CHECK(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
         (void)ts;
     }
 
@@ -157,7 +157,7 @@ int main() {
         RawPacketRecord out;
         std::size_t ts = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
+        CHECK(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
         (void)ts;
     }
 
@@ -172,12 +172,12 @@ int main() {
         RawPacketRecord out;
         std::size_t ts = 0;
         std::vector<RawValidationIssue> issues;
-        assert(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
+        CHECK(!deserialize_record_header(buf.data(), buf.size(), out, ts, issues));
         (void)ts;
     }
 
-    // Max payload constant
-    assert(kMaxPayloadSize == 1024 * 1024);
+    // Max payload constant (compile-time check)
+    static_assert(kMaxPayloadSize == 1024 * 1024, "kMaxPayloadSize must be 1 MiB");
 
     std::cout << "test_record_contract: ALL PASSED\n";
     return 0;

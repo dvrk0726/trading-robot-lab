@@ -6,7 +6,7 @@
 #include "moex_raw/raw_segment.hpp"
 #include "moex_raw/raw_types.hpp"
 #include "moex_raw/sha256.hpp"
-#include <cassert>
+#include "test_check.hpp"
 #include <iostream>
 #include <filesystem>
 #include <cstring>
@@ -15,7 +15,10 @@ namespace fs = std::filesystem;
 
 static std::string temp_dir() {
     static int counter = 0;
-    auto dir = fs::temp_directory_path() / "moex_raw_test" / ("replay_" + std::to_string(counter++));
+    auto base = fs::temp_directory_path() / "moex_raw_test";
+    auto dir = base / ("replay_" + std::to_string(counter++));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
     fs::create_directories(dir);
     return dir.string();
 }
@@ -81,9 +84,9 @@ int main() {
                 return true;
             });
 
-        assert(result.status == ReplayStatus::Ok);
-        assert(callback_count == 9);
-        assert(result.summary.record_count == 9);
+        CHECK(result.status == ReplayStatus::Ok);
+        CHECK(callback_count == 9);
+        CHECK(result.summary.record_count == 9);
     }
 
     // Positive: callback order equals capture_index order
@@ -112,7 +115,7 @@ int main() {
         replay_stream(paths, metas[0],
             [&](const RawSegmentMetadata&, const RawPacketRecord& rec) -> bool {
                 if (!first) {
-                    assert(rec.capture_index == prev_index + 1);
+                    CHECK(rec.capture_index == prev_index + 1);
                 }
                 prev_index = rec.capture_index;
                 first = false;
@@ -147,7 +150,7 @@ int main() {
                 return true;
             });
 
-        assert(received_payload == rec.payload);
+        CHECK(received_payload == rec.payload);
     }
 
     // Positive: replay_sha256 deterministic
@@ -172,8 +175,8 @@ int main() {
 
         auto digest1 = compute_replay_sha256(meta, records);
         auto digest2 = compute_replay_sha256(meta, records);
-        assert(!digest1.empty());
-        assert(digest1 == digest2);
+        CHECK(!digest1.empty());
+        CHECK(digest1 == digest2);
     }
 
     // Positive: changing payload changes digest
@@ -188,7 +191,7 @@ int main() {
         r1.push_back(rec1);
         r2.push_back(rec2);
 
-        assert(compute_replay_sha256(meta, r1) != compute_replay_sha256(meta, r2));
+        CHECK(compute_replay_sha256(meta, r1) != compute_replay_sha256(meta, r2));
     }
 
     // Positive: changing rotation limits does NOT change replay_sha256
@@ -204,7 +207,7 @@ int main() {
 
         auto digest = compute_replay_sha256(meta, records);
         // Digest is computed from metadata + records, not segment boundaries
-        assert(!digest.empty());
+        CHECK(!digest.empty());
     }
 
     // Positive: callback-requested stop returns aborted status
@@ -235,8 +238,8 @@ int main() {
                 return count < 3;  // stop after 3
             });
 
-        assert(result.status == ReplayStatus::Aborted);
-        assert(count == 3);
+        CHECK(result.status == ReplayStatus::Aborted);
+        CHECK(count == 3);
     }
 
     // Independent MXREPLAY1 framing test
@@ -253,7 +256,7 @@ int main() {
         records.push_back(rec);
 
         auto digest = compute_replay_sha256(meta, records);
-        assert(digest.size() == 64);  // hex SHA-256
+        CHECK(digest.size() == 64);  // hex SHA-256
     }
 
     std::cout << "test_replay: ALL PASSED\n";
