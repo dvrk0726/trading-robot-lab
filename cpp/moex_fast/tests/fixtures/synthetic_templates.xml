@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="29" name="OrdersLogMessage">
+    <string name="ApplVerID" id="1128"><constant>9</constant></string>
+    <string name="MessageType" id="35"><constant>X</constant></string>
+    <string name="SenderCompID" id="49"><constant>SYNTH</constant></string>
+    <uInt32 name="MsgSeqNum" id="34" presence="mandatory"/>
+    <uInt64 name="SendingTime" id="52" presence="mandatory"/>
+    <uInt32 name="LastFragment" id="893" presence="mandatory"/>
+    <sequence name="MDEntries">
+      <length name="NoMDEntries" id="268"/>
+      <uInt32 name="MDUpdateAction" id="279" presence="mandatory"/>
+      <string name="MDEntryType" id="269" presence="mandatory"/>
+      <uInt64 name="MDEntryID" id="278" presence="optional"/>
+      <uInt32 name="SecurityID" id="48" presence="optional"/>
+      <string name="SecurityIDSource" id="22"><constant>8</constant></string>
+      <uInt32 name="RptSeq" id="83" presence="optional"/>
+      <uInt32 name="MDEntryDate" id="272" presence="optional"/>
+      <uInt32 name="MDEntryTime" id="273" presence="mandatory"/>
+      <decimal name="MDEntryPx" id="270" presence="optional"/>
+      <uInt32 name="MDEntrySize" id="271" presence="optional"/>
+      <decimal name="LastPx" id="31" presence="optional"/>
+      <uInt32 name="LastQty" id="32" presence="optional"/>
+      <uInt32 name="TradeID" id="1003" presence="optional"/>
+      <uInt32 name="ExchangeTradingSessionID" id="5842" presence="optional"/>
+      <uInt64 name="MDFlags" id="20017" presence="optional"/>
+      <uInt64 name="MDFlags2" id="20050" presence="optional"/>
+      <uInt32 name="Revision" id="20018" presence="optional"/>
+    </sequence>
+  </template>
+
+  <template id="30" name="BookMessage">
+    <string name="ApplVerID" id="1128"><constant>9</constant></string>
+    <string name="MessageType" id="35"><constant>W</constant></string>
+    <string name="SenderCompID" id="49"><constant>SYNTH</constant></string>
+    <uInt32 name="MsgSeqNum" id="34" presence="mandatory"/>
+    <uInt64 name="SendingTime" id="52" presence="mandatory"/>
+    <uInt32 name="LastMsgSeqNumProcessed" id="369" presence="mandatory"/>
+    <uInt32 name="RptSeq" id="83" presence="optional"/>
+    <uInt32 name="LastFragment" id="893" presence="mandatory"/>
+    <uInt32 name="RouteFirst" id="7944" presence="mandatory"/>
+    <uInt32 name="ExchangeTradingSessionID" id="5842" presence="mandatory"/>
+    <uInt32 name="SecurityID" id="48" presence="optional"/>
+    <string name="SecurityIDSource" id="22"><constant>8</constant></string>
+    <sequence name="MDEntries">
+      <length name="NoMDEntries" id="268"/>
+      <string name="MDEntryType" id="269" presence="mandatory"/>
+      <uInt64 name="MDEntryID" id="278" presence="optional"/>
+      <uInt32 name="MDEntryDate" id="272" presence="optional"/>
+      <uInt32 name="MDEntryTime" id="273" presence="mandatory"/>
+      <decimal name="MDEntryPx" id="270" presence="optional"/>
+      <uInt32 name="MDEntrySize" id="271" presence="optional"/>
+      <uInt32 name="TradeID" id="1003" presence="optional"/>
+      <uInt64 name="MDFlags" id="20017" presence="optional"/>
+      <uInt64 name="MDFlags2" id="20050" presence="optional"/>
+    </sequence>
+  </template>
+
+  <template id="31" name="DefaultIncrementalRefreshMessage">
+    <string name="ApplVerID" id="1128"><constant>9</constant></string>
+    <string name="MessageType" id="35"><constant>X</constant></string>
+    <string name="SenderCompID" id="49"><constant>SYNTH</constant></string>
+    <uInt32 name="MsgSeqNum" id="34" presence="mandatory"/>
+    <uInt64 name="SendingTime" id="52" presence="mandatory"/>
+    <uInt32 name="LastFragment" id="893" presence="mandatory"/>
+    <sequence name="MDEntryGroup">
+      <length name="NoMDEntries" id="268"/>
+      <uInt32 name="MDUpdateAction" id="279" presence="mandatory"/>
+      <string name="MDEntryType" id="269" presence="mandatory"/>
+      <uInt32 name="SecurityID" id="48" presence="mandatory"/>
+    </sequence>
+  </template>
+
+  <template id="32" name="DefaultSnapshotMessage">
+    <string name="ApplVerID" id="1128"><constant>9</constant></string>
+    <string name="MessageType" id="35"><constant>W</constant></string>
+    <string name="SenderCompID" id="49"><constant>SYNTH</constant></string>
+    <uInt32 name="MsgSeqNum" id="34" presence="mandatory"/>
+    <uInt64 name="SendingTime" id="52" presence="mandatory"/>
+    <uInt32 name="LastMsgSeqNumProcessed" id="369" presence="mandatory"/>
+    <uInt32 name="RptSeq" id="83" presence="mandatory"/>
+    <uInt32 name="LastFragment" id="893" presence="mandatory"/>
+    <uInt32 name="SecurityID" id="48" presence="mandatory"/>
+  </template>
+
+  <template id="40" name="SecurityDefinition">
+    <string name="ApplVerID" id="1128"><constant>9</constant></string>
+    <string name="MessageType" id="35"><constant>d</constant></string>
+    <string name="SenderCompID" id="49"><constant>SYNTH</constant></string>
+    <uInt32 name="MsgSeqNum" id="34" presence="mandatory"/>
+    <uInt64 name="SendingTime" id="52" presence="mandatory"/>
+    <uInt32 name="SecurityID" id="48" presence="mandatory"/>
+    <string name="SecurityIDSource" id="22"><constant>8</constant></string>
+    <string name="Symbol" id="55" presence="optional"/>
+    <string name="SecurityDesc" id="107" presence="optional"/>
+  </template>
+
+  <template id="45" name="SecurityGroupStatus">
+    <string name="ApplVerID" id="1128"><constant>9</constant></string>
+    <string name="MessageType" id="35"><constant>Unknown</constant></string>
+    <string name="SenderCompID" id="49"><constant>SYNTH</constant></string>
+    <uInt32 name="MsgSeqNum" id="34" presence="mandatory"/>
+    <uInt64 name="SendingTime" id="52" presence="mandatory"/>
+    <string name="TradSesStatus" id="340" presence="mandatory"/>
+  </template>
+
+  <template id="46" name="TradingSessionStatus">
+    <string name="ApplVerID" id="1128"><constant>9</constant></string>
+    <string name="MessageType" id="35"><constant>h</constant></string>
+    <string name="SenderCompID" id="49"><constant>SYNTH</constant></string>
+    <uInt32 name="MsgSeqNum" id="34" presence="mandatory"/>
+    <uInt64 name="SendingTime" id="52" presence="mandatory"/>
+    <string name="TradSesStatus" id="340" presence="mandatory"/>
+    <uInt32 name="TradingSessionID" id="336" presence="mandatory"/>
+  </template>
+</templates>

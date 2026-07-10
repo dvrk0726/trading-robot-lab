@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration type="Test" label="Synthetic Test System" marketId="SYNTH">
+
+  <group name="FUT-INFO" marketId="D">
+    <feed type="Instrument Replay">
+      <source ip="192.0.2.1" port="48011" protocol="UDP/IP" multicastGroup="233.0.0.11" feed="A"/>
+      <source ip="192.0.2.2" port="49011" protocol="UDP/IP" multicastGroup="233.0.0.12" feed="B"/>
+    </feed>
+    <feed type="Instrument Incremental">
+      <source ip="192.0.2.1" port="48012" protocol="UDP/IP" multicastGroup="233.0.0.13" feed="A"/>
+      <source ip="192.0.2.2" port="49012" protocol="UDP/IP" multicastGroup="233.0.0.14" feed="B"/>
+    </feed>
+  </group>
+
+  <group name="ORDERS-LOG" marketId="D">
+    <feed type="Incremental">
+      <source ip="192.0.2.1" port="48040" protocol="UDP/IP" multicastGroup="233.0.0.40" feed="A"/>
+      <source ip="192.0.2.2" port="49040" protocol="UDP/IP" multicastGroup="233.0.0.41" feed="B"/>
+    </feed>
+    <feed type="Snapshot">
+      <source ip="192.0.2.1" port="48041" protocol="UDP/IP" multicastGroup="233.0.0.42" feed="A"/>
+      <source ip="192.0.2.2" port="49041" protocol="UDP/IP" multicastGroup="233.0.0.43" feed="B"/>
+    </feed>
+    <feed type="Historical Replay">
+      <source ip="192.0.2.1" port="8022" protocol="TCP/IP"/>
+      <source ip="192.0.2.2" port="8022" protocol="TCP/IP"/>
+    </feed>
+  </group>
+
+</configuration>
