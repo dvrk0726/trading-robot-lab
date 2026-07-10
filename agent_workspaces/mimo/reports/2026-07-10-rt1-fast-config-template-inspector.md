@@ -3,8 +3,8 @@
 Date: 2026-07-10 (Round 6 corrections)  
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
-Head: (pending — will be set after push)  
-CI run: (pending — will be set after CI)  
+Head: `f4ecf9a1478bbdbc7a8b7931caa82f7bff9b8e90`  
+CI run: (pending)  
 Executor: MiMo Code
 
 ## Summary

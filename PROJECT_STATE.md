@@ -116,7 +116,7 @@ Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
 Status: READY_FOR_REVIEW (Round 6 corrections applied)
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Head: (pending push)
+Head: f4ecf9a (code: f4ecf9a1478bbdbc7a8b7931caa82f7bff9b8e90)
 CI run: (pending)
 Review cycle: Round 6 CHANGES_REQUIRED → Round 6 corrections applied
 ```
