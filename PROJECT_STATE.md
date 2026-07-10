@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-1 Round 4 corrections applied, READY_FOR_REVIEW
+Статус: RT-1 Round 5 corrections applied, READY_FOR_REVIEW
 
 ## Архитектура
 
@@ -113,12 +113,12 @@ Main protection: Option B active.
 
 ```text
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: READY_FOR_REVIEW (Round 4 corrections applied)
+Status: READY_FOR_REVIEW (Round 5 corrections applied)
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Head: a24cde2ca1f75b0c793897476611c102658c63dc
-CI run #18: all 5 jobs green
-Review cycle: Round 4 CHANGES_REQUIRED → Round 4 corrections applied
+Head: 1d8b12a703ba4860262210ff430cb7ff10c5d2f6
+CI run #20: all 5 jobs green (pending push)
+Review cycle: Round 5 CHANGES_REQUIRED → Round 5 corrections applied
 ```
 
 RT-1 task package:
@@ -150,9 +150,9 @@ No second MiMo task starts while the previous task is in progress, review or cha
 ## Immediate next actions
 
 ```text
-1. Round 4 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
-2. Commit a24cde2ca1f75b0c793897476611c102658c63dc.
-3. CI run #18: all 5 jobs green (Windows 6/6, Linux 6/6, QSH 20/20, Python 3/3, hygiene PASS).
+1. Round 5 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
+2. Commit 1d8b12a703ba4860262210ff430cb7ff10c5d2f6.
+3. CI run #20: all 5 jobs green (Windows 6/6, Linux 6/6, QSH 20/20, Python 3/3, hygiene PASS).
 4. Issue #14 moved to READY_FOR_REVIEW.
 5. Stop — do not merge, do not start RT-2.
 ```
