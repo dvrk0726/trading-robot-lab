@@ -62,14 +62,12 @@ test-access questionnaire sent.
 Status:
 
 ```text
-IMPLEMENTED IN PR / OWNER REVIEW GATE
-Issue #1
-Pull Request #15
-RT-1 blocked
-Merge not performed
+DONE
+Issue #1: DONE
+Pull Request #15: merged (82077f6e54e439f27027301ac02813c018d380fc)
 ```
 
-Implemented result:
+Merged result:
 
 ```text
 permanent MiMo instruction;
@@ -88,51 +86,18 @@ current AI_CONTEXT/PROJECT_STATE/ROADMAP;
 main protection option guide.
 ```
 
-Verified full CI run #8:
-
-```text
-Repository hygiene: PASS
-Python tests and contracts: PASS
-C++ QSH M10X regression: PASS
-CTest inventory: exactly 20
-All 20 tests: PASS
-```
-
-Any later PR head must repeat these checks before merge.
-
-WF-1 remaining acceptance:
-
-```text
-current PR #15 head passes all required checks;
-Architecture/Review accepts final diff;
-Owner accepts process;
-Owner chooses main protection option;
-PR #15 merged manually;
-labels synchronized;
-auto-merge disabled;
-selected protection mode recorded;
-Issue #1 DONE.
-```
-
-Main protection options:
-
-```text
-A. Enable server-side ruleset/branch protection if available on the GitHub plan.
-B. Owner decides on upgrade or explicitly accepts temporary procedural protection.
-```
-
-No purchase or plan change is automatic. Procedural protection still requires branch, PR, CI, review, manual merge and no direct main work by MiMo.
-
-Until all WF-1 acceptance items are complete, Issue #14 remains `DRAFT`.
-
 ## RT-1 — FAST configuration/templates inspector
 
 Status:
 
 ```text
-DRAFT / specification complete / implementation not started
+READY_FOR_REVIEW (Round 8 corrections applied)
 Issue #14
-Blocked by WF-1
+Branch: feat/rt-1-fast-config-inspector
+PR: #16
+Head: 3e3e89e (3e3e89e7bbb55853da02a56c8e2edfa666a999b3)
+CI run: 30 (29097918074): all five jobs passed.
+Review cycle: Round 8 CHANGES_REQUIRED → Round 8 corrections applied
 ```
 
 Scope:
@@ -263,14 +228,12 @@ production remains disabled by default.
 ## Immediate sequence
 
 ```text
-1. Confirm final CI on current PR #15 head.
-2. Complete Architecture/Review and Owner review.
-3. Owner selects main protection option without automatic spending.
-4. Merge PR #15 manually only after acceptance.
-5. Synchronize labels and apply/record selected protection mode.
-6. Mark Issue #1 DONE.
-7. Move Issue #14 to READY_FOR_MIMO.
-8. Owner runs the universal MiMo command once.
-9. MiMo implements RT-1 in a separate branch and stops at PR.
-10. Review RT-1 before any RT-2 work.
+1. Round 8 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
+2. test_round6_explicit_130_on_ambiguous now creates its own fixture via write_r6_ambiguous_fixture() helper.
+3. All Round 6/7 tests verified independent — no order dependencies.
+4. Portable CLI test for invalid --profile retained only in test_cli.cpp.
+5. State files synchronized to Round 8 with implementation-commit/verified-CI evidence model.
+6. MiMo report: stale run 24 replaced, architecture test counts corrected (39 deterministic, 12 CLI).
+7. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
+8. Stop — do not merge, do not start RT-2.
 ```

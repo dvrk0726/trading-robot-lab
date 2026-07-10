@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <!-- FUT-INFO: futures definitions, one MarketDataGroup with all connection roles -->
+  <MarketDataGroup feedType="FUT-INFO" marketID="D" label="Futures defintion">
+    <connections>
+      <connection>
+        <type>Instrument Replay</type>
+        <protocol>UDP/IP</protocol>
+        <src-ip>192.0.2.1</src-ip>
+        <ip>233.0.0.11</ip>
+        <port>48011</port>
+        <feed>A</feed>
+      </connection>
+      <connection>
+        <type>Instrument Replay</type>
+        <protocol>UDP/IP</protocol>
+        <src-ip>192.0.2.2</src-ip>
+        <ip>233.0.0.12</ip>
+        <port>49011</port>
+        <feed>B</feed>
+      </connection>
+      <connection>
+        <type>Instrument Incremental</type>
+        <protocol>UDP/IP</protocol>
+        <src-ip>192.0.2.1</src-ip>
+        <ip>233.0.0.13</ip>
+        <port>48012</port>
+        <feed>A</feed>
+      </connection>
+      <connection>
+        <type>Instrument Incremental</type>
+        <protocol>UDP/IP</protocol>
+        <src-ip>192.0.2.2</src-ip>
+        <ip>233.0.0.14</ip>
+        <port>49012</port>
+        <feed>B</feed>
+      </connection>
+    </connections>
+  </MarketDataGroup>
+  <!-- ORDERS-LOG: full orders log, one MarketDataGroup with all connection roles -->
+  <MarketDataGroup feedType="ORDERS-LOG" marketID="D" label="Full orders log">
+    <connections>
+      <connection>
+        <type>Incremental</type>
+        <protocol>UDP/IP</protocol>
+        <src-ip>192.0.2.1</src-ip>
+        <ip>233.0.0.40</ip>
+        <port>48040</port>
+        <feed>A</feed>
+      </connection>
+      <connection>
+        <type>Incremental</type>
+        <protocol>UDP/IP</protocol>
+        <src-ip>192.0.2.2</src-ip>
+        <ip>233.0.0.41</ip>
+        <port>49040</port>
+        <feed>B</feed>
+      </connection>
+      <connection>
+        <type>Snapshot</type>
+        <protocol>UDP/IP</protocol>
+        <src-ip>192.0.2.1</src-ip>
+        <ip>233.0.0.42</ip>
+        <port>48041</port>
+        <feed>A</feed>
+      </connection>
+      <connection>
+        <type>Snapshot</type>
+        <protocol>UDP/IP</protocol>
+        <src-ip>192.0.2.2</src-ip>
+        <ip>233.0.0.43</ip>
+        <port>49041</port>
+        <feed>B</feed>
+      </connection>
+      <connection>
+        <type>Historical Replay</type>
+        <protocol>TCP/IP</protocol>
+        <src-ip>192.0.2.1</src-ip>
+        <ip>192.0.2.10</ip>
+        <ip>192.0.2.11</ip>
+        <port>8022</port>
+      </connection>
+    </connections>
+  </MarketDataGroup>
+</configuration>

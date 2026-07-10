@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: review and owner acceptance of workflow PR before RT-1
+Текущий gate: RT-1 Round 8 corrections applied, READY_FOR_REVIEW
 
 ## Назначение проекта
 
@@ -85,14 +85,13 @@ official owner-provided private artifacts.
 ## Текущий process gate
 
 ```text
-Issue #1: [ARCH] Establish MiMo branch, Pull Request and CI workflow
-Pull Request #15: chore: establish MiMo branch, Pull Request and CI workflow
-Branch: chore/issue-1-mimo-pr-workflow
-Merge: not performed
-RT-1: blocked
+Issue #1: DONE
+Pull Request #15: merged (82077f6e54e439f27027301ac02813c018d380fc)
+RT-1: READY_FOR_REVIEW after Round 4 corrections
+Protection: Option B active
 ```
 
-Workflow package включает:
+Workflow package (merged в main через PR #15):
 
 ```text
 permanent MiMo instruction;
@@ -110,45 +109,16 @@ no auto-merge/no MiMo merge;
 main branch protection decision guide.
 ```
 
-Полный CI run #8 для PR #15 подтвердил:
-
-```text
-Repository hygiene: PASS
-Python tests and contracts: PASS
-C++ QSH M10X regression: PASS
-Expected CTest inventory: exactly 20
-All 20 regression tests: PASS
-```
-
-Любой новый head commit PR должен повторно пройти те же checks перед merge.
-
-## Server-side защита main
-
-Для private repository availability branch protection/rulesets зависит от GitHub plan. Owner не покупает и не меняет plan автоматически.
-
-После принятия PR #15 Owner выбирает один вариант:
-
-```text
-A. Если функция доступна — включить ruleset/branch protection и required checks.
-B. Если функция недоступна — отдельно решить вопрос upgrade либо явно принять временное procedural limitation для private solo repository.
-```
-
-Даже при временном limitation обязательны feature branch, Pull Request, успешный CI, Architecture/Review, manual owner merge, no auto-merge и запрет direct main work для MiMo.
-
-Инструкция:
-
-```text
-docs/engineering/MAIN_BRANCH_PROTECTION.md
-```
-
 ## RT-1
 
 ```text
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: DRAFT
-Blocked by: Issue #1 / PR #15 acceptance
-Implementation: not started
-MiMo branch/commit/PR: none
+Status: READY_FOR_REVIEW (Round 8 corrections applied)
+Branch: feat/rt-1-fast-config-inspector
+PR: #16
+Head: 3e3e89e (3e3e89e7bbb55853da02a56c8e2edfa666a999b3)
+CI run: 30 (29097918074): all five jobs passed.
+Review cycle: Round 8 CHANGES_REQUIRED → Round 8 corrections applied
 ```
 
 Task package:
@@ -188,19 +158,6 @@ no QSH semantic changes;
 no strategy_ready weakening.
 ```
 
-RT-1 cannot move to `READY_FOR_MIMO` until:
-
-```text
-current head of PR #15 passes all checks;
-Architecture/Review accepts the diff;
-Owner accepts the workflow and branch-protection option;
-PR #15 is merged manually;
-canonical labels are synchronized;
-auto-merge remains disabled;
-Issue #1 is completed;
-Architecture/Review explicitly releases Issue #14.
-```
-
 ## AI workflow
 
 Authoritative process:
@@ -238,13 +195,12 @@ DONE
 ## Immediate actions
 
 ```text
-1. Confirm all checks on the current PR #15 head.
-2. Complete Architecture/Review of the final diff.
-3. Owner reviews and accepts or requests exact changes.
-4. Owner selects the branch-protection option without automatic spending.
-5. Merge PR #15 manually only after acceptance.
-6. Synchronize labels and apply the selected main protection mode.
-7. Mark Issue #1 DONE.
-8. Only then move Issue #14 to READY_FOR_MIMO.
-9. Run MiMo once for RT-1; MiMo stops at a new Pull Request.
+1. Round 8 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
+2. test_round6_explicit_130_on_ambiguous now creates its own fixture via write_r6_ambiguous_fixture() helper.
+3. All Round 6/7 tests verified independent — no order dependencies.
+4. Portable CLI test for invalid --profile retained only in test_cli.cpp.
+5. State files synchronized to Round 8 with implementation-commit/verified-CI evidence model.
+6. MiMo report: stale run 24 replaced, architecture test counts corrected (39 deterministic, 12 CLI).
+7. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
+8. Stop — do not merge, do not start RT-2.
 ```

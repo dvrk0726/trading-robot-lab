@@ -140,3 +140,44 @@ jobs:
 
       - name: Run all QSH M10X regression tests
         run: ctest --test-dir build/qsh_ingest -C Release --output-on-failure
+
+  cpp-moex-fast-inspector:
+    name: C++ MOEX FAST inspector Windows (6 tests)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure moex_fast with MSVC
+        run: cmake -S cpp/moex_fast -B build/moex_fast -A x64
+
+      - name: Build moex_fast and tests
+        run: cmake --build build/moex_fast --config Release --parallel 2
+
+      - name: Run all MOEX FAST inspector tests
+        run: ctest --test-dir build/moex_fast -C Release --output-on-failure
+
+  cpp-moex-fast-inspector-linux:
+    name: C++ MOEX FAST inspector Linux (6 tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure moex_fast with GCC
+        run: cmake -S cpp/moex_fast -B build/moex_fast -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build moex_fast and tests
+        run: cmake --build build/moex_fast --config Release --parallel 2
+
+      - name: Run all MOEX FAST inspector tests
+        run: ctest --test-dir build/moex_fast -C Release --output-on-failure

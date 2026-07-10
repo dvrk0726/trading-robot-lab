@@ -166,3 +166,23 @@ desktop.ini
 
 # MiMo local files
 .mimocode/
+
+# Generated test fixtures (created at runtime by tests)
+cpp/moex_fast/tests/fixtures/bad_*.xml
+cpp/moex_fast/tests/fixtures/neg_*.xml
+cpp/moex_fast/tests/fixtures/big_*.xml
+cpp/moex_fast/tests/fixtures/str_*.xml
+cpp/moex_fast/tests/fixtures/src_*.xml
+cpp/moex_fast/tests/fixtures/unknown_*.xml
+cpp/moex_fast/tests/fixtures/empty_*.xml
+cpp/moex_fast/tests/fixtures/no_*.xml
+cpp/moex_fast/tests/fixtures/dup_*.xml
+cpp/moex_fast/tests/fixtures/tcp_*.xml
+cpp/moex_fast/tests/fixtures/strict_*.xml
+cpp/moex_fast/tests/fixtures/truncated.xml
+cpp/moex_fast/tests/fixtures/invalid_case.xml
+cpp/moex_fast/tests/fixtures/hash_test_*.xml
+cpp/moex_fast/tests/fixtures/size_test.xml
+cpp/moex_fast/tests/fixtures/large_*.xml
+cpp/moex_fast/tests/fixtures/empty_file.xml
+cpp/moex_fast/tests/fixtures/test_cli_output.json
