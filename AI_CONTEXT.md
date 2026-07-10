@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-2 Round 4 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
+Текущий gate: RT-2 Round 7 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Назначение проекта
 
@@ -134,27 +134,31 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — Round 6 corrections complete
+## RT-2 — Round 7 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `c16abf4`
-CI #60 (run 29120669510): ALL GREEN (7/7 jobs)
+Implementation commit: `7f72647`
+CI #62 (run 29122599257): ALL GREEN (7/7 jobs)
 ```
 
-Round 6 corrections delivered:
+Round 7 corrections delivered:
 
 ```text
-scripted stage-aware IFileHandle with per-operation-type failure injection;
-preflight append/rotation validation before any state mutation;
-CLI cmd_synth pre-validation (records*segments, max timestamp overflow);
-UTC bounds fix: scan all segments for first/last non-zero UTC-valid timestamps;
-.mxraw.partial always returns Partial even with valid footer;
-concrete file path propagated to all low-level deserializer issues;
-strict JSON parser: rejects trailing, malformed, invalid escapes;
-end-to-end report tests verify real JSON values for single/multi-stream;
+stage-accurate fault injection: real short-header-write test (preconfigured before open);
+stage-aware reader fault injection for record-header, record-tail, content-hash, file-hash reads;
+seek failure at file-hash and record-scan stages;
+reader record-header/tail I/O failures return IoError (not Corrupt);
+real CLI end-to-end tests: single-file, one-stream, two-stream inspect JSON via moex-raw executable;
+strict partial/corrupt exit codes; synth overflow with empty output dir;
+invalid JSON output path; deterministic repeated JSON output; strict JSON parser on CLI output;
+UTC aggregation: ordered first/last non-zero UTC-valid timestamp (not min/max);
+fixture with numerically decreasing UTC values;
+checked cross-segment arithmetic: checked_add_u64 for segment_index + 1 and last_capture_index + 1;
+SEGMENT_INDEX_OVERFLOW and CAPTURE_INDEX_OVERFLOW issue codes;
+should_rotate() uses checked_add_u64; UINT64_MAX boundary tests;
 18/18 Release tests (Windows + Linux).
 ```
 
@@ -188,7 +192,7 @@ DONE
 ## Immediate actions
 
 ```text
-1. Owner reviews RT-2 Round 3 corrections in PR #20.
+1. Owner reviews RT-2 Round 7 corrections in PR #20.
 2. If accepted, merge PR #20.
 3. Move Issue #18 to DONE.
 4. Do not start RT-3 until RT-2 is DONE.

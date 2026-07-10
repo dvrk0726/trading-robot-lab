@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-2 Round 6 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
+Статус: RT-2 Round 7 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Архитектура
 
@@ -120,14 +120,14 @@ deterministic text/JSON reports;
 Windows/Linux Release-active tests.
 ```
 
-## RT-2 — Round 4 corrections complete
+## RT-2 — Round 7 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `d303d74` (code) / `395cfd4` (GCC fix)
-CI #53 (run 29115120530): ALL GREEN (7/7 jobs)
+Implementation commit: `7f72647`
+CI #62 (run 29122599257): ALL GREEN (7/7 jobs)
 ```
 
 Delivered:
@@ -163,13 +163,13 @@ Release-active CHECK macros (active under NDEBUG)
 Independent golden byte-vector test
 End-to-end content SHA-256 verification test
 Independent MXREPLAY1 golden digest test
-CI jobs for Windows/MSVC and Linux/GCC (16 tests each)
+CI jobs for Windows/MSVC and Linux/GCC (18 tests each)
 ```
 
 Test results:
 
 ```text
-RT-2:         16/16 tests passed (Windows Release)
+RT-2:         18/18 tests passed (Windows + Linux Release)
 RT-1:          6/6  tests passed (no regression)
 QSH/M10X:     20/20 tests passed (no regression)
 Python:         3/3  passed
@@ -209,7 +209,7 @@ DRAFT
 ## Immediate next actions
 
 ```text
-1. Owner reviews RT-2 Round 3 corrections in PR #20.
+1. Owner reviews RT-2 Round 7 corrections in PR #20.
 2. If accepted, merge PR #20.
 3. Move Issue #18 to DONE.
 4. Do not start RT-3 until RT-2 is DONE.
