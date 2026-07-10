@@ -9,15 +9,15 @@ Tests must:
 ```text
 run on Windows/MSVC and Linux/GCC;
 use synthetic/documentation-only metadata and payloads;
-create binary files in a temporary build directory;
-remove or isolate temporary files between cases;
+create binary files in a unique temporary build directory;
+clean or isolate files between cases;
 not depend on test order;
 not require network, administrator rights or external services;
 not commit generated .mxraw or .partial files;
 fail with clear diagnostics.
 ```
 
-Use deterministic caller-provided IDs, timestamps, hashes and seeds. No test may depend on wall clock, random_device, locale, host endianness or directory enumeration order.
+Use explicit deterministic IDs, timestamps, hashes and seeds. No test may depend on wall clock, `random_device`, locale, host endianness or directory enumeration order.
 
 ## 2. Serialization primitives
 
@@ -26,50 +26,75 @@ Required cases:
 ```text
 little-endian u16/u32/u64 exact bytes;
 read/write round-trip for every primitive;
-checked-add overflow rejected;
+checked addition/multiplication overflow rejected;
 bounded UTF-8 round-trip;
 invalid UTF-8 rejected;
 embedded NUL rejected;
 128-byte string accepted, 129-byte string rejected;
-CRC32C known vector "123456789" = 0xE3069283;
+CRC32C("") = 0x00000000;
+CRC32C("123456789") = 0xE3069283;
 SHA-256 known vectors retained/passed;
 unsupported enum rejected;
-unknown mandatory flags rejected;
-optional unknown flags reported.
+non-zero reserved byte rejected;
+non-zero format/footer flags rejected;
+record flag bits 1..15 rejected.
 ```
 
 No serializer test may use raw C++ struct dumps.
 
 ## 3. Deterministic header contract
 
-Create a fixed v1 metadata fixture in code and verify:
+Create one fixed v1 metadata fixture in code and verify:
 
 ```text
 magic bytes exactly `MXRAWV1\0`;
-format version and header size at documented offsets;
-all numeric values are little-endian;
-16-byte session id preserved;
-three SHA-256 fields preserved;
-logical feed/role/source strings preserved;
+format_version = 1;
+header_size equals exact serialized length and is <= 4096;
+format_flags = 0;
+all numeric fields are little-endian;
+16-byte non-zero session id preserved;
+segment/start indexes and created_utc_ns preserved;
+clock/transport/side enum byte values preserved;
+source_id and channel_id preserved;
+three non-zero SHA-256 values preserved;
+feed_group/endpoint_role/source_label framing preserved;
 repeated serialization is byte-identical;
 Windows and Linux produce the same expected header SHA-256.
 ```
 
-Hardcode at least one reviewed expected digest or exact byte vector so a writer and reader with the same bug cannot validate each other accidentally.
+Negative header cases:
+
+```text
+all-zero session id;
+zero created_utc_ns;
+zero source_id/channel_id;
+all-zero required SHA-256;
+empty feed_group or endpoint_role;
+wrong header_size;
+header_size above 4096;
+unsupported enum;
+invalid string length/UTF-8/NUL.
+```
+
+Hardcode at least one reviewed expected digest or exact byte vector so a writer and reader with the same defect cannot validate each other accidentally.
 
 ## 4. Packet record contract
 
 Required positive cases:
 
 ```text
+record magic exact bytes `REC1`;
+record_header_size = 44;
+zero-length payload with CRC32C = 0;
 single normal payload;
-minimum payload allowed by the selected v1 rule;
-maximum legal payload;
+maximum legal 1 MiB payload;
 exact payload bytes including 0x00 and 0xFF;
-utc_timestamp_valid on/off;
-non-decreasing equal monotonic timestamps accepted;
+utc_timestamp_valid off with capture_utc_ns ignored;
+utc_timestamp_valid on;
+equal/non-decreasing monotonic timestamps accepted;
 sequential capture_index values;
-record exact-boundary size.
+record_size = 44 + payload_size + 4;
+record fitting exact segment-byte boundary.
 ```
 
 Required negative cases:
@@ -77,7 +102,8 @@ Required negative cases:
 ```text
 payload above 1 MiB;
 wrong record magic;
-record_header_size too small/large;
+record_header_size not 44;
+unknown record flag bit;
 record_size smaller/larger than actual;
 payload_size inconsistent with record_size;
 payload CRC32C mismatch;
@@ -95,46 +121,50 @@ checked size arithmetic overflow.
 Test each state transition independently:
 
 ```text
-create -> open -> append -> finalize;
+Created -> Open -> append -> Finalized;
+Created/Open -> Failed;
 partial exists before finalize;
 final exists only after successful finalize;
-finalized segment cannot append;
+finalized segment cannot append or reopen;
 finalize twice rejected;
 finalize empty segment rejected;
 existing partial path rejected;
 existing final path rejected;
-failed record write does not advance capture_index;
-failed finalize leaves partial file and reports failure;
-writer destruction does not silently publish an unfinished partial;
-no implicit overwrite or delete.
+failed record write does not advance capture_index or totals;
+failed finalize leaves partial file and explicit failure;
+writer destruction never silently publishes unfinished partial;
+no implicit overwrite or delete;
+core API output is unchanged when wall clock/environment changes.
 ```
 
-Where filesystem fault injection is impractical, isolate file operations behind a narrow testable abstraction and simulate short write/flush/rename failure.
+Where filesystem fault injection is impractical, isolate file operations behind a narrow testable abstraction and simulate short write, flush, close and rename failures.
 
 ## 6. Footer and segment validation
 
 Positive validation:
 
 ```text
-correct footer magic/size;
+footer magic exact bytes `MXENDV1\0`;
+footer_size = 92;
+footer_flags = 0;
 record count and payload total match;
 first/last capture index match;
 data_bytes_before_footer exact;
-content_sha256 exact;
-footer CRC32C exact;
+content_sha256 exact over bytes before footer;
+footer CRC32C exact over first 88 footer bytes;
 whole-file SHA-256 deterministic;
 no bytes after footer.
 ```
 
-Mutation tests must modify one byte/field at a time and prove rejection:
+Mutation tests change one byte/field at a time and prove rejection:
 
 ```text
 wrong file magic;
 unsupported format version;
 impossible header size;
+invalid enum/reserved/flags;
 invalid string length/UTF-8;
-invalid enum or mandatory flag;
-wrong footer magic/size;
+wrong footer magic/size/flags;
 wrong record count;
 wrong first/last index;
 wrong payload/byte total;
@@ -142,10 +172,10 @@ wrong content SHA-256;
 wrong footer CRC32C;
 extra byte after footer;
 missing footer;
-truncation at header, record and footer boundaries.
+truncation at header, record, payload, record-checksum and footer boundaries.
 ```
 
-The validator must classify at least:
+Validator classifications must include:
 
 ```text
 valid finalized;
@@ -156,63 +186,84 @@ unsupported;
 I/O error.
 ```
 
-## 7. Deterministic rotation
+## 7. Deterministic naming and rotation
 
-Use small limits to force rotation.
+Verify canonical lowercase name:
+
+```text
+<session-id-32hex>_src<source-id-16hex>_ch<channel-id-16hex>_seg<segment-index-16hex>.mxraw
+```
 
 Required cases:
 
 ```text
+partial path appends `.partial`;
+uppercase/malformed/non-canonical names rejected or explicitly reported;
+content identity matches filename identity;
 rotation exactly at max_records;
 rotation before max_segment_bytes would be exceeded;
-record fitting exactly to byte boundary accepted;
+max_segment_bytes above 64 GiB rejected;
+limit too small for header + one record + footer rejected;
+record fitting exact byte boundary accepted;
 record exceeding empty-segment limit rejected;
 segment_index increments by one;
 start_capture_index continues exactly;
-file names sort correctly for segment indexes 2 and 10;
-repeated run with identical inputs produces byte-identical segment set;
-changed payload/metadata changes the relevant hashes.
+indexes 2 and 10 are parsed numerically, not trusted from enumeration order;
+repeated run with identical input produces byte-identical file set;
+changed payload/metadata changes relevant hashes.
 ```
 
-Verify that rotation does not lose, duplicate or reorder the boundary record.
+Rotation must not lose, duplicate or reorder the boundary record.
 
-## 8. Multi-segment session validation
+## 8. Multi-segment stream-set validation
 
-Required positive case:
+Positive case for one `(session_id, source_id, channel_id)`:
 
 ```text
 at least three finalized segments;
-same session/source metadata;
+same logical source metadata/hashes;
 contiguous segment indexes;
 contiguous capture indexes;
-numeric segment ordering;
+non-decreasing monotonic timestamps across boundaries;
+numeric parsed ordering;
 aggregate counts and payload bytes correct.
 ```
 
-Required negative cases:
+Negative cases:
 
 ```text
 duplicate segment_index;
-missing segment_index in supplied session;
+missing segment_index;
+filename/content index mismatch;
 mixed session_id;
-mixed incompatible source metadata;
+mixed source_id or channel_id;
+mixed incompatible source metadata or hashes;
 first capture index not continuous;
-overlapping capture index range;
+overlapping capture range;
+monotonic timestamp decreases across segments;
 partial file present;
 corrupt middle segment;
-lexical file order intentionally differs from numeric order.
+lexical/directory order intentionally differs from parsed index order.
 ```
 
-Partial files are reported but never replayed as valid records.
+Directory grouping tests:
+
+```text
+two valid independent stream sets are reported separately;
+inspection succeeds with separate summaries;
+replay without stream selection fails as ambiguous;
+replay with explicit source_id/channel_id selects only that stream;
+partial files are reported and never replayed.
+```
 
 ## 9. Replay correctness
 
-Create a deterministic synthetic source containing varied payload lengths and bytes, rotate it into multiple segments, validate and replay.
+Create deterministic synthetic records with varied payload lengths/bytes and rotate them into multiple segments.
 
 Verify:
 
 ```text
-callback count equals written count;
+callback count equals accepted record count;
 callback order equals capture_index order;
 all metadata fields match;
 every payload is byte-identical;
@@ -220,94 +271,95 @@ first/last indexes and payload total match;
 replay_sha256 equals a reviewed expected value;
 repeated replay gives the same digest;
 Windows and Linux give the same digest;
+changing only rotation limits leaves replay_sha256 unchanged;
+changing logical metadata/record metadata/payload changes replay_sha256;
 callback-requested stop returns explicit aborted status;
 no callback occurs after validation failure;
 no network or sleep occurs.
 ```
 
-Add a differential test where the expected replay digest is independently computed from the documented canonical digest framing rather than by reusing the production replay function.
+Add an independent test implementation of the documented `MXREPLAY1\0` framing. It must not call the production digest-framing helper.
 
 ## 10. CLI tests
 
 For the selected CLI shape, cover equivalent behavior:
 
 ```text
---help / subcommand help;
+--help and subcommand help;
 no args;
 unknown command/option;
 missing required path/metadata;
-invalid session id/hash/number;
+invalid session id/hash/enum/number;
 invalid rotation limits;
 valid deterministic synth;
-inspect valid file and directory;
+inspect valid single file;
+inspect directory with one and multiple stream sets;
 inspect partial/truncated/corrupt input;
-replay valid session;
-replay corrupt session rejected;
+replay selected valid stream;
+ambiguous directory replay rejected without stream selector;
+replay corrupt stream rejected;
 JSON output created;
 invalid output path;
 existing output/segment not overwritten;
 strict exit-code behavior;
-console/JSON contains no payload bytes.
+console/JSON contains no payload bytes/private endpoint data.
 ```
 
-CLI tests must use portable quoting and null-device handling (`NUL` vs `/dev/null`) or avoid shell redirection entirely.
+CLI tests must use portable process execution and null-device handling (`NUL` vs `/dev/null`) or avoid shell redirection entirely.
 
 ## 11. JSON report tests
 
-Verify valid JSON parsing and stable required fields:
+Verify parseable valid JSON and stable required fields:
 
 ```text
 schema/tool/format versions;
 operation;
-logical source metadata;
+session id canonical lowercase hex;
+logical source metadata and stream grouping key;
 segment indexes and sizes;
-content and file hashes;
-counts/totals/index bounds;
+content/file hashes;
+counts/totals/index/timestamp bounds;
 partial findings;
 issue severity/code/source;
 replay digest;
 overall status.
 ```
 
-Verify deterministic key/array order for identical inputs. Payload bytes, raw packet dumps, addresses, ports and credentials must be absent.
+Verify deterministic key/array order. Payload bytes, raw dumps, addresses, ports and credentials must be absent.
 
 ## 12. Resource-safety tests
 
 Required adversarial cases:
 
 ```text
+file larger than 64 GiB represented by sparse/mock input;
 huge header_size;
-huge payload_size;
-huge record_size;
-huge string length;
+huge payload_size/record_size/string length;
 near-u64 offset overflow;
 record count inconsistent with file size;
-malformed directory with many unrelated files;
-read-only output directory;
+many unrelated directory entries;
+read-only/output failure;
 rename target race/already exists;
 short-read simulation;
-short-write simulation;
+short-write/flush/close/rename simulation;
 callback failure.
 ```
 
-Tests must prove the reader rejects values before unbounded allocation.
+Tests must prove rejection before unbounded allocation.
 
 ## 13. Baseline regression matrix
 
-MiMo must run and report:
+Windows/local:
 
 ```powershell
-# RT-2 Windows and Linux tests through CI
 cmake -S cpp/moex_raw -B build/moex_raw -A x64
 cmake --build build/moex_raw --config Release
 ctest --test-dir build/moex_raw -C Release --output-on-failure
 
-# Existing RT-1
 cmake -S cpp/moex_fast -B build/moex_fast -A x64
 cmake --build build/moex_fast --config Release
 ctest --test-dir build/moex_fast -C Release --output-on-failure
 
-# Existing QSH/M10X
 cmake -S cpp/qsh_ingest -B build/qsh_ingest
 cmake --build build/qsh_ingest --config Release
 ctest --test-dir build/qsh_ingest -C Release --output-on-failure
@@ -317,10 +369,22 @@ python shared/schemas/validate_examples.py
 python tools/check_repository_hygiene.py
 ```
 
-Expected baseline:
+Linux CI:
+
+```bash
+cmake -S cpp/moex_raw -B build/moex_raw -DCMAKE_BUILD_TYPE=Release
+cmake --build build/moex_raw --parallel 2
+ctest --test-dir build/moex_raw --output-on-failure
+
+cmake -S cpp/moex_fast -B build/moex_fast -DCMAKE_BUILD_TYPE=Release
+cmake --build build/moex_fast --parallel 2
+ctest --test-dir build/moex_fast --output-on-failure
+```
+
+Expected:
 
 ```text
-RT-2 task-specific tests: all pass;
+RT-2 task tests: all pass;
 RT-1: 6/6 executables pass;
 QSH/M10X: 20/20 pass;
 Python/contracts: pass;
