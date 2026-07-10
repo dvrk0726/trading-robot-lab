@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-1 Round 8 corrections applied, READY_FOR_REVIEW
+Статус: RT-2 specification review — Issue #18 / PR #19
 
 ## Архитектура
 
@@ -22,6 +22,7 @@ Live is disabled by default.
 Production order entry requires VPTS/certification and Owner approval.
 C++ is used for low-level data/realtime/runtime work.
 Python is used for research, reports and UI.
+Raw/private market data and credentials do not enter Git.
 ```
 
 ## Completed foundation
@@ -31,11 +32,12 @@ private repository and security rules;
 Trading Lab / Trading Runtime / Shared Contracts skeleton;
 shared schemas and test vectors;
 Strategy Package standard and no-trade example;
-local Trading Lab dashboard/demo work;
-C++ QSH/OrdLog ingest and historical book reconstruction foundation;
-M10X engineering milestone;
+local Trading Lab dashboard/demo foundation;
+C++ QSH/OrdLog ingest and historical book reconstruction;
+M10X milestone and 20/20 regression tests;
 MOEX official-source research and realtime architecture;
-ADR-0001 through ADR-0004.
+ADR-0001 through ADR-0004;
+MiMo/GitHub workflow gate.
 ```
 
 ## Historical QSH status
@@ -48,89 +50,126 @@ Remaining crossed snapshots: 907
 strategy_ready for affected data: false
 ```
 
-Confirmed historical flags:
+Confirmed flags:
 
 ```text
 0x94  = Add + Buy + Quote
 0x414 = Add + Buy + TxEnd
 ```
 
-No QSH semantic change is part of the current work.
+No QSH semantic weakening is authorized.
 
 ## MOEX realtime status
 
 Studied and documented:
 
 ```text
-FAST 1.29.1;
-FAST_9.0 templates;
+FAST 1.29.x and FAST_9.0;
+spectra-1.29 / spectra-1.30 compatibility;
 T0 configuration structure;
-FIX SPECTRA;
+FIX SPECTRA and Drop Copy requirements;
 VPTS/certification requirements;
-Snapshot + Incremental bootstrap architecture;
+Snapshot + Incremental architecture;
 QuickFAST diagnostic-only decision;
 specialized C++ SPECTRA decoder direction.
 ```
 
-MOEX access process:
+Private access and connection parameters remain outside Git.
 
-```text
-questionnaire sent;
-MOEX requested additional information for login creation;
-private data and connection parameters remain outside Git.
-```
-
-## Completed workflow gate — Issue #1 / PR #15
+## Workflow gate — complete
 
 ```text
 Issue #1: DONE
-Pull Request #15: merged (82077f6e54e439f27027301ac02813c018d380fc)
+PR #15: merged (82077f6e54e439f27027301ac02813c018d380fc)
+Main protection: Option B active
 ```
 
-Merged workflow package:
+MiMo rules:
 
 ```text
-permanent MiMo workflow;
-universal READY_FOR_MIMO command;
-branch-only implementation;
-canonical eight task statuses;
-one-task-at-a-time rule;
-Pull Request template;
-GitHub Actions for hygiene, Python/contracts and 20 C++ regressions;
-repository hygiene checker;
-main/master guard in mimo_save.ps1;
-Owner Review Package standard;
-reviewed START_DEMO.cmd / STOP_DEMO.cmd exception;
-label synchronization workflow;
-current AI workflow/protocol documents;
-legacy direct-main documents marked superseded;
-main protection option guide.
+one active implementation task;
+READY_FOR_MIMO Issue required;
+clean main preflight;
+new mimo/issue-* branch;
+full tests and hygiene;
+separate Pull Request;
+no MiMo merge or auto-merge;
+stop at READY_FOR_REVIEW.
 ```
 
-Main protection: Option B active.
-
-## RT-1 status
+## RT-1 — DONE
 
 ```text
-Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: READY_FOR_REVIEW (Round 8 corrections applied)
-Branch: feat/rt-1-fast-config-inspector
-PR: #16
-Implementation commit: 3e3e89e (3e3e89e7bbb55853da02a56c8e2edfa666a999b3)
-CI run: 30 (29097918074): all five jobs passed.
-Review cycle: Round 8 CHANGES_REQUIRED → Round 8 corrections applied
+Issue #14: DONE
+PR #16: merged
+Merge commit: ab74f560c1bcf9d09ae7bdfb8552c745928fd022
+Post-merge main CI #32: passed
+Owner local Release build: passed
+Owner CTest: 6/6
+Owner strict real-file integration: valid, zero issues
 ```
 
-RT-1 task package:
+Delivered:
 
 ```text
-tasks/RT-1-fast-config-template-inspector/00_OVERVIEW.md
-tasks/RT-1-fast-config-template-inspector/01_REQUIREMENTS.md
-tasks/RT-1-fast-config-template-inspector/02_TEST_PLAN.md
-tasks/RT-1-fast-config-template-inspector/03_ACCEPTANCE.md
+offline C++20/CMake FAST configuration/templates inspector;
+official-style MOEX configuration hierarchy support;
+FAST field/sequence/<length> metadata;
+spectra-1.29 and spectra-1.30 profile compatibility;
+deterministic text/JSON reports;
+Windows/Linux Release-active tests.
 ```
 
-RT-1 must remain offline and local. It does not include network, UDP/TCP recovery, FAST binary decoding, FIX/TWIME, credentials or order sending.
+## RT-2 — specification review
+
+```text
+Issue #18: [MIMO][C++] RT-2 raw segment format and synthetic capture/replay
+Status: DRAFT
+Specification branch: docs/issue-18-rt2-raw-capture-replay-spec
+Specification PR: #19
+Implementation branch/PR: none
+```
+
+Task package in PR #19:
+
+```text
+tasks/RT-2-raw-capture-replay-contract/00_OVERVIEW.md
+tasks/RT-2-raw-capture-replay-contract/01_REQUIREMENTS.md
+tasks/RT-2-raw-capture-replay-contract/02_TEST_PLAN.md
+tasks/RT-2-raw-capture-replay-contract/03_ACCEPTANCE.md
+```
+
+Planned implementation scope after specification approval:
+
+```text
+C++20/CMake module, preferably cpp/moex_raw/;
+versioned immutable .mxraw segments;
+manual fixed-width little-endian encoding;
+logical source identity, explicit timestamp domains and local capture_index;
+CRC32C record/footer checks and SHA-256 provenance;
+.partial -> finalized lifecycle;
+deterministic record/byte rotation;
+bounded streaming reader/validator;
+deterministic synthetic replay digest;
+CLI and Release-active Windows/Linux tests.
+```
+
+Explicit RT-2 non-goals:
+
+```text
+no sockets or multicast;
+no real packet capture;
+no FAST binary decode;
+no A/B deduplication or recovery;
+no book building;
+no database/object-storage integration;
+no FIX/TWIME or order sending;
+no pcap/raw/private data in Git.
+```
+
+## Future runtime requirement preservation
+
+Issue #17 stores future FIX 4.4 session, order-control and Drop Copy requirements. It is not active implementation work.
 
 ## Task lifecycle
 
@@ -145,31 +184,13 @@ DRAFT
 -> DONE
 ```
 
-No second MiMo task starts while the previous task is in progress, review or changes-required state.
-
 ## Immediate next actions
 
 ```text
-1. Round 8 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
-2. test_round6_explicit_130_on_ambiguous now creates its own fixture via write_r6_ambiguous_fixture() helper.
-3. All Round 6/7 tests verified independent — no order dependencies.
-4. Portable CLI test for invalid --profile retained only in test_cli.cpp.
-5. State files synchronized to Round 8 with implementation-commit/verified-CI evidence model.
-6. MiMo report: stale run 24 replaced, architecture test counts corrected (39 deterministic, 12 CLI).
-7. Local verification: 6/6 RT-1 executables, QSH 20/20, Python 3/3, hygiene PASS.
-8. Stop — do not merge, do not start RT-2.
-```
-
-## Explicit non-goals now
-
-```text
-no RT-2 until RT-1 accepted;
-no network market-data connection;
-no FIX/TWIME;
-no FAST binary decoder;
-no broker/exchange order sending;
-no live or production enablement;
-no committed credentials/private connection data;
-no QSH semantic rewrite;
-no strategy_ready weakening.
+1. Architecture/Owner review PR #19.
+2. Merge PR #19 only after the specification is accepted.
+3. Update Issue #18 to READY_FOR_MIMO.
+4. Run the universal MiMo command once.
+5. MiMo creates a separate implementation branch and PR.
+6. Do not start RT-3 or any network/FIX work during RT-2.
 ```
