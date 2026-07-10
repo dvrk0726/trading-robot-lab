@@ -12,6 +12,8 @@
 
 namespace moex_raw {
 
+static DefaultFileSystem g_default_replay_fs;
+
 static void add_replay_issue(std::vector<RawValidationIssue>& issues,
                              ValidationSeverity sev, const std::string& code,
                              const std::string& msg) {
@@ -50,8 +52,10 @@ static void build_record_framing(const RawPacketRecord& rec, std::vector<std::ui
 
 ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                            const RawSegmentMetadata& meta,
-                           ReplayCallback callback) {
+                           ReplayCallback callback,
+                           IFileSystem* fs_arg) {
     (void)meta;  // metadata is derived from validated entries, not caller-supplied
+    auto* fs = fs_arg ? fs_arg : &g_default_replay_fs;
     ReplayResult result;
 
     if (sorted_paths.empty()) {
@@ -64,20 +68,14 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
     // Validate the stream set — this sorts entries by numeric segment_index
     std::vector<RawSegmentMetadata> metas;
     std::vector<RawFooter> footers;
-    auto status = validate_stream_set(sorted_paths, metas, footers, result.issues);
+    auto status = validate_stream_set(sorted_paths, metas, footers, result.issues,
+                                      nullptr, nullptr, fs);
     if (status != SegmentStatus::ValidFinalized) {
         result.status = ReplayStatus::ValidationFailed;
         return result;
     }
 
     // Build the sorted path list from validated entries (numeric order, not input order)
-    // validate_stream_set sorted metas/footers by segment_index, so we need to rebuild
-    // the path list in the same order. We do this by re-parsing the sorted entries.
-    // Since validate_stream_set validated and sorted by segment_index, and metas[i]
-    // corresponds to the i-th entry in sorted order, we reconstruct paths from metas.
-    // However, we don't have direct access to the sorted paths from validate_stream_set.
-    // The simplest approach: re-validate to get sorted entries, but that's wasteful.
-    // Instead, we sort our own copy of paths by parsing filenames.
     struct PathWithIndex {
         std::string path;
         std::uint64_t segment_index;
@@ -114,33 +112,31 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
     bool first = true;
 
     for (std::size_t si = 0; si < sorted_paths_vec.size(); ++si) {
-        std::FILE* f = std::fopen(sorted_paths_vec[si].path.c_str(), "rb");
-        if (!f) {
+        auto fh = fs->open_read(sorted_paths_vec[si].path);
+        if (!fh) {
             result.status = ReplayStatus::IoError;
             return result;
         }
 
-        std::error_code ec;
-        auto file_size = static_cast<std::uint64_t>(std::filesystem::file_size(sorted_paths_vec[si].path, ec));
-        if (ec) {
-            std::fclose(f);
+        bool size_ok = false;
+        auto file_size = fs->file_size(sorted_paths_vec[si].path, size_ok);
+        if (!size_ok) {
             result.status = ReplayStatus::IoError;
             return result;
         }
 
         std::uint8_t preamble[14];
-        if (std::fread(preamble, 1, 14, f) != 14) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
+        if (fh->read(preamble, 14) != 14) { result.status = ReplayStatus::IoError; return result; }
         std::size_t header_size = read_u32_le(preamble + 10);
 
-        if (fseek64(f, static_cast<std::int64_t>(header_size), SEEK_SET) != 0) { std::fclose(f); result.status = ReplayStatus::IoError; return result; }
+        if (!fh->seek(static_cast<std::int64_t>(header_size), SEEK_SET)) { result.status = ReplayStatus::IoError; return result; }
 
         std::uint64_t data_end = file_size - kFooterSize;
         std::uint64_t pos = header_size;
 
         while (pos < data_end) {
             std::uint8_t rec_hdr[kRecordHeaderSize];
-            if (std::fread(rec_hdr, 1, kRecordHeaderSize, f) != kRecordHeaderSize) {
-                std::fclose(f);
+            if (fh->read(rec_hdr, kRecordHeaderSize) != kRecordHeaderSize) {
                 result.status = ReplayStatus::IoError;
                 return result;
             }
@@ -149,7 +145,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
             std::uint32_t payload_size = read_u32_le(rec_hdr + 36);
 
             if (record_size != kRecordHeaderSize + payload_size + 4) {
-                std::fclose(f);
                 result.status = ReplayStatus::ValidationFailed;
                 add_replay_issue(result.issues, ValidationSeverity::Error,
                                  "WRONG_RECORD_SIZE", "record_size mismatch");
@@ -158,8 +153,7 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
 
             std::size_t tail_bytes = record_size - kRecordHeaderSize;
             std::vector<std::uint8_t> rec_tail(tail_bytes);
-            if (std::fread(rec_tail.data(), 1, tail_bytes, f) != tail_bytes) {
-                std::fclose(f);
+            if (fh->read(rec_tail.data(), tail_bytes) != tail_bytes) {
                 result.status = ReplayStatus::IoError;
                 return result;
             }
@@ -173,7 +167,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
 
             if (!deserialize_record_header(full_rec.data(), full_rec.size(),
                                            rec, record_total_size, rec_issues)) {
-                std::fclose(f);
                 result.status = ReplayStatus::ValidationFailed;
                 result.issues.insert(result.issues.end(), rec_issues.begin(), rec_issues.end());
                 return result;
@@ -181,7 +174,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
 
             // Use validated metas[si] for callback (sorted order)
             if (!callback(metas[si], rec)) {
-                std::fclose(f);
                 result.status = ReplayStatus::Aborted;
                 result.summary.record_count = total_records;
                 result.summary.total_payload_bytes = total_payload;
@@ -206,8 +198,6 @@ ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
 
             pos += record_size;
         }
-
-        std::fclose(f);
     }
 
     std::uint8_t hash[32];

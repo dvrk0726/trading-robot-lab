@@ -133,7 +133,9 @@ static RawStreamSummary build_stream_summary(const StreamSetInfo& ss,
                                               const std::vector<std::string>& paths,
                                               const std::string& status,
                                               const std::vector<std::string>& content_hashes = {},
-                                              const std::vector<std::string>& file_hashes = {}) {
+                                              const std::vector<std::string>& file_hashes = {},
+                                              std::uint64_t first_utc_ns = 0,
+                                              std::uint64_t last_utc_ns = 0) {
     RawStreamSummary summary;
     summary.session_id_hex = session_id_hex(ss.session_id);
     summary.source_id = ss.source_id;
@@ -165,6 +167,12 @@ static RawStreamSummary build_stream_summary(const StreamSetInfo& ss,
     summary.segment_content_sha256 = content_hashes;
     summary.segment_file_sha256 = file_hashes;
 
+    // One-segment aggregate hashes (Blocker 5)
+    if (content_hashes.size() == 1) {
+        summary.content_sha256 = content_hashes[0];
+        summary.file_sha256 = file_hashes[0];
+    }
+
     for (const auto& f : footers) {
         summary.record_count += f.record_count;
         summary.total_payload_bytes += f.total_payload_bytes;
@@ -174,12 +182,9 @@ static RawStreamSummary build_stream_summary(const StreamSetInfo& ss,
         summary.last_capture_index = footers.back().last_capture_index;
     }
 
-    // UTC bounds from metadata (created_utc_ns is the segment creation time;
-    // for synthetic data, monotonic and utc are correlated)
-    if (!metas.empty()) {
-        summary.first_capture_utc_ns = metas.front().created_utc_ns;
-        summary.last_capture_utc_ns = metas.back().created_utc_ns;
-    }
+    // UTC bounds from actual record data (Blocker 3)
+    summary.first_capture_utc_ns = first_utc_ns;
+    summary.last_capture_utc_ns = last_utc_ns;
 
     return summary;
 }
@@ -457,8 +462,10 @@ static int cmd_inspect(int argc, char* argv[]) {
                 std::vector<RawSegmentMetadata> metas;
                 std::vector<RawFooter> footers;
                 std::vector<RawValidationIssue> issues;
+                std::uint64_t first_utc = 0, last_utc = 0;
 
-                auto status = validate_stream_set(ss.segment_paths, metas, footers, issues);
+                auto status = validate_stream_set(ss.segment_paths, metas, footers, issues,
+                                                  &first_utc, &last_utc);
 
                 // Collect per-segment hashes
                 std::vector<std::string> content_hashes, file_hashes;
@@ -484,10 +491,12 @@ static int cmd_inspect(int argc, char* argv[]) {
                 }
 
                 auto summary = build_stream_summary(ss, metas, footers, ss.segment_paths,
-                                                    stream_status, content_hashes, file_hashes);
+                                                    stream_status, content_hashes, file_hashes,
+                                                    first_utc, last_utc);
                 report.stream_sets.push_back(summary);
 
-                // For single-stream reports, set top-level fields
+                // Blocker 4: For multi-stream, DON'T fill singular top-level fields
+                // Only fill for single stream
                 if (stream_sets.size() == 1) {
                     report.session_id_hex = summary.session_id_hex;
                     report.feed_group = summary.feed_group;
@@ -506,29 +515,29 @@ static int cmd_inspect(int argc, char* argv[]) {
                     report.file_sha256 = summary.file_sha256;
                     report.first_capture_utc_ns = summary.first_capture_utc_ns;
                     report.last_capture_utc_ns = summary.last_capture_utc_ns;
+
+                    // Also set segment/count/index for single stream
+                    for (std::size_t i = 0; i < metas.size(); ++i) {
+                        report.segment_indexes.push_back(metas[i].segment_index);
+                        std::error_code ec;
+                        auto sz = std::filesystem::file_size(ss.segment_paths[i], ec);
+                        report.segment_sizes.push_back(ec ? 0 : sz);
+                    }
+                    for (const auto& f : footers) {
+                        report.record_count += f.record_count;
+                        report.total_payload_bytes += f.total_payload_bytes;
+                    }
+                    if (!footers.empty()) {
+                        report.first_capture_index = footers.front().first_capture_index;
+                        report.last_capture_index = footers.back().last_capture_index;
+                    }
                 }
 
-                for (std::size_t i = 0; i < metas.size(); ++i) {
-                    report.segment_indexes.push_back(metas[i].segment_index);
-                    std::error_code ec;
-                    auto sz = std::filesystem::file_size(ss.segment_paths[i], ec);
-                    report.segment_sizes.push_back(ec ? 0 : sz);
-                }
-
-                for (const auto& f : footers) {
-                    report.record_count += f.record_count;
-                    report.total_payload_bytes += f.total_payload_bytes;
-                }
-                if (!footers.empty()) {
-                    report.first_capture_index = footers.front().first_capture_index;
-                    report.last_capture_index = footers.back().last_capture_index;
-                }
-
-                // Add source info to issues
+                // Add source info to issues — preserve per-file path (Blocker 5)
                 auto stream_key = summary.stream_key;
                 for (auto& issue : issues) {
                     issue.source = stream_key;
-                    if (!ss.segment_paths.empty()) issue.path = ss.segment_paths[0];
+                    // Don't overwrite issue.path — it's already set by validate_segment
                 }
                 report.issues.insert(report.issues.end(), issues.begin(), issues.end());
 
@@ -557,8 +566,10 @@ static int cmd_inspect(int argc, char* argv[]) {
         RawFooter footer;
         std::vector<RawValidationIssue> issues;
         std::string content_hex, file_hex;
+        std::uint64_t first_utc = 0, last_utc = 0;
 
-        auto status = validate_segment(input_path, meta, footer, issues, content_hex, file_hex);
+        auto status = validate_segment(input_path, meta, footer, issues, content_hex, file_hex,
+                                       nullptr, nullptr, &first_utc, &last_utc);
 
         report.session_id_hex = session_id_hex(meta.session.session_id);
         report.source_id = meta.source.source_id;
@@ -586,13 +597,12 @@ static int cmd_inspect(int argc, char* argv[]) {
         report.total_payload_bytes = footer.total_payload_bytes;
         report.first_capture_index = footer.first_capture_index;
         report.last_capture_index = footer.last_capture_index;
-        report.first_capture_utc_ns = meta.created_utc_ns;
-        report.last_capture_utc_ns = meta.created_utc_ns;
+        report.first_capture_utc_ns = first_utc;
+        report.last_capture_utc_ns = last_utc;
 
-        // Add source/path to issues
+        // Add source/path to issues — path already set by validate_segment
         for (auto& issue : issues) {
             issue.source = report.stream_key;
-            issue.path = input_path;
         }
         report.issues = std::move(issues);
 
@@ -733,7 +743,9 @@ static int cmd_replay(int argc, char* argv[]) {
     std::vector<RawSegmentMetadata> metas;
     std::vector<RawFooter> footers;
     std::vector<RawValidationIssue> val_issues;
-    auto val_status = validate_stream_set(target->segment_paths, metas, footers, val_issues);
+    std::uint64_t first_utc = 0, last_utc = 0;
+    auto val_status = validate_stream_set(target->segment_paths, metas, footers, val_issues,
+                                          &first_utc, &last_utc);
     if (val_status != SegmentStatus::ValidFinalized || metas.empty()) {
         std::cerr << "Error: stream set validation failed\n";
         return 1;
@@ -770,6 +782,8 @@ static int cmd_replay(int argc, char* argv[]) {
     report.total_payload_bytes = result.summary.total_payload_bytes;
     report.first_capture_index = result.summary.first_capture_index;
     report.last_capture_index = result.summary.last_capture_index;
+    report.first_capture_utc_ns = first_utc;
+    report.last_capture_utc_ns = last_utc;
 
     // Merge discovery issues + replay issues with source info
     auto stream_key = report.stream_key;

@@ -8,6 +8,7 @@
 namespace moex_raw {
 
 struct StreamSetInfo;
+struct IFileSystem;
 
 // Callback receives immutable metadata and bounded payload view.
 // Return false to stop replay.
@@ -33,7 +34,8 @@ struct ReplayResult {
 // metadata must contain the stream's session/source metadata.
 ReplayResult replay_stream(const std::vector<std::string>& sorted_paths,
                            const RawSegmentMetadata& meta,
-                           ReplayCallback callback);
+                           ReplayCallback callback,
+                           IFileSystem* fs = nullptr);
 
 // Replay from a directory, selecting a specific (source_id, channel_id).
 ReplayResult replay_from_directory(const std::string& directory,

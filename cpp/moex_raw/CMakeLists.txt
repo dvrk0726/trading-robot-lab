@@ -99,3 +99,7 @@ add_test(NAME test_content_sha256_e2e COMMAND test_content_sha256_e2e)
 add_executable(test_round3 tests/test_round3.cpp)
 target_link_libraries(test_round3 PRIVATE moex_raw_lib)
 add_test(NAME test_round3 COMMAND test_round3)
+
+add_executable(test_round5 tests/test_round5.cpp)
+target_link_libraries(test_round5 PRIVATE moex_raw_lib)
+add_test(NAME test_round5 COMMAND test_round5)

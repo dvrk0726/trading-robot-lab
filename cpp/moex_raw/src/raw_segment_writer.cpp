@@ -4,11 +4,41 @@
 #include "moex_raw/crc32c.hpp"
 #include "moex_raw/sha256.hpp"
 #include "moex_raw/strings.hpp"
+#include "moex_raw/file_position.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <cstring>
 
 namespace moex_raw {
+
+// --- DefaultFileHandle ---
+
+DefaultFileHandle::~DefaultFileHandle() {
+    if (f_) std::fclose(f_);
+}
+
+std::size_t DefaultFileHandle::read(void* buf, std::size_t size) {
+    return std::fread(buf, 1, size, f_);
+}
+
+std::size_t DefaultFileHandle::write(const void* buf, std::size_t size) {
+    return std::fwrite(buf, 1, size, f_);
+}
+
+bool DefaultFileHandle::seek(std::int64_t offset, int origin) {
+    return fseek64(f_, offset, origin) == 0;
+}
+
+bool DefaultFileHandle::flush() {
+    return std::fflush(f_) == 0;
+}
+
+bool DefaultFileHandle::close() {
+    if (!f_) return true;
+    bool ok = std::fclose(f_) == 0;
+    f_ = nullptr;
+    return ok;
+}
 
 // --- DefaultFileSystem ---
 
@@ -25,6 +55,25 @@ bool DefaultFileSystem::rename(const std::string& from, const std::string& to) {
 bool DefaultFileSystem::remove(const std::string& path) {
     std::error_code ec;
     return std::filesystem::remove(path, ec);
+}
+
+std::uint64_t DefaultFileSystem::file_size(const std::string& path, bool& ok) {
+    std::error_code ec;
+    auto sz = std::filesystem::file_size(path, ec);
+    ok = !ec;
+    return ec ? 0 : static_cast<std::uint64_t>(sz);
+}
+
+std::unique_ptr<IFileHandle> DefaultFileSystem::open_read(const std::string& path) {
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return nullptr;
+    return std::make_unique<DefaultFileHandle>(f);
+}
+
+std::unique_ptr<IFileHandle> DefaultFileSystem::open_write(const std::string& path) {
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return nullptr;
+    return std::make_unique<DefaultFileHandle>(f);
 }
 
 // --- Metadata validation ---
@@ -110,10 +159,7 @@ RawSegmentWriter::RawSegmentWriter(RawSegmentMetadata metadata,
 }
 
 RawSegmentWriter::~RawSegmentWriter() {
-    if (file_) {
-        std::fclose(file_);
-        file_ = nullptr;
-    }
+    file_.reset();
 }
 
 std::string RawSegmentWriter::current_partial_path() const {
@@ -175,7 +221,7 @@ std::string RawSegmentWriter::open() {
         return "Cannot create output directory: " + ec.message();
     }
 
-    file_ = std::fopen(partial.c_str(), "wb");
+    file_ = fs_->open_write(partial);
     if (!file_) {
         return "Cannot open partial file for writing";
     }
@@ -188,7 +234,7 @@ std::string RawSegmentWriter::open() {
     content_buffer_.clear();
     serialize_header(content_buffer_, metadata_);
 
-    if (std::fwrite(content_buffer_.data(), 1, content_buffer_.size(), file_) != content_buffer_.size()) {
+    if (file_->write(content_buffer_.data(), content_buffer_.size()) != content_buffer_.size()) {
         state_ = WriterState::Failed;
         return "Failed to write header";
     }
@@ -224,6 +270,29 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
         return "capture_index not sequential";
     }
 
+    // Check rotation FIRST — rotation resets record_count_, current_file_bytes_
+    if (should_rotate(rec)) {
+        auto err = finalize_current();
+        if (!err.empty()) return err;
+
+        err = start_new_segment();
+        if (!err.empty()) return err;
+    }
+
+    // Compute prospective state AFTER potential rotation
+    std::uint64_t next_idx;
+    if (!checked_add_u64(next_capture_index_, 1, next_idx)) {
+        return "capture_index overflow";
+    }
+    std::uint64_t next_count;
+    if (!checked_add_u64(record_count_, 1, next_count)) {
+        return "record_count overflow";
+    }
+    std::uint64_t next_payload;
+    if (!checked_add_u64(total_payload_bytes_, rec.payload.size(), next_payload)) {
+        return "total_payload_bytes overflow";
+    }
+
     // Compute actual serialized record size
     std::uint32_t payload_size = static_cast<std::uint32_t>(rec.payload.size());
     std::uint32_t record_size = kRecordHeaderSize + payload_size + 4;
@@ -256,37 +325,13 @@ std::string RawSegmentWriter::append(const RawPacketRecord& rec) {
         }
     }
 
-    // Check rotation (only for subsequent records)
-    if (should_rotate(rec)) {
-        auto err = finalize_current();
-        if (!err.empty()) return err;
-
-        err = start_new_segment();
-        if (!err.empty()) return err;
-    }
-
     auto err = write_record(rec);
     if (!err.empty()) return err;
 
-    // Checked arithmetic for index/count advancement
-    std::uint64_t next_idx;
-    if (!checked_add_u64(next_capture_index_, 1, next_idx)) {
-        return "capture_index overflow";
-    }
+    // Commit state — all arithmetic was pre-validated above
     next_capture_index_ = next_idx;
-
-    std::uint64_t next_count;
-    if (!checked_add_u64(record_count_, 1, next_count)) {
-        return "record_count overflow";
-    }
     record_count_ = next_count;
-
-    std::uint64_t next_payload;
-    if (!checked_add_u64(total_payload_bytes_, rec.payload.size(), next_payload)) {
-        return "total_payload_bytes overflow";
-    }
     total_payload_bytes_ = next_payload;
-
     last_monotonic_ns_ = rec.capture_monotonic_ns;
 
     return "";
@@ -333,7 +378,7 @@ std::string RawSegmentWriter::write_record(const RawPacketRecord& rec) {
     std::vector<std::uint8_t> rec_buf;
     serialize_record(rec_buf, rec);
 
-    if (std::fwrite(rec_buf.data(), 1, rec_buf.size(), file_) != rec_buf.size()) {
+    if (file_->write(rec_buf.data(), rec_buf.size()) != rec_buf.size()) {
         state_ = WriterState::Failed;
         return "Failed to write record";
     }
@@ -361,22 +406,22 @@ std::string RawSegmentWriter::finalize_current() {
     std::vector<std::uint8_t> footer_buf;
     serialize_footer(footer_buf, footer);
 
-    if (std::fwrite(footer_buf.data(), 1, footer_buf.size(), file_) != footer_buf.size()) {
+    if (file_->write(footer_buf.data(), footer_buf.size()) != footer_buf.size()) {
         state_ = WriterState::Failed;
         return "Failed to write footer";
     }
 
-    if (std::fflush(file_) != 0) {
+    if (!file_->flush()) {
         state_ = WriterState::Failed;
         return "Failed to flush";
     }
 
-    if (std::fclose(file_) != 0) {
-        file_ = nullptr;
+    if (!file_->close()) {
+        file_.reset();
         state_ = WriterState::Failed;
         return "Failed to close file";
     }
-    file_ = nullptr;
+    file_.reset();
 
     // Rename partial to final
     auto partial = current_partial_path();
@@ -419,7 +464,7 @@ std::string RawSegmentWriter::start_new_segment() {
         return "Final file already exists for new segment: " + final_path;
     }
 
-    file_ = std::fopen(partial.c_str(), "wb");
+    file_ = fs_->open_write(partial);
     if (!file_) {
         return "Cannot open new segment partial file";
     }
@@ -432,7 +477,7 @@ std::string RawSegmentWriter::start_new_segment() {
     content_buffer_.clear();
     serialize_header(content_buffer_, metadata_);
 
-    if (std::fwrite(content_buffer_.data(), 1, content_buffer_.size(), file_) != content_buffer_.size()) {
+    if (file_->write(content_buffer_.data(), content_buffer_.size()) != content_buffer_.size()) {
         state_ = WriterState::Failed;
         return "Failed to write header for new segment";
     }

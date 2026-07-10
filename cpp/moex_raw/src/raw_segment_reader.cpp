@@ -11,10 +11,12 @@
 
 namespace moex_raw {
 
+static DefaultFileSystem g_default_fs;
+
 static void add_issue(std::vector<RawValidationIssue>& issues,
                       ValidationSeverity sev, const std::string& code,
-                      const std::string& msg) {
-    issues.push_back({sev, code, msg, {}, {}});
+                      const std::string& msg, const std::string& path = {}) {
+    issues.push_back({sev, code, msg, {}, path});
 }
 
 SegmentStatus validate_segment(const std::string& path,
@@ -24,57 +26,67 @@ SegmentStatus validate_segment(const std::string& path,
                                std::string& content_sha256_hex,
                                std::string& file_sha256_hex,
                                std::uint64_t* first_monotonic_ns,
-                               std::uint64_t* last_monotonic_ns) {
-    // Open file for reading
-    std::FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) {
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot open file");
+                               std::uint64_t* last_monotonic_ns,
+                               std::uint64_t* first_utc_ns,
+                               std::uint64_t* last_utc_ns,
+                               IFileSystem* fs_arg) {
+    auto* fs = fs_arg ? fs_arg : &g_default_fs;
+
+    // Get file size using IFileSystem (reject > 64 GiB BEFORE opening)
+    bool size_ok = false;
+    auto file_size = fs->file_size(path, size_ok);
+    if (!size_ok) {
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot get file size", path);
         return SegmentStatus::IoError;
     }
 
-    // Get file size using std::filesystem (supports > 4 GiB on all platforms)
-    std::error_code ec;
-    auto file_size = static_cast<std::uint64_t>(std::filesystem::file_size(path, ec));
-    if (ec) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot get file size");
-        return SegmentStatus::IoError;
-    }
-
-    // Reject files above hard 64 GiB cap
+    // Reject files above hard 64 GiB cap — before allocation/read
     if (file_size > kMaxSegmentBytes) {
-        std::fclose(f);
         add_issue(issues, ValidationSeverity::Error, "FILE_TOO_LARGE",
-                  "File exceeds 64 GiB hard limit");
+                  "File exceeds 64 GiB hard limit", path);
         return SegmentStatus::Unsupported;
     }
 
     if (file_size == 0) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "EMPTY_FILE", "Empty file");
+        add_issue(issues, ValidationSeverity::Error, "EMPTY_FILE", "Empty file", path);
         return SegmentStatus::Truncated;
     }
 
     // Check minimum size: header min + footer
+    // For .mxraw.partial files, being too short is expected (Partial, not Truncated)
+    bool is_partial_ext = (path.size() > 14 &&
+                           path.substr(path.size() - 14) == ".mxraw.partial");
     if (file_size < 126 + kFooterSize) {
-        std::fclose(f);
+        if (is_partial_ext) {
+            add_issue(issues, ValidationSeverity::Warning, "PARTIAL_FILE",
+                      "Partial segment file incomplete", path);
+            return SegmentStatus::Partial;
+        }
         add_issue(issues, ValidationSeverity::Error, "FILE_TOO_SHORT",
-                  "File too short for header + footer");
+                  "File too short for header + footer", path);
         return SegmentStatus::Truncated;
+    }
+
+    // Open file for reading via IFileSystem
+    auto f = fs->open_read(path);
+    if (!f) {
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot open file", path);
+        return SegmentStatus::IoError;
     }
 
     // --- Read header (bounded: up to kMaxHeaderSize) ---
     std::size_t header_read_size = static_cast<std::size_t>(std::min(file_size, static_cast<std::uint64_t>(kMaxHeaderSize)));
     std::vector<std::uint8_t> header_buf(header_read_size);
-    if (std::fread(header_buf.data(), 1, header_read_size, f) != header_read_size) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read header");
+    if (f->read(header_buf.data(), header_read_size) != header_read_size) {
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read header", path);
         return SegmentStatus::IoError;
     }
 
     std::size_t header_size = 0;
     if (!deserialize_header(header_buf.data(), header_read_size, meta, header_size, issues)) {
-        std::fclose(f);
+        // Close the file handle before returning
+        f.reset();
+
         // Check if this is an unsupported version
         if (header_read_size >= 10) {
             std::uint16_t version = read_u16_le(header_buf.data() + 8);
@@ -82,66 +94,69 @@ SegmentStatus validate_segment(const std::string& path,
                 return SegmentStatus::Unsupported;
             }
         }
-        // Header failure without version mismatch: check if file has footer magic at correct position
-        // Footer magic is at the START of the 92-byte footer, not at EOF-8
+
+        // Header failure without version mismatch.
+        // Classification depends on file extension:
+        //   .mxraw.partial -> Partial (unfinalized)
+        //   .mxraw (finalized) -> Corrupt/Truncated (claims finalized but header broken)
+        // is_partial_ext already computed above
+
         if (file_size >= kFooterSize) {
-            std::FILE* f2 = std::fopen(path.c_str(), "rb");
+            auto f2 = fs->open_read(path);
             if (f2) {
                 std::uint64_t footer_offset = file_size - kFooterSize;
                 std::uint8_t footer_magic[8];
-                if (fseek64(f2, static_cast<std::int64_t>(footer_offset), SEEK_SET) == 0 &&
-                    std::fread(footer_magic, 1, 8, f2) == 8) {
+                if (f2->seek(static_cast<std::int64_t>(footer_offset), SEEK_SET) &&
+                    f2->read(footer_magic, 8) == 8) {
                     if (std::memcmp(footer_magic, kMagicEnd, 8) != 0) {
-                        // No valid footer magic => partial/unfinalized
-                        std::fclose(f2);
-                        return SegmentStatus::Partial;
+                        // No valid footer magic
+                        return is_partial_ext ? SegmentStatus::Partial : SegmentStatus::Corrupt;
                     }
                 }
-                std::fclose(f2);
             }
         }
+        // For .mxraw.partial without footer check or with valid footer but bad header
+        if (is_partial_ext) return SegmentStatus::Partial;
         return SegmentStatus::Corrupt;
     }
 
     // --- Read footer (last kFooterSize bytes) ---
     if (file_size < header_size + kFooterSize) {
-        std::fclose(f);
+        if (is_partial_ext) {
+            add_issue(issues, ValidationSeverity::Warning, "PARTIAL_FILE",
+                      "Partial segment file incomplete", path);
+            return SegmentStatus::Partial;
+        }
         add_issue(issues, ValidationSeverity::Error, "TRUNCATED",
-                  "File too short for footer after header");
+                  "File too short for footer after header", path);
         return SegmentStatus::Truncated;
     }
 
     std::uint64_t footer_offset = file_size - kFooterSize;
     std::uint8_t footer_buf_arr[kFooterSize];
-    if (fseek64(f, static_cast<std::int64_t>(footer_offset), SEEK_SET) != 0) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek to footer");
+    if (!f->seek(static_cast<std::int64_t>(footer_offset), SEEK_SET)) {
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek to footer", path);
         return SegmentStatus::IoError;
     }
-    if (std::fread(footer_buf_arr, 1, kFooterSize, f) != kFooterSize) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read footer");
+    if (f->read(footer_buf_arr, kFooterSize) != kFooterSize) {
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read footer", path);
         return SegmentStatus::IoError;
     }
 
     if (!deserialize_footer(footer_buf_arr, kFooterSize, footer, issues)) {
-        std::fclose(f);
         return SegmentStatus::Corrupt;
     }
 
     // Verify data_bytes_before_footer matches
     if (footer.data_bytes_before_footer != footer_offset) {
-        std::fclose(f);
         add_issue(issues, ValidationSeverity::Error, "WRONG_DATA_BYTES",
-                  "data_bytes_before_footer mismatch");
+                  "data_bytes_before_footer mismatch", path);
         return SegmentStatus::Corrupt;
     }
 
     // --- Compute content SHA-256 incrementally ---
-    // Seek back to start and hash everything before footer
-    if (std::fseek(f, 0, SEEK_SET) != 0) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek for SHA-256");
+    if (!f->seek(0, SEEK_SET)) {
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek for SHA-256", path);
         return SegmentStatus::IoError;
     }
 
@@ -151,10 +166,9 @@ SegmentStatus validate_segment(const std::string& path,
     std::uint64_t remaining = footer_offset;
     while (remaining > 0) {
         std::size_t to_read = static_cast<std::size_t>(std::min(remaining, static_cast<std::uint64_t>(sizeof(read_buf))));
-        std::size_t n = std::fread(read_buf, 1, to_read, f);
+        std::size_t n = f->read(read_buf, to_read);
         if (n == 0) {
-            std::fclose(f);
-            add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Read error during SHA-256");
+            add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Read error during SHA-256", path);
             return SegmentStatus::IoError;
         }
         sha256_update(sha_ctx, read_buf, n);
@@ -166,16 +180,14 @@ SegmentStatus validate_segment(const std::string& path,
 
     std::string stored_content_hex = sha256_bytes_to_hex(footer.content_sha256);
     if (content_sha256_hex != stored_content_hex) {
-        std::fclose(f);
         add_issue(issues, ValidationSeverity::Error, "WRONG_CONTENT_SHA256",
-                  "content_sha256 mismatch");
+                  "content_sha256 mismatch", path);
         return SegmentStatus::Corrupt;
     }
 
     // --- Compute file SHA-256 (entire file) ---
-    if (std::fseek(f, 0, SEEK_SET) != 0) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek for file SHA-256");
+    if (!f->seek(0, SEEK_SET)) {
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek for file SHA-256", path);
         return SegmentStatus::IoError;
     }
     SHA256Ctx file_sha_ctx;
@@ -183,11 +195,10 @@ SegmentStatus validate_segment(const std::string& path,
     std::uint64_t file_remaining = file_size;
     while (file_remaining > 0) {
         std::size_t to_read = static_cast<std::size_t>(std::min(file_remaining, static_cast<std::uint64_t>(sizeof(read_buf))));
-        std::size_t n = std::fread(read_buf, 1, to_read, f);
+        std::size_t n = f->read(read_buf, to_read);
         if (n == 0) {
-            std::fclose(f);
             add_issue(issues, ValidationSeverity::Error, "IO_ERROR",
-                      "Short read during file SHA-256");
+                      "Short read during file SHA-256", path);
             return SegmentStatus::IoError;
         }
         sha256_update(file_sha_ctx, read_buf, n);
@@ -198,35 +209,35 @@ SegmentStatus validate_segment(const std::string& path,
     file_sha256_hex = sha256_bytes_to_hex(file_hash);
 
     // --- Validate records streaming (bounded: one record at a time) ---
-    if (fseek64(f, static_cast<std::int64_t>(header_size), SEEK_SET) != 0) {
-        std::fclose(f);
-        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek to records");
+    if (!f->seek(static_cast<std::int64_t>(header_size), SEEK_SET)) {
+        add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot seek to records", path);
         return SegmentStatus::IoError;
     }
 
     std::uint64_t expected_capture_index = meta.start_capture_index;
     std::uint64_t local_last_monotonic = 0;
     std::uint64_t local_first_monotonic = 0;
+    std::uint64_t local_first_utc = 0;
+    std::uint64_t local_last_utc = 0;
     std::uint64_t actual_record_count = 0;
     std::uint64_t actual_payload_bytes = 0;
     std::uint64_t actual_first_capture = 0;
     std::uint64_t actual_last_capture = 0;
     bool first_record = true;
+    bool first_utc = true;
     std::uint64_t pos = header_size;
 
     while (pos < footer_offset) {
         // Read record header (bounded: kRecordHeaderSize bytes)
         std::uint8_t rec_hdr_buf[kRecordHeaderSize];
-        if (std::fread(rec_hdr_buf, 1, kRecordHeaderSize, f) != kRecordHeaderSize) {
-            std::fclose(f);
-            add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read record header");
+        if (f->read(rec_hdr_buf, kRecordHeaderSize) != kRecordHeaderSize) {
+            add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read record header", path);
             return SegmentStatus::Corrupt;
         }
 
         // Parse record size from header to know how much more to read
         if (std::memcmp(rec_hdr_buf, kMagicRec, 4) != 0) {
-            std::fclose(f);
-            add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_MAGIC", "Wrong record magic");
+            add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_MAGIC", "Wrong record magic", path);
             return SegmentStatus::Corrupt;
         }
         std::uint32_t record_size = read_u32_le(rec_hdr_buf + 8);
@@ -234,29 +245,25 @@ SegmentStatus validate_segment(const std::string& path,
 
         // Validate record_size
         if (record_size != kRecordHeaderSize + payload_size + 4) {
-            std::fclose(f);
-            add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_SIZE", "record_size mismatch");
+            add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_SIZE", "record_size mismatch", path);
             return SegmentStatus::Corrupt;
         }
         if (payload_size > kMaxPayloadSize) {
-            std::fclose(f);
-            add_issue(issues, ValidationSeverity::Error, "PAYLOAD_TOO_LARGE", "Payload exceeds 1 MiB");
+            add_issue(issues, ValidationSeverity::Error, "PAYLOAD_TOO_LARGE", "Payload exceeds 1 MiB", path);
             return SegmentStatus::Corrupt;
         }
 
         // Check we have enough data
         if (pos + record_size > footer_offset) {
-            std::fclose(f);
-            add_issue(issues, ValidationSeverity::Error, "TRUNCATED_RECORD", "Truncated record");
+            add_issue(issues, ValidationSeverity::Error, "TRUNCATED_RECORD", "Truncated record", path);
             return SegmentStatus::Corrupt;
         }
 
         // Read remaining record bytes (payload + payload_crc + record_crc)
         std::size_t remaining_bytes = record_size - kRecordHeaderSize;
         std::vector<std::uint8_t> rec_tail(remaining_bytes);
-        if (std::fread(rec_tail.data(), 1, remaining_bytes, f) != remaining_bytes) {
-            std::fclose(f);
-            add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read record tail");
+        if (f->read(rec_tail.data(), remaining_bytes) != remaining_bytes) {
+            add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read record tail", path);
             return SegmentStatus::Corrupt;
         }
 
@@ -267,23 +274,20 @@ SegmentStatus validate_segment(const std::string& path,
         RawPacketRecord rec;
         std::size_t record_total_size = 0;
         if (!deserialize_record_header(full_rec.data(), full_rec.size(), rec, record_total_size, issues)) {
-            std::fclose(f);
             return SegmentStatus::Corrupt;
         }
 
         // Validate capture_index continuity
         if (rec.capture_index != expected_capture_index) {
-            std::fclose(f);
             add_issue(issues, ValidationSeverity::Error, "WRONG_CAPTURE_INDEX",
-                      "capture_index not contiguous");
+                      "capture_index not contiguous", path);
             return SegmentStatus::Corrupt;
         }
 
         // Validate monotonic timestamp
         if (rec.capture_monotonic_ns < local_last_monotonic) {
-            std::fclose(f);
             add_issue(issues, ValidationSeverity::Error, "MONOTONIC_DECREASE",
-                      "capture_monotonic_ns decreased");
+                      "capture_monotonic_ns decreased", path);
             return SegmentStatus::Corrupt;
         }
         local_last_monotonic = rec.capture_monotonic_ns;
@@ -297,39 +301,45 @@ SegmentStatus validate_segment(const std::string& path,
         actual_record_count++;
         actual_payload_bytes += rec.payload.size();
 
+        // Collect UTC bounds from records with kRecordFlagUtcValid
+        if (rec.record_flags & kRecordFlagUtcValid) {
+            if (first_utc) {
+                local_first_utc = rec.capture_utc_ns;
+                first_utc = false;
+            }
+            local_last_utc = rec.capture_utc_ns;
+        }
+
         // Use checked arithmetic for index advancement
         std::uint64_t next_index;
         if (!checked_add_u64(expected_capture_index, 1, next_index)) {
-            std::fclose(f);
             add_issue(issues, ValidationSeverity::Error, "INDEX_OVERFLOW",
-                      "capture_index overflow");
+                      "capture_index overflow", path);
             return SegmentStatus::Corrupt;
         }
         expected_capture_index = next_index;
         pos += record_size;
     }
 
-    std::fclose(f);
-
     // Validate footer counts
     if (actual_record_count != footer.record_count) {
         add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_COUNT",
-                  "Record count mismatch");
+                  "Record count mismatch", path);
         return SegmentStatus::Corrupt;
     }
     if (actual_payload_bytes != footer.total_payload_bytes) {
         add_issue(issues, ValidationSeverity::Error, "WRONG_PAYLOAD_TOTAL",
-                  "Total payload bytes mismatch");
+                  "Total payload bytes mismatch", path);
         return SegmentStatus::Corrupt;
     }
     if (actual_first_capture != footer.first_capture_index) {
         add_issue(issues, ValidationSeverity::Error, "WRONG_FIRST_INDEX",
-                  "first_capture_index mismatch");
+                  "first_capture_index mismatch", path);
         return SegmentStatus::Corrupt;
     }
     if (actual_last_capture != footer.last_capture_index) {
         add_issue(issues, ValidationSeverity::Error, "WRONG_LAST_INDEX",
-                  "last_capture_index mismatch");
+                  "last_capture_index mismatch", path);
         return SegmentStatus::Corrupt;
     }
 
@@ -337,13 +347,20 @@ SegmentStatus validate_segment(const std::string& path,
     if (first_monotonic_ns) *first_monotonic_ns = local_first_monotonic;
     if (last_monotonic_ns) *last_monotonic_ns = local_last_monotonic;
 
+    // Output first/last UTC (0 if no records had kRecordFlagUtcValid)
+    if (first_utc_ns) *first_utc_ns = local_first_utc;
+    if (last_utc_ns) *last_utc_ns = local_last_utc;
+
     return SegmentStatus::ValidFinalized;
 }
 
 SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
                                   std::vector<RawSegmentMetadata>& metas,
                                   std::vector<RawFooter>& footers,
-                                  std::vector<RawValidationIssue>& issues) {
+                                  std::vector<RawValidationIssue>& issues,
+                                  std::uint64_t* first_capture_utc_ns,
+                                  std::uint64_t* last_capture_utc_ns,
+                                  IFileSystem* fs) {
     if (paths.empty()) {
         add_issue(issues, ValidationSeverity::Error, "EMPTY_STREAM_SET", "No segments provided");
         return SegmentStatus::Corrupt;
@@ -360,6 +377,8 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
         std::string file_sha256_hex;
         std::uint64_t first_monotonic;
         std::uint64_t last_monotonic;
+        std::uint64_t first_utc;
+        std::uint64_t last_utc;
     };
 
     std::vector<SegmentEntry> entries;
@@ -370,56 +389,62 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
         entry.path = path;
         entry.first_monotonic = 0;
         entry.last_monotonic = 0;
+        entry.first_utc = 0;
+        entry.last_utc = 0;
 
         // Parse canonical filename
         auto filename = std::filesystem::path(path).filename().string();
         if (!parse_canonical_filename(filename, entry.parsed_fn)) {
             add_issue(issues, ValidationSeverity::Error, "INVALID_FILENAME",
-                      "Cannot parse canonical filename: " + filename);
+                      "Cannot parse canonical filename: " + filename, path);
             return SegmentStatus::Corrupt;
         }
 
-        // Get file size
-        std::error_code ec;
-        entry.file_size = static_cast<std::uint64_t>(std::filesystem::file_size(path, ec));
-        if (ec) {
+        // Get file size via IFileSystem
+        bool size_ok = false;
+        entry.file_size = fs ? fs->file_size(path, size_ok) : [&]() {
+            DefaultFileSystem dfs;
+            return dfs.file_size(path, size_ok);
+        }();
+        if (!size_ok) {
             add_issue(issues, ValidationSeverity::Error, "IO_ERROR",
-                      "Cannot get file size: " + path);
+                      "Cannot get file size: " + path, path);
             return SegmentStatus::IoError;
         }
 
-        // Validate the segment — collect first/last monotonic during the main pass
+        // Validate the segment — collect first/last monotonic and UTC during the main pass
         std::vector<RawValidationIssue> seg_issues;
         auto status = validate_segment(path, entry.meta, entry.footer, seg_issues,
                                        entry.content_sha256_hex, entry.file_sha256_hex,
-                                       &entry.first_monotonic, &entry.last_monotonic);
+                                       &entry.first_monotonic, &entry.last_monotonic,
+                                       &entry.first_utc, &entry.last_utc, fs);
         issues.insert(issues.end(), seg_issues.begin(), seg_issues.end());
 
         if (status != SegmentStatus::ValidFinalized) {
             add_issue(issues, ValidationSeverity::Error, "INVALID_SEGMENT",
-                      "Segment not valid finalized: " + path);
+                      "Segment not valid finalized: " + path, path);
             return status;
         }
 
         // Compare filename identity with content identity
         if (std::memcmp(entry.parsed_fn.session_id, entry.meta.session.session_id, 16) != 0) {
             add_issue(issues, ValidationSeverity::Error, "FILENAME_MISMATCH",
-                      "Filename session_id does not match content: " + filename);
+                      "Filename session_id does not match content: " + filename, path);
             return SegmentStatus::Corrupt;
         }
         if (entry.parsed_fn.source_id != entry.meta.source.source_id) {
             add_issue(issues, ValidationSeverity::Error, "FILENAME_MISMATCH",
-                      "Filename source_id does not match content: " + filename);
+                      "Filename source_id does not match content: " + filename, path);
             return SegmentStatus::Corrupt;
         }
         if (entry.parsed_fn.channel_id != entry.meta.source.channel_id) {
             add_issue(issues, ValidationSeverity::Error, "FILENAME_MISMATCH",
-                      "Filename channel_id does not match content: " + filename);
+                      "Filename channel_id does not match content: " + filename, path);
             return SegmentStatus::Corrupt;
         }
         if (entry.parsed_fn.segment_index != entry.meta.segment_index) {
             add_issue(issues, ValidationSeverity::Error, "FILENAME_MISMATCH",
-                      "Filename segment_index does not match content: " + filename);
+                      "Filename segment_index does not match content: " + filename, path);
             return SegmentStatus::Corrupt;
         }
 
@@ -544,11 +569,23 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
         footers.push_back(e.footer);
     }
 
+    // Populate UTC bounds across all segments
+    // first_utc from first segment, last_utc from last segment (sorted order)
+    // Zero semantics: 0 if no records had kRecordFlagUtcValid in any segment
+    if (first_capture_utc_ns) {
+        *first_capture_utc_ns = entries.empty() ? 0 : entries.front().first_utc;
+    }
+    if (last_capture_utc_ns) {
+        *last_capture_utc_ns = entries.empty() ? 0 : entries.back().last_utc;
+    }
+
     return SegmentStatus::ValidFinalized;
 }
 
 std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
-                                              std::vector<RawValidationIssue>& issues) {
+                                              std::vector<RawValidationIssue>& issues,
+                                              IFileSystem* fs_arg) {
+    auto* fs = fs_arg ? fs_arg : &g_default_fs;
     std::vector<StreamSetInfo> result;
 
     if (!std::filesystem::exists(directory)) return result;
@@ -562,7 +599,7 @@ std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
         // Handle .mxraw.partial files as partial candidates
         if (filename.size() > 14 && filename.substr(filename.size() - 14) == ".mxraw.partial") {
             add_issue(issues, ValidationSeverity::Warning, "PARTIAL_FILE",
-                      "Partial segment file found: " + filepath);
+                      "Partial segment file found: " + filepath, filepath);
             continue;
         }
 
@@ -574,25 +611,25 @@ std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
         ParsedFilename parsed_fn;
         if (!parse_canonical_filename(filename, parsed_fn)) {
             add_issue(issues, ValidationSeverity::Error, "INVALID_FILENAME",
-                      "Cannot parse canonical filename: " + filepath);
+                      "Cannot parse canonical filename: " + filepath, filepath);
             continue;
         }
 
         // Read header to get session/source/channel (bounded: 4096 bytes)
-        std::FILE* f = std::fopen(filepath.c_str(), "rb");
-        if (!f) {
+        auto fh = fs->open_read(filepath);
+        if (!fh) {
             add_issue(issues, ValidationSeverity::Error, "UNREADABLE_FILE",
-                      "Cannot open .mxraw file: " + filepath);
+                      "Cannot open .mxraw file: " + filepath, filepath);
             continue;
         }
 
         std::vector<std::uint8_t> header_data(kMaxHeaderSize);
-        std::size_t n = std::fread(header_data.data(), 1, kMaxHeaderSize, f);
-        std::fclose(f);
+        std::size_t n = fh->read(header_data.data(), kMaxHeaderSize);
+        fh.reset();
 
         if (n == 0) {
             add_issue(issues, ValidationSeverity::Error, "EMPTY_FILE",
-                      "Empty .mxraw file: " + filepath);
+                      "Empty .mxraw file: " + filepath, filepath);
             continue;
         }
 
@@ -602,7 +639,7 @@ std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
 
         if (!deserialize_header(header_data.data(), n, meta, header_size, hdr_issues)) {
             add_issue(issues, ValidationSeverity::Error, "MALFORMED_HEADER",
-                      "Cannot parse .mxraw header: " + filepath);
+                      "Cannot parse .mxraw header: " + filepath, filepath);
             continue;
         }
 

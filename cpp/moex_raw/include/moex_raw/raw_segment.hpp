@@ -15,18 +15,54 @@ enum class WriterState {
     Failed
 };
 
+// File handle abstraction for deterministic I/O injection.
+struct IFileHandle {
+    virtual ~IFileHandle() = default;
+    // Read up to size bytes. Returns actual bytes read (0 on EOF/error).
+    virtual std::size_t read(void* buf, std::size_t size) = 0;
+    // Write size bytes. Returns actual bytes written.
+    virtual std::size_t write(const void* buf, std::size_t size) = 0;
+    // Seek to offset from origin. Returns false on error.
+    virtual bool seek(std::int64_t offset, int origin) = 0;
+    // Flush buffered data. Returns false on error.
+    virtual bool flush() = 0;
+    // Close the handle. Returns false on error.
+    virtual bool close() = 0;
+};
+
 // Filesystem operations abstraction for testability.
 struct IFileSystem {
     virtual ~IFileSystem() = default;
     virtual bool exists(const std::string& path) = 0;
     virtual bool rename(const std::string& from, const std::string& to) = 0;
     virtual bool remove(const std::string& path) = 0;
+    // Returns file size; sets ok=false on error.
+    virtual std::uint64_t file_size(const std::string& path, bool& ok) = 0;
+    // Open file for reading. Returns nullptr on failure.
+    virtual std::unique_ptr<IFileHandle> open_read(const std::string& path) = 0;
+    // Open file for writing (creates/truncates). Returns nullptr on failure.
+    virtual std::unique_ptr<IFileHandle> open_write(const std::string& path) = 0;
+};
+
+// Default file handle wrapping std::FILE*.
+struct DefaultFileHandle : IFileHandle {
+    std::FILE* f_ = nullptr;
+    explicit DefaultFileHandle(std::FILE* f) : f_(f) {}
+    ~DefaultFileHandle() override;
+    std::size_t read(void* buf, std::size_t size) override;
+    std::size_t write(const void* buf, std::size_t size) override;
+    bool seek(std::int64_t offset, int origin) override;
+    bool flush() override;
+    bool close() override;
 };
 
 struct DefaultFileSystem : IFileSystem {
     bool exists(const std::string& path) override;
     bool rename(const std::string& from, const std::string& to) override;
     bool remove(const std::string& path) override;
+    std::uint64_t file_size(const std::string& path, bool& ok) override;
+    std::unique_ptr<IFileHandle> open_read(const std::string& path) override;
+    std::unique_ptr<IFileHandle> open_write(const std::string& path) override;
 };
 
 class RawSegmentWriter {
@@ -85,7 +121,7 @@ private:
     IFileSystem* fs_;
     DefaultFileSystem default_fs_;
     WriterState state_ = WriterState::Created;
-    std::FILE* file_ = nullptr;
+    std::unique_ptr<IFileHandle> file_;
     std::uint64_t record_count_ = 0;
     std::uint64_t total_payload_bytes_ = 0;
     std::uint64_t current_segment_index_ = 0;
@@ -113,7 +149,8 @@ struct StreamSetInfo {
 };
 
 // Validate a single segment file. Returns status and issues.
-// first_monotonic_ns / last_monotonic_ns are populated from actual record data.
+// first_monotonic_ns / last_monotonic_ns populated from actual record data.
+// first_utc_ns / last_utc_ns populated from records with kRecordFlagUtcValid (0 if none).
 SegmentStatus validate_segment(const std::string& path,
                                RawSegmentMetadata& meta,
                                RawFooter& footer,
@@ -121,18 +158,26 @@ SegmentStatus validate_segment(const std::string& path,
                                std::string& content_sha256_hex,
                                std::string& file_sha256_hex,
                                std::uint64_t* first_monotonic_ns = nullptr,
-                               std::uint64_t* last_monotonic_ns = nullptr);
+                               std::uint64_t* last_monotonic_ns = nullptr,
+                               std::uint64_t* first_utc_ns = nullptr,
+                               std::uint64_t* last_utc_ns = nullptr,
+                               IFileSystem* fs = nullptr);
 
 // Validate a stream set (multiple segments for one source).
+// first/last_capture_utc_ns: across all segments from records with kRecordFlagUtcValid.
 SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
                                   std::vector<RawSegmentMetadata>& metas,
                                   std::vector<RawFooter>& footers,
-                                  std::vector<RawValidationIssue>& issues);
+                                  std::vector<RawValidationIssue>& issues,
+                                  std::uint64_t* first_capture_utc_ns = nullptr,
+                                  std::uint64_t* last_capture_utc_ns = nullptr,
+                                  IFileSystem* fs = nullptr);
 
 // Group segments in a directory by (session_id, source_id, channel_id).
 // Issues from unreadable, malformed, corrupt, unsupported, and partial candidates
 // are reported in `issues`. No .mxraw or .mxraw.partial candidate is silently skipped.
 std::vector<StreamSetInfo> group_stream_sets(const std::string& directory,
-                                              std::vector<RawValidationIssue>& issues);
+                                              std::vector<RawValidationIssue>& issues,
+                                              IFileSystem* fs = nullptr);
 
 }  // namespace moex_raw

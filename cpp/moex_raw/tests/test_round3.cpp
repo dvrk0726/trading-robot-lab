@@ -86,10 +86,35 @@ static std::string independent_mxreplay1_digest(const moex_raw::RawSegmentMetada
 }
 
 // Mock filesystem that can inject failures
+struct MockFileHandle : moex_raw::IFileHandle {
+    bool fail_write = false;
+    bool fail_flush = false;
+    bool fail_close = false;
+    bool fail_read = false;
+    std::size_t short_write_bytes = 0;
+
+    std::size_t read(void*, std::size_t size) override {
+        if (fail_read) return 0;
+        return size;
+    }
+    std::size_t write(const void*, std::size_t size) override {
+        if (fail_write) return 0;
+        if (short_write_bytes > 0 && short_write_bytes < size) return short_write_bytes;
+        return size;
+    }
+    bool seek(std::int64_t, int) override { return true; }
+    bool flush() override { return !fail_flush; }
+    bool close() override { return !fail_close; }
+};
+
 struct MockFileSystem : moex_raw::IFileSystem {
     bool fail_rename = false;
     bool fail_exists = false;
     bool exists_result = false;  // what exists() returns when not failing
+    bool fail_file_size = false;
+    std::uint64_t mock_file_size = 0;
+    bool fail_open_write = false;
+    MockFileHandle* last_handle = nullptr;
 
     bool exists(const std::string&) override {
         if (fail_exists) return exists_result;
@@ -99,6 +124,22 @@ struct MockFileSystem : moex_raw::IFileSystem {
         return !fail_rename;
     }
     bool remove(const std::string&) override { return true; }
+    std::uint64_t file_size(const std::string&, bool& ok) override {
+        if (fail_file_size) { ok = false; return 0; }
+        ok = true;
+        return mock_file_size;
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_read(const std::string&) override {
+        auto h = std::make_unique<MockFileHandle>();
+        last_handle = h.get();
+        return h;
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_write(const std::string&) override {
+        if (fail_open_write) return nullptr;
+        auto h = std::make_unique<MockFileHandle>();
+        last_handle = h.get();
+        return h;
+    }
 };
 
 int main() {
