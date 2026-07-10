@@ -2,16 +2,12 @@
 #include "test_helpers.hpp"
 #include <iostream>
 #include <fstream>
+#include <map>
 #include <set>
 
 namespace {
 
 const char* VALID_TEMPLATES = "fixtures/synthetic_templates.xml";
-
-void write_file(const char* path, const char* content) {
-    std::ofstream ofs(path);
-    ofs << content;
-}
 
 void test_valid_templates_parse() {
     std::vector<moex_fast::FastTemplateDescriptor> templates;
@@ -31,6 +27,25 @@ void test_valid_templates_parse() {
     CHECK(ids.count(46));
 
     TEST_PASS("valid templates parse");
+}
+
+void test_template_names_match_specification() {
+    std::vector<moex_fast::FastTemplateDescriptor> templates;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_templates_xml(VALID_TEMPLATES, templates, issues);
+
+    std::map<unsigned, std::string> id_name;
+    for (const auto& t : templates) id_name[t.id] = t.name;
+
+    CHECK(id_name[29] == "OrdersLogMessage");
+    CHECK(id_name[30] == "BookMessage");
+    CHECK(id_name[31] == "DefaultIncrementalRefreshMessage");
+    CHECK(id_name[32] == "DefaultSnapshotMessage");
+    CHECK(id_name[40] == "SecurityDefinition");
+    CHECK(id_name[45] == "SecurityGroupStatus");
+    CHECK(id_name[46] == "TradingSessionStatus");
+
+    TEST_PASS("template names match specification");
 }
 
 void test_template_fields() {
@@ -66,17 +81,26 @@ void test_mandatory_optional() {
     }
     CHECK(ol != nullptr);
 
-    bool found_mandatory = false;
+    // In real MOEX templates, mandatory fields omit the presence attribute.
+    // Absent presence => mandatory; presence="optional" => optional.
+    bool found_mandatory_no_presence = false;
+    bool found_optional = false;
     for (const auto& f : ol->fields) {
         if (f.name == "MsgSeqNum") {
+            // MsgSeqNum has no presence attribute in the fixture => mandatory
             CHECK(f.is_mandatory);
-            found_mandatory = true;
-            break;
+            found_mandatory_no_presence = true;
+        }
+        if (f.name == "MDEntryID") {
+            // MDEntryID has presence="optional" in the fixture
+            CHECK(!f.is_mandatory);
+            found_optional = true;
         }
     }
-    CHECK(found_mandatory);
+    CHECK(found_mandatory_no_presence);
+    CHECK(found_optional);
 
-    TEST_PASS("mandatory/optional presence");
+    TEST_PASS("mandatory/optional presence (absent=mandatory, optional=optional)");
 }
 
 void test_sequence_fields() {
@@ -161,10 +185,10 @@ void test_field_order_monotonic() {
 }
 
 void test_malformed_xml() {
-    write_file("fixtures/bad_templates.xml", "not xml at all");
+    write_temp_file("bad_templates.xml", "not xml at all");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_templates_xml("fixtures/bad_templates.xml", templates, issues);
+    bool ok = moex_fast::parse_templates_xml(temp_path("bad_templates.xml").c_str(), templates, issues);
     CHECK(!ok);
     CHECK(!issues.empty());
     CHECK(issues[0].severity == moex_fast::Severity::Error);
@@ -173,10 +197,10 @@ void test_malformed_xml() {
 }
 
 void test_missing_root() {
-    write_file("fixtures/no_root_templates.xml", "<foo><bar/></foo>");
+    write_temp_file("no_root_templates.xml", "<foo><bar/></foo>");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_templates_xml("fixtures/no_root_templates.xml", templates, issues);
+    bool ok = moex_fast::parse_templates_xml(temp_path("no_root_templates.xml").c_str(), templates, issues);
     CHECK(!ok);
     CHECK(!issues.empty());
 
@@ -184,14 +208,14 @@ void test_missing_root() {
 }
 
 void test_duplicate_template_id() {
-    write_file("fixtures/dup_templates.xml",
+    write_temp_file("dup_templates.xml",
         "<templates>"
         "  <template id='1' name='A'><uInt32 name='X'/></template>"
         "  <template id='1' name='B'><uInt32 name='Y'/></template>"
         "</templates>");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_templates_xml("fixtures/dup_templates.xml", templates, issues);
+    bool ok = moex_fast::parse_templates_xml(temp_path("dup_templates.xml").c_str(), templates, issues);
     CHECK(ok);
     CHECK(templates.size() == 1);
     bool found_dup = false;
@@ -204,13 +228,13 @@ void test_duplicate_template_id() {
 }
 
 void test_non_numeric_id() {
-    write_file("fixtures/bad_id_templates.xml",
+    write_temp_file("bad_id_templates.xml",
         "<templates>"
         "  <template id='abc' name='A'><uInt32 name='X'/></template>"
         "</templates>");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_templates_xml("fixtures/bad_id_templates.xml", templates, issues);
+    moex_fast::parse_templates_xml(temp_path("bad_id_templates.xml").c_str(), templates, issues);
     CHECK(templates.empty());
     bool found_bad_id = false;
     for (const auto& iss : issues) {
@@ -222,23 +246,23 @@ void test_non_numeric_id() {
 }
 
 void test_missing_id() {
-    write_file("fixtures/no_id_templates.xml",
+    write_temp_file("no_id_templates.xml",
         "<templates>"
         "  <template name='A'><uInt32 name='X'/></template>"
         "</templates>");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_templates_xml("fixtures/no_id_templates.xml", templates, issues);
+    moex_fast::parse_templates_xml(temp_path("no_id_templates.xml").c_str(), templates, issues);
     CHECK(templates.empty());
 
     TEST_PASS("missing template id");
 }
 
 void test_empty_templates() {
-    write_file("fixtures/empty_templates.xml", "<templates/>");
+    write_temp_file("empty_templates.xml", "<templates/>");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_templates_xml("fixtures/empty_templates.xml", templates, issues);
+    bool ok = moex_fast::parse_templates_xml(temp_path("empty_templates.xml").c_str(), templates, issues);
     CHECK(ok);
     CHECK(templates.empty());
 
@@ -256,7 +280,7 @@ void test_file_not_found() {
 }
 
 void test_unknown_element_reported() {
-    write_file("fixtures/unknown_elem.xml",
+    write_temp_file("unknown_elem.xml",
         "<templates>"
         "  <template id='1' name='A'>"
         "    <uInt32 name='X'><tail/></uInt32>"
@@ -264,7 +288,7 @@ void test_unknown_element_reported() {
         "</templates>");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_templates_xml("fixtures/unknown_elem.xml", templates, issues);
+    moex_fast::parse_templates_xml(temp_path("unknown_elem.xml").c_str(), templates, issues);
 
     // The parser should report the unsupported 'tail' operator in field 'X'
     bool found_issue = false;
@@ -280,14 +304,36 @@ void test_unknown_element_reported() {
     TEST_PASS("unsupported FAST operator reported");
 }
 
+void test_unknown_presence_reported() {
+    write_temp_file("unknown_pres.xml",
+        "<templates>"
+        "  <template id='1' name='A'>"
+        "    <uInt32 name='X' presence='constant'/>"
+        "  </template>"
+        "</templates>");
+    std::vector<moex_fast::FastTemplateDescriptor> templates;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_templates_xml(temp_path("unknown_pres.xml").c_str(), templates, issues);
+
+    bool found_issue = false;
+    for (const auto& iss : issues) {
+        if (iss.message.find("Unsupported presence") != std::string::npos) {
+            found_issue = true;
+        }
+    }
+    CHECK(found_issue);
+
+    TEST_PASS("unknown presence value reported");
+}
+
 void test_issue_source_template() {
-    write_file("fixtures/src_test.xml",
+    write_temp_file("src_test.xml",
         "<templates>"
         "  <template id='1' name='A'><uInt32 name='X'/></template>"
         "</templates>");
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_templates_xml("fixtures/src_test.xml", templates, issues);
+    moex_fast::parse_templates_xml(temp_path("src_test.xml").c_str(), templates, issues);
 
     for (const auto& iss : issues) {
         CHECK(iss.source == moex_fast::IssueSource::Template);
@@ -300,6 +346,7 @@ void test_issue_source_template() {
 
 int main() {
     test_valid_templates_parse();
+    test_template_names_match_specification();
     test_template_fields();
     test_mandatory_optional();
     test_sequence_fields();
@@ -313,6 +360,7 @@ int main() {
     test_empty_templates();
     test_file_not_found();
     test_unknown_element_reported();
+    test_unknown_presence_reported();
     test_issue_source_template();
 
     std::cout << "\nAll template parser tests PASSED.\n";

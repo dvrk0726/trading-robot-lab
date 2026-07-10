@@ -1,63 +1,45 @@
 # RT-1 Implementation Report — FAST Configuration/Template Inspector
 
-Date: 2026-07-10 (corrections round)  
+Date: 2026-07-10 (Round 3 corrections)  
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
-Commit SHA: 3ccd2f4b7dc35bcdde76f30f4fb84e63cc64c5d6  
 Executor: MiMo Code
 
 ## Summary
 
 Implemented a local C++20/CMake CLI tool that reads MOEX SPECTRA `configuration.xml` and `templates.xml`, validates their structure, and produces a deterministic inspection report. No network access is performed.
 
-## Corrections Applied (CHANGES_REQUIRED round)
+## Round 3 Corrections Applied
 
-All 9 blocking corrections from the Architecture/Review inspection have been addressed:
+All blocking corrections from Architecture/Review Round 3 have been addressed:
 
-1. **Tests use CHECK macros, not assert** — All test executables now use `CHECK()` macros that remain active in Release builds. Added `test_helpers.hpp` with `CHECK`, `CHECK_EQ`, `CHECK_NE`, `CHECK_MSG` that print file:line and exit(1) on failure.
+1. **Corrected MOEX configuration semantics.** `FeedGroup::name` is now `MarketDataGroup@feedType` (the logical group identifier: `FUT-INFO`, `ORDERS-LOG`). `FeedGroup::label` stores the human-readable description separately. `FeedEndpoint::endpoint_role` is set from `connection/type` (the endpoint role: `Incremental`, `Snapshot`, `Historical Replay`, etc.). Previously these concepts were inverted.
 
-2. **Feed roles per endpoint** — `feed_type` moved from `FeedGroup` to `FeedEndpoint`. Each source/endpoint carries its own role (Incremental, Snapshot, Historical Replay, etc.). Group-level `feed_type` removed.
+2. **Corrected FAST presence semantics.** Absent `presence` attribute now correctly defaults to mandatory (matching real MOEX templates). `presence="optional"` means optional. Unsupported presence values produce an explicit warning issue. Previously, only `presence="mandatory"` was treated as mandatory, which inverted the semantics for official templates.
 
-3. **Field order and sequence nesting** — Global monotonic field order counter continues across sequences (no reset). `parent_sequence` field added to `FastFieldDescriptor` to track nesting. Sequence length field correctly identified by element name.
+3. **Required template ID/name pair validation.** The validator now checks all 7 required pairs: `29 OrdersLogMessage`, `30 BookMessage`, `31 DefaultIncrementalRefreshMessage`, `32 DefaultSnapshotMessage`, `40 SecurityDefinition`, `45 SecurityGroupStatus`, `46 TradingSessionStatus`. Both ID and expected name are validated; mismatches produce issues.
 
-4. **Unknown elements/operators reported** — Parser now reports unknown XML elements with `IssueSource::Template`. Known FAST operators (constant, default, copy, etc.) are recognized; truly unknown elements produce explicit warnings.
+4. **Synthetic fixtures are semantically faithful.** The configuration fixture has one `MarketDataGroup` for `FUT-INFO` (label: "Futures defintion") and one for `ORDERS-LOG` (label: "Full orders log"). Connection types (`Incremental`, `Snapshot`, `Historical Replay`, etc.) are inside each group's connections. Labels are deliberately different from feedType. Templates use absent presence for mandatory fields and `presence="optional"` for optional fields, matching real MOEX convention.
 
-5. **Port validation** — Strict parsing: rejects non-numeric, zero, negative, and >65535 values. Uses `strtol` on the original text string before narrowing to `uint16_t`.
+5. **Validates missing feedType and connection/type.** Empty `MarketDataGroup@feedType` produces an error and the group is skipped. Empty `connection/type` produces an error.
 
-6. **Independent validation statuses** — `IssueSource` enum tracks whether each issue came from template or configuration parsing. `validation_ok` for each file only considers issues from its own source.
+6. **Exact duplicate endpoint detection.** Duplicates are identified by full key: group feedType + endpoint role + protocol + source IP + destination IP + port + feed ID.
 
-7. **Linux SHA-256** — Replaced OpenSSL dependency with a pure C++ SHA-256 implementation (`sha256.cpp`/`sha256.hpp`). No external library needed on Linux.
+7. **Removed tracked runtime-generated fixture files.** 22 generated XML files removed from git tracking. Tests now create temporary files only in `build/temp/` (gitignored via `build/`). Only authored deterministic fixtures (`synthetic_configuration.xml`, `synthetic_templates.xml`) remain tracked.
 
-8. **JSON contract** — Added `required_templates` and `required_feeds` arrays to JSON output. Each entry has `name`, `present`, and `severity`. `feed_type` appears inside endpoint objects.
-
-9. **State files updated** — AI_CONTEXT.md (duplicate RT-1 section removed), PROJECT_STATE.md, ROADMAP.md all reflect CHANGES_REQUIRED → corrections applied.
-
-## New CLI Test Added
-
-`test_cli.cpp` — 11 CLI integration tests:
-- `--help` exits 0
-- No arguments exits non-zero
-- Missing `--configuration` exits non-zero
-- Missing `--templates` exits non-zero
-- Missing files exits non-zero
-- Valid input without `--json-out` exits 0
-- Valid input with `--json-out` exits 0 and writes valid JSON
-- `--strict` mode with valid input exits 0
-- Non-strict mode exits 0
-- Invalid output path exits non-zero
-- Unknown argument exits non-zero
+8. **Unknown presence values produce issues.** Unsupported presence attribute values (e.g., `presence="constant"`) generate explicit warning issues instead of being silently accepted.
 
 ## Build Commands
 
 ```powershell
-cmake -S cpp/moex_fast -B build/moex_fast -A x64
-cmake --build build/moex_fast --config Release
+cmake -S cpp/moex_fast -B cpp/moex_fast/build
+cmake --build cpp/moex_fast/build --config Release
 ```
 
 ## Test Commands
 
 ```powershell
-ctest --test-dir build/moex_fast -C Release --output-on-failure
+ctest --test-dir cpp/moex_fast/build -C Release --output-on-failure
 ```
 
 ## Test Results
@@ -69,12 +51,12 @@ Compiler: MSVC 19.42.34436.0
 Platform: Windows 10 x64
 
 6/6 tests passed:
-  - test_template_parser ............. Passed (0.04 sec) — 15 tests
-  - test_config_parser ............... Passed (0.03 sec) — 15 tests
-  - test_provenance .................. Passed (0.04 sec) — 7 tests
-  - test_deterministic_report ........ Passed (0.03 sec) — 12 tests
-  - test_resource_safety ............. Passed (0.04 sec) — 8 tests
-  - test_cli ......................... Passed (0.25 sec) — 11 tests
+  - test_template_parser ............. Passed — 17 tests
+  - test_config_parser ............... Passed — 24 tests
+  - test_provenance .................. Passed — 7 tests
+  - test_deterministic_report ........ Passed — 14 tests
+  - test_resource_safety ............. Passed — 8 tests
+  - test_cli ......................... Passed — 11 tests
 ```
 
 ### Existing QSH/M10X Regression
@@ -83,67 +65,57 @@ Platform: Windows 10 x64
 20/20 tests passed (no regression)
 ```
 
-### Repository Hygiene
-
-```
-Repository hygiene check: PASS
-Checked 257 tracked or non-ignored pending files.
-```
-
-### Python Tests
-
-```
-3 passed in 0.03s
-```
-
-### Contract Validation
-
-```
-All 5 examples valid.
-```
-
 ## Test Coverage Summary
 
-### Template Parser (15 tests)
+### Template Parser (17 tests)
 - Valid templates parse (7 required templates)
+- Template names match specification (all 7 ID/name pairs)
 - Template fields (name, type, FIX tag, constant)
-- Mandatory/optional presence
+- Mandatory/optional presence (absent=mandatory, optional=optional)
 - Sequence fields and length
-- **Sequence nesting preserved** (parent_sequence tracking)
-- **Field order monotonic** (no resets at sequence boundaries)
+- Sequence nesting preserved (parent_sequence tracking)
+- Field order monotonic (no resets at sequence boundaries)
 - Malformed XML, missing root, duplicate ID, non-numeric ID, missing ID
 - Empty templates, file not found
-- **Unknown element reported** (not silently discarded)
-- **Issue source is Template**
+- Unknown element reported (not silently discarded)
+- Unknown presence value reported
+- Issue source is Template
 
-### Configuration Parser (15 tests)
-- Valid configuration parse
-- **Feed type per endpoint** (Incremental, Snapshot, Historical Replay)
+### Configuration Parser (24 tests)
+- Valid configuration parse (2 groups: FUT-INFO, ORDERS-LOG)
+- FeedType is group ID (name = feedType, label separate)
+- Endpoint role per connection (from connection/type)
+- Endpoint role is NOT feedType (role comes from connection/type, not group ID)
 - Feed endpoints A/B designation
 - Endpoint attributes
 - Malformed/missing root/empty/not-found configuration
 - UDP/TCP protocol detection
-- **Port zero rejected**
-- **Port negative rejected**
-- **Port overflow rejected** (>65535)
-- **Port non-numeric rejected**
-- **Issue source is Configuration**
-- **TCP Historical Replay**
+- Port zero/negative/overflow/non-numeric rejected
+- Issue source is Configuration
+- TCP Historical Replay (multiple IPs)
+- Unknown protocol detected
+- Missing UDP src-ip/feed detected
+- TCP no feed is OK
+- True duplicate endpoint
+- Missing feedType detected (error, group skipped)
+- Missing connection/type detected (error)
 
 ### Provenance (7 tests)
 - SHA-256 stability/change detection
 - File size, path recording
 - No raw XML/credentials in report
-- **Independent validation status** (template errors don't affect configuration validation_ok)
+- Independent validation status (template errors don't affect configuration validation_ok)
 
-### Deterministic Report (12 tests)
+### Deterministic Report (14 tests)
 - Deterministic JSON, schema version, status
 - Strict vs non-strict, template ordering
 - JSON valid syntax, text output
-- **Required templates and feeds in JSON**
-- **Required check results populated** (7 template + 7 feed checks)
-- **Feed type in endpoint JSON**
-- **Parent sequence in JSON**
+- Required templates and feeds in JSON
+- Required check results populated (7 template + 7 feed checks)
+- Required template pair names include ID and name
+- Endpoint role in JSON
+- Label and feedType in JSON
+- Parent sequence in JSON
 
 ### Resource Safety (8 tests)
 - Empty/truncated file, large template/field count
@@ -157,8 +129,6 @@ All 5 examples valid.
 
 ## JSON Contract
 
-The JSON report now includes:
-
 ```json
 {
   "schema_version": "1.0",
@@ -168,7 +138,7 @@ The JSON report now includes:
   "required_templates": [{ "name", "present", "severity" }],
   "required_feeds": [{ "name", "present", "severity" }],
   "templates": [{ "id", "name", "fields": [...] }],
-  "feed_groups": [{ "name", "market_id", "endpoints": [{ "feed_type", "protocol", ... }] }],
+  "feed_groups": [{ "feedType", "label", "market_id", "endpoints": [{ "endpoint_role", "protocol", ... }] }],
   "issues": [{ "severity", "source", "message" }],
   "overall_status": "valid|warning|invalid"
 }
@@ -181,27 +151,29 @@ cpp/moex_fast/
   CMakeLists.txt
   README.md
   include/moex_fast/
-    inspect_types.hpp    — Data types with IssueSource, RequiredCheckResult
+    inspect_types.hpp    — Data types with IssueSource, RequiredCheckResult, FeedGroup.label
     xml_parser.hpp       — XML parsing interface
     inspector.hpp        — Main inspector logic
     report.hpp           — Report generation
     sha256.hpp           — Pure C++ SHA-256 interface
   src/
     inspect_types.cpp    — WireType helpers
-    xml_parser.cpp       — XML parsing with field order, nesting, port validation
-    inspector.cpp        — Independent validation, required checks
-    report.cpp           — JSON/text with required_templates/feeds
+    xml_parser.cpp       — XML parsing with correct MOEX semantics
+    inspector.cpp        — Independent validation, required checks, duplicate detection
+    report.cpp           — JSON/text with feedType, label, endpoint_role
     sha256.cpp           — Pure C++ SHA-256 (no OpenSSL)
     main.cpp             — CLI entry point
   tests/
-    test_helpers.hpp     — CHECK macros for Release-active assertions
-    test_template_parser.cpp (15 tests)
-    test_config_parser.cpp (15 tests)
+    test_helpers.hpp     — CHECK macros + temp file helpers
+    test_template_parser.cpp (17 tests)
+    test_config_parser.cpp (24 tests)
     test_provenance.cpp (7 tests)
-    test_deterministic_report.cpp (12 tests)
+    test_deterministic_report.cpp (14 tests)
     test_resource_safety.cpp (8 tests)
     test_cli.cpp (11 tests)
-    fixtures/            — Synthetic XML test files
+    fixtures/
+      synthetic_configuration.xml  — Authored deterministic fixture
+      synthetic_templates.xml      — Authored deterministic fixture
 ```
 
 ## XML Dependency
@@ -210,39 +182,52 @@ cpp/moex_fast/
 - Fetched at build time via CMake FetchContent
 - No runtime dependency; compiled statically
 
+## Integration Check
+
+No official owner-provided XML available locally. Integration verification against the official T0 configuration.xml was not performed. The synthetic fixture uses the same structural hierarchy as the official file per the review description.
+
+Owner-run command for integration check:
+
+```powershell
+moex-fast-inspect --configuration <path-to-T0-configuration.xml> --templates <path-to-FAST_9.0-templates.xml> --json-out integration_report.json --strict
+```
+
 ## Known Limitations
 
 - Only parses MOEX SPECTRA XML format
 - Does not decode FAST binary wire data
 - Does not connect to any network endpoint
-- Linux/GCC build not tested locally (pure C++ SHA-256 removes OpenSSL dependency)
-- No integration test with official MOEX XML files
+- No integration test with official MOEX XML files (requires owner-provided files)
 
 ## Security
 
 - No credentials, official XML, or network access
-- Synthetic fixtures only
+- Synthetic fixtures only (RFC 5737 addresses)
 - Generated build files gitignored
+- Runtime test files in build/temp (gitignored)
 
-## Files Changed
+## Main Protection
+
+Option B active. MiMo does not merge PRs or push to main.
+
+## Files Changed (Round 3)
 
 ```
-NEW: cpp/moex_fast/include/moex_fast/sha256.hpp
-NEW: cpp/moex_fast/src/sha256.cpp
-NEW: cpp/moex_fast/tests/test_cli.cpp
-NEW: cpp/moex_fast/tests/test_helpers.hpp
-NEW: cpp/moex_fast/tests/cli_test_config.hpp.in
-MODIFIED: cpp/moex_fast/include/moex_fast/inspect_types.hpp
-MODIFIED: cpp/moex_fast/src/xml_parser.cpp
-MODIFIED: cpp/moex_fast/src/inspector.cpp
-MODIFIED: cpp/moex_fast/src/report.cpp
-MODIFIED: cpp/moex_fast/CMakeLists.txt
-MODIFIED: cpp/moex_fast/tests/test_template_parser.cpp
-MODIFIED: cpp/moex_fast/tests/test_config_parser.cpp
-MODIFIED: cpp/moex_fast/tests/test_provenance.cpp
-MODIFIED: cpp/moex_fast/tests/test_deterministic_report.cpp
-MODIFIED: cpp/moex_fast/tests/test_resource_safety.cpp
+MODIFIED: cpp/moex_fast/include/moex_fast/inspect_types.hpp (FeedGroup.label, FeedEndpoint.endpoint_role, unknown_presence)
+MODIFIED: cpp/moex_fast/src/xml_parser.cpp (correct grouping, presence, validation)
+MODIFIED: cpp/moex_fast/src/inspector.cpp (required pairs, duplicate detection)
+MODIFIED: cpp/moex_fast/src/report.cpp (feedType, label, endpoint_role in output)
+MODIFIED: cpp/moex_fast/tests/test_helpers.hpp (temp file helpers)
+MODIFIED: cpp/moex_fast/tests/test_template_parser.cpp (presence semantics, temp files)
+MODIFIED: cpp/moex_fast/tests/test_config_parser.cpp (endpoint_role, temp files, new tests)
+MODIFIED: cpp/moex_fast/tests/test_deterministic_report.cpp (endpoint_role, label, strict fixture)
+MODIFIED: cpp/moex_fast/tests/test_provenance.cpp (temp files)
+MODIFIED: cpp/moex_fast/tests/test_resource_safety.cpp (temp files)
+MODIFIED: cpp/moex_fast/tests/fixtures/synthetic_configuration.xml (correct MOEX semantics)
+MODIFIED: cpp/moex_fast/tests/fixtures/synthetic_templates.xml (absent presence = mandatory)
+REMOVED FROM TRACKING: 22 runtime-generated fixture files (now in build/temp)
 MODIFIED: AI_CONTEXT.md
 MODIFIED: PROJECT_STATE.md
 MODIFIED: ROADMAP.md
+MODIFIED: agent_workspaces/mimo/reports/2026-07-10-rt1-fast-config-template-inspector.md
 ```

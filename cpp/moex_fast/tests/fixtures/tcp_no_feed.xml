@@ -1,1 +1,0 @@
-<configuration>  <MarketDataGroup feedType='Historical Replay' marketID='D' label='TEST'>    <connections>      <connection>        <type>MarketData</type>        <protocol>TCP/IP</protocol>        <src-ip>1.2.3.4</src-ip>        <ip>192.168.1.1</ip>        <port>8022</port>      </connection>    </connections>  </MarketDataGroup></configuration>

@@ -142,21 +142,19 @@ std::string report_to_json(const InspectionReport& r) {
     }
     indent(oss, 1); oss << "],\n";
 
-    // Feed groups — feed_type is now per endpoint, not per group
+    // Feed groups — name is feedType, label is human-readable, endpoint_role is connection/type
     indent(oss, 1); oss << "\"feed_groups\": [\n";
     for (std::size_t gi = 0; gi < r.feed_groups.size(); ++gi) {
         const auto& g = r.feed_groups[gi];
         indent(oss, 2); oss << "{\n";
-        indent(oss, 3); oss << "\"name\": "; json_escape(oss, g.name); oss << ",\n";
+        indent(oss, 3); oss << "\"feedType\": "; json_escape(oss, g.name); oss << ",\n";
+        indent(oss, 3); oss << "\"label\": "; json_escape(oss, g.label); oss << ",\n";
         indent(oss, 3); oss << "\"market_id\": "; json_escape(oss, g.market_id); oss << ",\n";
         indent(oss, 3); oss << "\"endpoints\": [\n";
         for (std::size_t ei = 0; ei < g.endpoints.size(); ++ei) {
             const auto& ep = g.endpoints[ei];
             indent(oss, 4); oss << "{\n";
-            indent(oss, 5); oss << "\"feed_type\": "; json_escape(oss, ep.feed_type); oss << ",\n";
-            if (!ep.connection_type.empty()) {
-                indent(oss, 5); oss << "\"connection_type\": "; json_escape(oss, ep.connection_type); oss << ",\n";
-            }
+            indent(oss, 5); oss << "\"endpoint_role\": "; json_escape(oss, ep.endpoint_role); oss << ",\n";
             indent(oss, 5); oss << "\"protocol\": "; json_escape(oss, ep.protocol); oss << ",\n";
             indent(oss, 5); oss << "\"source_ip\": "; json_escape(oss, ep.source_ip); oss << ",\n";
             indent(oss, 5); oss << "\"multicast_group\": "; json_escape(oss, ep.multicast_group); oss << ",\n";
@@ -226,9 +224,11 @@ std::string report_to_text(const InspectionReport& r) {
 
     oss << "\n--- Feed Groups (" << r.feed_groups.size() << ") ---\n";
     for (const auto& g : r.feed_groups) {
-        oss << "  " << g.name << " (" << g.endpoints.size() << " endpoints)\n";
+        oss << "  " << g.name;
+        if (!g.label.empty()) oss << " (" << g.label << ")";
+        oss << " (" << g.endpoints.size() << " endpoints)\n";
         for (const auto& ep : g.endpoints) {
-            oss << "    " << ep.feed_type << " " << ep.feed_id
+            oss << "    " << ep.endpoint_role << " " << ep.feed_id
                 << " " << ep.protocol << " " << ep.multicast_group
                 << ":" << ep.port << "\n";
         }

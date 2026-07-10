@@ -60,105 +60,94 @@ void test_overall_status_invalid() {
 }
 
 void test_strict_vs_nonstrict() {
-    // Create a fixture with only ORDERS-LOG (missing FUT-INFO)
-    {
-        std::ofstream ofs("fixtures/strict_test_config.xml");
-        ofs << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            << "<configuration>\n"
-            << "  <MarketDataGroup feedType='Incremental' marketID='D' label='ORDERS-LOG'>\n"
-            << "    <connections>\n"
-            << "      <connection>\n"
-            << "        <type>MarketData</type>\n"
-            << "        <protocol>UDP/IP</protocol>\n"
-            << "        <src-ip>192.0.2.1</src-ip>\n"
-            << "        <ip>233.0.0.40</ip>\n"
-            << "        <port>48040</port>\n"
-            << "        <feed>A</feed>\n"
-            << "      </connection>\n"
-            << "      <connection>\n"
-            << "        <type>MarketData</type>\n"
-            << "        <protocol>UDP/IP</protocol>\n"
-            << "        <src-ip>192.0.2.2</src-ip>\n"
-            << "        <ip>233.0.0.41</ip>\n"
-            << "        <port>49040</port>\n"
-            << "        <feed>B</feed>\n"
-            << "      </connection>\n"
-            << "    </connections>\n"
-            << "  </MarketDataGroup>\n"
-            << "  <MarketDataGroup feedType='Snapshot' marketID='D' label='ORDERS-LOG'>\n"
-            << "    <connections>\n"
-            << "      <connection>\n"
-            << "        <type>MarketData</type>\n"
-            << "        <protocol>UDP/IP</protocol>\n"
-            << "        <src-ip>192.0.2.1</src-ip>\n"
-            << "        <ip>233.0.0.42</ip>\n"
-            << "        <port>48041</port>\n"
-            << "        <feed>A</feed>\n"
-            << "      </connection>\n"
-            << "      <connection>\n"
-            << "        <type>MarketData</type>\n"
-            << "        <protocol>UDP/IP</protocol>\n"
-            << "        <src-ip>192.0.2.2</src-ip>\n"
-            << "        <ip>233.0.0.43</ip>\n"
-            << "        <port>49041</port>\n"
-            << "        <feed>B</feed>\n"
-            << "      </connection>\n"
-            << "    </connections>\n"
-            << "  </MarketDataGroup>\n"
-            << "  <MarketDataGroup feedType='Historical Replay' marketID='D' label='ORDERS-LOG'>\n"
-            << "    <connections>\n"
-            << "      <connection>\n"
-            << "        <type>MarketData</type>\n"
-            << "        <protocol>TCP/IP</protocol>\n"
-            << "        <src-ip>192.0.2.1</src-ip>\n"
-            << "        <ip>192.0.2.10</ip>\n"
-            << "        <port>8022</port>\n"
-            << "      </connection>\n"
-            << "    </connections>\n"
-            << "  </MarketDataGroup>\n"
-            << "</configuration>\n";
-    }
+    // Create a fixture with FUT-INFO but missing ORDERS-LOG
+    write_temp_file("strict_test_config.xml",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<configuration>\n"
+        "  <MarketDataGroup feedType='FUT-INFO' marketID='D' label='Futures defintion'>\n"
+        "    <connections>\n"
+        "      <connection>\n"
+        "        <type>Instrument Replay</type>\n"
+        "        <protocol>UDP/IP</protocol>\n"
+        "        <src-ip>192.0.2.1</src-ip>\n"
+        "        <ip>233.0.0.11</ip>\n"
+        "        <port>48011</port>\n"
+        "        <feed>A</feed>\n"
+        "      </connection>\n"
+        "      <connection>\n"
+        "        <type>Instrument Replay</type>\n"
+        "        <protocol>UDP/IP</protocol>\n"
+        "        <src-ip>192.0.2.2</src-ip>\n"
+        "        <ip>233.0.0.12</ip>\n"
+        "        <port>49011</port>\n"
+        "        <feed>B</feed>\n"
+        "      </connection>\n"
+        "    </connections>\n"
+        "  </MarketDataGroup>\n"
+        "  <MarketDataGroup feedType='ORDERS-LOG' marketID='D' label='Full orders log'>\n"
+        "    <connections>\n"
+        "      <connection>\n"
+        "        <type>Incremental</type>\n"
+        "        <protocol>UDP/IP</protocol>\n"
+        "        <src-ip>192.0.2.1</src-ip>\n"
+        "        <ip>233.0.0.40</ip>\n"
+        "        <port>48040</port>\n"
+        "        <feed>A</feed>\n"
+        "      </connection>\n"
+        "      <connection>\n"
+        "        <type>Incremental</type>\n"
+        "        <protocol>UDP/IP</protocol>\n"
+        "        <src-ip>192.0.2.2</src-ip>\n"
+        "        <ip>233.0.0.41</ip>\n"
+        "        <port>49040</port>\n"
+        "        <feed>B</feed>\n"
+        "      </connection>\n"
+        "    </connections>\n"
+        "  </MarketDataGroup>\n"
+        "</configuration>\n");
 
-    // Non-strict: missing FUT-INFO is a warning
+    std::string config_path = temp_path("strict_test_config.xml");
+
+    // Non-strict: missing Snapshot A/B is a warning
     {
         moex_fast::InspectorOptions opts;
-        opts.configuration_path = "fixtures/strict_test_config.xml";
+        opts.configuration_path = config_path;
         opts.templates_path = "fixtures/synthetic_templates.xml";
         opts.strict = false;
 
         auto r = moex_fast::run_inspector(opts);
         CHECK(r.overall_status == "warning");
 
-        bool found_fut_warning = false;
+        bool found_snap_warning = false;
         for (const auto& fr : r.required_feed_results) {
-            if (fr.name == "FUT-INFO") {
+            if (fr.name == "ORDERS-LOG-Snap-A") {
                 CHECK(!fr.present);
                 CHECK(fr.severity == moex_fast::Severity::Warning);
-                found_fut_warning = true;
+                found_snap_warning = true;
             }
         }
-        CHECK(found_fut_warning);
+        CHECK(found_snap_warning);
     }
 
-    // Strict: missing FUT-INFO is an error
+    // Strict: missing Snapshot A/B is an error
     {
         moex_fast::InspectorOptions opts;
-        opts.configuration_path = "fixtures/strict_test_config.xml";
+        opts.configuration_path = config_path;
         opts.templates_path = "fixtures/synthetic_templates.xml";
         opts.strict = true;
 
         auto r = moex_fast::run_inspector(opts);
         CHECK(r.overall_status == "invalid");
 
-        bool found_fut_error = false;
+        bool found_snap_error = false;
         for (const auto& fr : r.required_feed_results) {
-            if (fr.name == "FUT-INFO") {
+            if (fr.name == "ORDERS-LOG-Snap-A") {
                 CHECK(!fr.present);
                 CHECK(fr.severity == moex_fast::Severity::Error);
-                found_fut_error = true;
+                found_snap_error = true;
             }
         }
-        CHECK(found_fut_error);
+        CHECK(found_snap_error);
     }
 
     TEST_PASS("strict vs non-strict mode");
@@ -245,7 +234,7 @@ void test_required_checks_present() {
 
     auto report = moex_fast::run_inspector(opts);
 
-    // Should have 7 required template checks
+    // Should have 7 required template checks (ID+name pairs)
     CHECK(report.required_template_results.size() == 7);
     for (const auto& r : report.required_template_results) {
         CHECK(r.present);  // All required templates are in the fixture
@@ -257,7 +246,28 @@ void test_required_checks_present() {
     TEST_PASS("required check results populated");
 }
 
-void test_feed_type_in_endpoint_json() {
+void test_required_template_pair_names() {
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+
+    auto report = moex_fast::run_inspector(opts);
+
+    // Verify the required template result names include both ID and name
+    bool found_29 = false;
+    for (const auto& r : report.required_template_results) {
+        if (r.name.find("29") != std::string::npos &&
+            r.name.find("OrdersLogMessage") != std::string::npos) {
+            found_29 = true;
+            CHECK(r.present);
+        }
+    }
+    CHECK(found_29);
+
+    TEST_PASS("required template pair names include ID and name");
+}
+
+void test_endpoint_role_in_json() {
     moex_fast::InspectorOptions opts;
     opts.configuration_path = "fixtures/synthetic_configuration.xml";
     opts.templates_path = "fixtures/synthetic_templates.xml";
@@ -265,14 +275,30 @@ void test_feed_type_in_endpoint_json() {
     auto report = moex_fast::run_inspector(opts);
     auto json = moex_fast::report_to_json(report);
 
-    // feed_type should be inside endpoint objects, not at group level
-    CHECK(json.find("\"feed_type\"") != std::string::npos);
-    // Check that Incremental, Snapshot, Historical Replay all appear
+    // endpoint_role should appear in endpoint objects
+    CHECK(json.find("\"endpoint_role\"") != std::string::npos);
+    // Check that all roles appear
     CHECK(json.find("Incremental") != std::string::npos);
     CHECK(json.find("Snapshot") != std::string::npos);
     CHECK(json.find("Historical Replay") != std::string::npos);
 
-    TEST_PASS("feed_type in endpoint JSON");
+    TEST_PASS("endpoint_role in JSON");
+}
+
+void test_label_in_json() {
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+
+    auto report = moex_fast::run_inspector(opts);
+    auto json = moex_fast::report_to_json(report);
+
+    // label should appear in feed group objects
+    CHECK(json.find("\"label\"") != std::string::npos);
+    // feedType should also appear
+    CHECK(json.find("\"feedType\"") != std::string::npos);
+
+    TEST_PASS("label and feedType in JSON");
 }
 
 void test_parent_sequence_in_json() {
@@ -302,7 +328,9 @@ int main() {
     test_text_output();
     test_required_templates_in_json();
     test_required_checks_present();
-    test_feed_type_in_endpoint_json();
+    test_required_template_pair_names();
+    test_endpoint_role_in_json();
+    test_label_in_json();
     test_parent_sequence_in_json();
 
     std::cout << "\nAll deterministic report tests PASSED.\n";

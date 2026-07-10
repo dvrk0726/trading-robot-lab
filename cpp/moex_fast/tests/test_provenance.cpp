@@ -7,17 +7,12 @@
 
 namespace {
 
-void write_file(const char* path, const char* content) {
-    std::ofstream ofs(path);
-    ofs << content;
-}
-
 void test_sha256_stable() {
-    write_file("fixtures/hash_test_a.xml", "<templates><template id='1' name='X'><uInt32 name='F'/></template></templates>");
+    write_temp_file("hash_test_a.xml", "<templates><template id='1' name='X'><uInt32 name='F'/></template></templates>");
 
     moex_fast::InspectorOptions opts;
     opts.configuration_path = "fixtures/synthetic_configuration.xml";
-    opts.templates_path = "fixtures/hash_test_a.xml";
+    opts.templates_path = temp_path("hash_test_a.xml");
 
     auto r1 = moex_fast::run_inspector(opts);
     auto r2 = moex_fast::run_inspector(opts);
@@ -29,16 +24,16 @@ void test_sha256_stable() {
 }
 
 void test_sha256_changes() {
-    write_file("fixtures/hash_test_b1.xml", "<templates><template id='1' name='X'><uInt32 name='F'/></template></templates>");
-    write_file("fixtures/hash_test_b2.xml", "<templates><template id='1' name='Y'><uInt32 name='F'/></template></templates>");
+    write_temp_file("hash_test_b1.xml", "<templates><template id='1' name='X'><uInt32 name='F'/></template></templates>");
+    write_temp_file("hash_test_b2.xml", "<templates><template id='1' name='Y'><uInt32 name='F'/></template></templates>");
 
     moex_fast::InspectorOptions opts1;
     opts1.configuration_path = "fixtures/synthetic_configuration.xml";
-    opts1.templates_path = "fixtures/hash_test_b1.xml";
+    opts1.templates_path = temp_path("hash_test_b1.xml");
 
     moex_fast::InspectorOptions opts2;
     opts2.configuration_path = "fixtures/synthetic_configuration.xml";
-    opts2.templates_path = "fixtures/hash_test_b2.xml";
+    opts2.templates_path = temp_path("hash_test_b2.xml");
 
     auto r1 = moex_fast::run_inspector(opts1);
     auto r2 = moex_fast::run_inspector(opts2);
@@ -50,11 +45,11 @@ void test_sha256_changes() {
 
 void test_file_size_correct() {
     const char* content = "<templates/>";
-    write_file("fixtures/size_test.xml", content);
+    write_temp_file("size_test.xml", content);
 
     moex_fast::InspectorOptions opts;
     opts.configuration_path = "fixtures/synthetic_configuration.xml";
-    opts.templates_path = "fixtures/size_test.xml";
+    opts.templates_path = temp_path("size_test.xml");
 
     auto report = moex_fast::run_inspector(opts);
     CHECK(report.templates_info.file_size > 0);

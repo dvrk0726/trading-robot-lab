@@ -3,6 +3,7 @@
 #include "moex_fast/sha256.hpp"
 #include <algorithm>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <iomanip>
@@ -28,22 +29,42 @@ void validate_templates(
     std::vector<InspectionIssue>& issues,
     std::vector<RequiredCheckResult>& required_results) {
 
-    static const std::set<std::uint32_t> required_ids = {
-        29, 30, 31, 32, 40, 45, 46};
+    // Required template ID/name pairs per MOEX SPECTRA specification
+    struct RequiredPair { std::uint32_t id; const char* name; };
+    static const RequiredPair required_pairs[] = {
+        {29, "OrdersLogMessage"},
+        {30, "BookMessage"},
+        {31, "DefaultIncrementalRefreshMessage"},
+        {32, "DefaultSnapshotMessage"},
+        {40, "SecurityDefinition"},
+        {45, "SecurityGroupStatus"},
+        {46, "TradingSessionStatus"}
+    };
 
-    std::set<std::uint32_t> present;
+    // Build lookup by ID
+    std::map<std::uint32_t, const FastTemplateDescriptor*> by_id;
     for (const auto& t : templates) {
-        present.insert(t.id);
+        by_id[t.id] = &t;
     }
 
-    for (auto rid : required_ids) {
-        bool found = present.count(rid) > 0;
+    for (const auto& rp : required_pairs) {
         Severity sev = strict ? Severity::Error : Severity::Warning;
+        auto it = by_id.find(rp.id);
+        bool found = (it != by_id.end());
+        bool name_match = found && (it->second->name == rp.name);
+
         if (!found) {
             issues.push_back({sev, IssueSource::Template,
-                "Missing required template id: " + std::to_string(rid)});
+                "Missing required template: " + std::to_string(rp.id) + " " + rp.name});
+        } else if (!name_match) {
+            issues.push_back({sev, IssueSource::Template,
+                "Template " + std::to_string(rp.id) + " name mismatch: expected '" +
+                rp.name + "', got '" + it->second->name + "'"});
         }
-        required_results.push_back({"template-" + std::to_string(rid), found, sev});
+
+        required_results.push_back({
+            "template-" + std::to_string(rp.id) + "-" + rp.name,
+            found && name_match, sev});
     }
 
     for (const auto& t : templates) {
@@ -63,6 +84,9 @@ void validate_configuration(
     std::vector<InspectionIssue>& issues,
     std::vector<RequiredCheckResult>& required_results) {
 
+    // g.name is now feedType (FUT-INFO, ORDERS-LOG)
+    // ep.endpoint_role is now connection/type (Incremental, Snapshot, Historical Replay, etc.)
+
     bool has_orders_log = false;
     bool has_fut_info = false;
     bool has_incr_a = false;
@@ -75,15 +99,15 @@ void validate_configuration(
         if (g.name == "ORDERS-LOG") {
             has_orders_log = true;
             for (const auto& ep : g.endpoints) {
-                if (ep.feed_type == "Incremental") {
+                if (ep.endpoint_role == "Incremental") {
                     if (ep.feed_id == "A") has_incr_a = true;
                     if (ep.feed_id == "B") has_incr_b = true;
                 }
-                if (ep.feed_type == "Snapshot") {
+                if (ep.endpoint_role == "Snapshot") {
                     if (ep.feed_id == "A") has_snap_a = true;
                     if (ep.feed_id == "B") has_snap_b = true;
                 }
-                if (ep.feed_type == "Historical Replay") has_hist_replay = true;
+                if (ep.endpoint_role == "Historical Replay") has_hist_replay = true;
             }
         }
         if (g.name == "FUT-INFO") has_fut_info = true;
@@ -115,15 +139,20 @@ void validate_configuration(
         }
     }
 
-    // Check for duplicate endpoints
+    // Check for duplicate endpoints using full identity:
+    // group + role + protocol + source/host + destination + port + feed
     std::set<std::string> seen;
     for (const auto& g : groups) {
         for (const auto& ep : g.endpoints) {
-            std::string key = ep.multicast_group + ":" +
-                std::to_string(ep.port) + ":" + ep.feed_id;
+            std::string key = g.name + "|" + ep.endpoint_role + "|" +
+                ep.protocol + "|" + ep.source_ip + "|" +
+                ep.multicast_group + "|" + std::to_string(ep.port) +
+                "|" + ep.feed_id;
             if (seen.count(key)) {
                 issues.push_back({Severity::Warning, IssueSource::Configuration,
-                    "Duplicate endpoint: " + key});
+                    "Duplicate endpoint in group '" + g.name + "': " +
+                    ep.endpoint_role + " " + ep.multicast_group + ":" +
+                    std::to_string(ep.port) + " feed=" + ep.feed_id});
             }
             seen.insert(key);
         }

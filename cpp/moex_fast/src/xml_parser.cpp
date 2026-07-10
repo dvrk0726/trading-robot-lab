@@ -55,7 +55,21 @@ FastFieldDescriptor parse_field(pugi::xml_node node, std::uint32_t& field_order,
     }
 
     auto pres = node.attribute("presence");
-    fd.is_mandatory = (pres && std::string(pres.as_string("")) == "mandatory");
+    if (!pres) {
+        // Absent presence => mandatory (MOEX FAST convention)
+        fd.is_mandatory = true;
+    } else {
+        std::string pv = pres.as_string("");
+        if (pv == "optional") {
+            fd.is_mandatory = false;
+        } else if (pv == "mandatory") {
+            fd.is_mandatory = true;
+        } else {
+            // Unknown presence value — caller should report issue
+            fd.is_mandatory = true;
+            fd.unknown_presence = pv;
+        }
+    }
 
     auto charset = node.attribute("charset");
     if (charset) {
@@ -96,6 +110,13 @@ void parse_template_fields(pugi::xml_node parent_node,
                 auto fd = parse_field(child, field_order, parent_sequence);
                 fd.wire_type = WireType::Sequence;
                 std::string seq_name = fd.name;
+
+                if (!fd.unknown_presence.empty()) {
+                    issues.push_back({Severity::Warning, IssueSource::Template,
+                        "Unsupported presence value '" + fd.unknown_presence +
+                        "' in field '" + fd.name + "'"});
+                }
+
                 fields.push_back(fd);
 
                 // Check for unsupported operators in sequence field
@@ -112,6 +133,13 @@ void parse_template_fields(pugi::xml_node parent_node,
                 parse_template_fields(child, fields, issues, field_order, seq_name);
             } else {
                 auto fd = parse_field(child, field_order, parent_sequence);
+
+                if (!fd.unknown_presence.empty()) {
+                    issues.push_back({Severity::Warning, IssueSource::Template,
+                        "Unsupported presence value '" + fd.unknown_presence +
+                        "' in field '" + fd.name + "'"});
+                }
+
                 // Check for unsupported operators in non-sequence field
                 for (auto op : child.children()) {
                     std::string on(op.name());
@@ -266,38 +294,40 @@ bool parse_configuration_xml(
         return false;
     }
 
-    // Merge FeedGroups by label attribute.
-    // Map label -> index in out vector.
-    std::map<std::string, std::size_t> label_index;
+    // Merge FeedGroups by feedType (the logical group identifier: FUT-INFO, ORDERS-LOG).
+    // Map feedType -> index in out vector.
+    std::map<std::string, std::size_t> feedtype_index;
 
     for (auto mdg : root.children("MarketDataGroup")) {
         std::string feed_type = mdg.attribute("feedType").as_string("");
         std::string market_id = mdg.attribute("marketID").as_string("");
         std::string label = mdg.attribute("label").as_string("");
 
-        if (label.empty()) {
-            issues.push_back({Severity::Warning, IssueSource::Configuration,
-                "MarketDataGroup missing 'label' attribute"});
+        if (feed_type.empty()) {
+            issues.push_back({Severity::Error, IssueSource::Configuration,
+                "MarketDataGroup missing required 'feedType' attribute"});
+            continue;
         }
 
-        // Find or create FeedGroup for this label
-        auto it = label_index.find(label);
+        // Find or create FeedGroup for this feedType
+        auto it = feedtype_index.find(feed_type);
         std::size_t group_idx;
-        if (it != label_index.end()) {
+        if (it != feedtype_index.end()) {
             group_idx = it->second;
         } else {
             group_idx = out.size();
             FeedGroup fg;
-            fg.name = label;
+            fg.name = feed_type;
+            fg.label = label;
             fg.market_id = market_id;
             out.push_back(std::move(fg));
-            label_index[label] = group_idx;
+            feedtype_index[feed_type] = group_idx;
         }
 
         auto conns = mdg.child("connections");
         if (!conns) {
             issues.push_back({Severity::Warning, IssueSource::Configuration,
-                "MarketDataGroup '" + label + "' missing <connections> element"});
+                "MarketDataGroup '" + feed_type + "' missing <connections> element"});
             continue;
         }
 
@@ -308,32 +338,38 @@ bool parse_configuration_xml(
             std::string feed = child_text(conn, "feed");
             std::string port_text = child_text(conn, "port");
 
+            // Validate connection/type (endpoint role)
+            if (conn_type.empty()) {
+                issues.push_back({Severity::Error, IssueSource::Configuration,
+                    "Connection missing <type> (endpoint role) in group '" + feed_type + "'"});
+            }
+
             bool is_tcp = (protocol.find("TCP") != std::string::npos);
 
             // Validate protocol
             if (protocol.empty()) {
                 issues.push_back({Severity::Error, IssueSource::Configuration,
-                    "Connection missing <protocol> in group '" + label + "'"});
+                    "Connection missing <protocol> in group '" + feed_type + "'"});
             } else if (protocol != "UDP/IP" && protocol != "TCP/IP") {
                 issues.push_back({Severity::Error, IssueSource::Configuration,
-                    "Unknown protocol '" + protocol + "' in group '" + label + "'"});
+                    "Unknown protocol '" + protocol + "' in group '" + feed_type + "'"});
             }
 
             // Validate required UDP fields
             if (!is_tcp) {
                 if (src_ip.empty()) {
                     issues.push_back({Severity::Error, IssueSource::Configuration,
-                        "UDP connection missing <src-ip> in group '" + label + "'"});
+                        "UDP connection missing <src-ip> in group '" + feed_type + "'"});
                 }
                 if (feed.empty()) {
                     issues.push_back({Severity::Error, IssueSource::Configuration,
-                        "UDP connection missing <feed> in group '" + label + "'"});
+                        "UDP connection missing <feed> in group '" + feed_type + "'"});
                 }
             }
 
             // Parse port
             std::uint16_t port = 0;
-            std::string ctx = label + " connection (feed=" + feed + ")";
+            std::string ctx = feed_type + " connection (role=" + conn_type + ", feed=" + feed + ")";
             parse_port_strict(port_text, port, issues, ctx);
 
             // Collect all <ip> elements — one endpoint per ip
@@ -347,7 +383,7 @@ bool parse_configuration_xml(
 
             if (ips.empty()) {
                 issues.push_back({Severity::Error, IssueSource::Configuration,
-                    "Connection missing <ip> element in group '" + label + "'"});
+                    "Connection missing <ip> element in group '" + feed_type + "'"});
             }
 
             for (const auto& ip : ips) {
@@ -358,8 +394,7 @@ bool parse_configuration_xml(
                 ep.port = port;
                 ep.feed_id = feed;
                 ep.is_tcp = is_tcp;
-                ep.feed_type = feed_type;
-                ep.connection_type = conn_type;
+                ep.endpoint_role = conn_type;
                 out[group_idx].endpoints.push_back(std::move(ep));
             }
         }

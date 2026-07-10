@@ -7,11 +7,6 @@ namespace {
 
 const char* VALID_CONFIG = "fixtures/synthetic_configuration.xml";
 
-void write_file(const char* path, const char* content) {
-    std::ofstream ofs(path);
-    ofs << content;
-}
-
 void test_valid_config_parse() {
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
@@ -31,7 +26,23 @@ void test_valid_config_parse() {
     TEST_PASS("valid configuration parse");
 }
 
-void test_feed_type_per_endpoint() {
+void test_feed_type_is_group_id() {
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml(VALID_CONFIG, groups, issues);
+
+    const moex_fast::FeedGroup* ol = nullptr;
+    for (const auto& g : groups) {
+        if (g.name == "ORDERS-LOG") { ol = &g; break; }
+    }
+    CHECK(ol != nullptr);
+    // label must differ from feedType
+    CHECK(ol->label != ol->name);
+
+    TEST_PASS("feedType is group ID, label is separate");
+}
+
+void test_endpoint_role_per_connection() {
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
     moex_fast::parse_configuration_xml(VALID_CONFIG, groups, issues);
@@ -42,20 +53,39 @@ void test_feed_type_per_endpoint() {
     }
     CHECK(ol != nullptr);
 
-    // Each endpoint should carry its own feed_type
+    // Each endpoint should carry its own endpoint_role from connection/type
     bool has_incremental = false;
     bool has_snapshot = false;
     bool has_hist = false;
     for (const auto& ep : ol->endpoints) {
-        if (ep.feed_type == "Incremental") has_incremental = true;
-        if (ep.feed_type == "Snapshot") has_snapshot = true;
-        if (ep.feed_type == "Historical Replay") has_hist = true;
+        if (ep.endpoint_role == "Incremental") has_incremental = true;
+        if (ep.endpoint_role == "Snapshot") has_snapshot = true;
+        if (ep.endpoint_role == "Historical Replay") has_hist = true;
     }
     CHECK(has_incremental);
     CHECK(has_snapshot);
     CHECK(has_hist);
 
-    TEST_PASS("feed type per endpoint");
+    TEST_PASS("endpoint role per connection");
+}
+
+void test_endpoint_role_not_feed_type() {
+    // Verify that endpoint_role comes from connection/type, not from feedType
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml(VALID_CONFIG, groups, issues);
+
+    for (const auto& g : groups) {
+        for (const auto& ep : g.endpoints) {
+            // endpoint_role must NOT be a group ID like FUT-INFO or ORDERS-LOG
+            CHECK(ep.endpoint_role != "FUT-INFO");
+            CHECK(ep.endpoint_role != "ORDERS-LOG");
+            // endpoint_role should be a role like Incremental, Snapshot, etc.
+            CHECK(!ep.endpoint_role.empty());
+        }
+    }
+
+    TEST_PASS("endpoint role from connection/type, not feedType");
 }
 
 void test_feed_endpoints_ab() {
@@ -74,10 +104,10 @@ void test_feed_endpoints_ab() {
     bool has_snap_a = false;
     bool has_snap_b = false;
     for (const auto& ep : ol->endpoints) {
-        if (ep.feed_type == "Incremental" && ep.feed_id == "A") has_incr_a = true;
-        if (ep.feed_type == "Incremental" && ep.feed_id == "B") has_incr_b = true;
-        if (ep.feed_type == "Snapshot" && ep.feed_id == "A") has_snap_a = true;
-        if (ep.feed_type == "Snapshot" && ep.feed_id == "B") has_snap_b = true;
+        if (ep.endpoint_role == "Incremental" && ep.feed_id == "A") has_incr_a = true;
+        if (ep.endpoint_role == "Incremental" && ep.feed_id == "B") has_incr_b = true;
+        if (ep.endpoint_role == "Snapshot" && ep.feed_id == "A") has_snap_a = true;
+        if (ep.endpoint_role == "Snapshot" && ep.feed_id == "B") has_snap_b = true;
     }
     CHECK(has_incr_a);
     CHECK(has_incr_b);
@@ -109,10 +139,10 @@ void test_endpoint_attributes() {
 }
 
 void test_malformed_config() {
-    write_file("fixtures/bad_config.xml", "not xml");
+    write_temp_file("bad_config.xml", "not xml");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_configuration_xml("fixtures/bad_config.xml", groups, issues);
+    bool ok = moex_fast::parse_configuration_xml(temp_path("bad_config.xml").c_str(), groups, issues);
     CHECK(!ok);
     CHECK(!issues.empty());
 
@@ -120,20 +150,20 @@ void test_malformed_config() {
 }
 
 void test_missing_config_root() {
-    write_file("fixtures/no_root_config.xml", "<foo><bar/></foo>");
+    write_temp_file("no_root_config.xml", "<foo><bar/></foo>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_configuration_xml("fixtures/no_root_config.xml", groups, issues);
+    bool ok = moex_fast::parse_configuration_xml(temp_path("no_root_config.xml").c_str(), groups, issues);
     CHECK(!ok);
 
     TEST_PASS("missing configuration root");
 }
 
 void test_empty_config() {
-    write_file("fixtures/empty_config.xml", "<configuration/>");
+    write_temp_file("empty_config.xml", "<configuration/>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_configuration_xml("fixtures/empty_config.xml", groups, issues);
+    bool ok = moex_fast::parse_configuration_xml(temp_path("empty_config.xml").c_str(), groups, issues);
     CHECK(ok);
     CHECK(groups.empty());
 
@@ -169,12 +199,12 @@ void test_udp_tcp_protocol() {
 }
 
 void test_port_zero_rejected() {
-    write_file("fixtures/bad_port.xml",
+    write_temp_file("bad_port.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>UDP/IP</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>233.0.0.1</ip>"
@@ -186,7 +216,7 @@ void test_port_zero_rejected() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/bad_port.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("bad_port.xml").c_str(), groups, issues);
 
     bool found_error = false;
     for (const auto& iss : issues) {
@@ -201,12 +231,12 @@ void test_port_zero_rejected() {
 }
 
 void test_port_negative_rejected() {
-    write_file("fixtures/neg_port.xml",
+    write_temp_file("neg_port.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>UDP/IP</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>233.0.0.1</ip>"
@@ -218,7 +248,7 @@ void test_port_negative_rejected() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/neg_port.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("neg_port.xml").c_str(), groups, issues);
 
     bool found_error = false;
     for (const auto& iss : issues) {
@@ -233,12 +263,12 @@ void test_port_negative_rejected() {
 }
 
 void test_port_overflow_rejected() {
-    write_file("fixtures/big_port.xml",
+    write_temp_file("big_port.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>UDP/IP</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>233.0.0.1</ip>"
@@ -250,7 +280,7 @@ void test_port_overflow_rejected() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/big_port.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("big_port.xml").c_str(), groups, issues);
 
     bool found_error = false;
     for (const auto& iss : issues) {
@@ -264,12 +294,12 @@ void test_port_overflow_rejected() {
 }
 
 void test_port_nonnumeric_rejected() {
-    write_file("fixtures/str_port.xml",
+    write_temp_file("str_port.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>UDP/IP</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>233.0.0.1</ip>"
@@ -281,7 +311,7 @@ void test_port_nonnumeric_rejected() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/str_port.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("str_port.xml").c_str(), groups, issues);
 
     bool found_error = false;
     for (const auto& iss : issues) {
@@ -319,7 +349,7 @@ void test_tcp_historical_replay() {
 
     int tcp_hist_count = 0;
     for (const auto& ep : ol->endpoints) {
-        if (ep.feed_type == "Historical Replay" && ep.is_tcp) {
+        if (ep.endpoint_role == "Historical Replay" && ep.is_tcp) {
             tcp_hist_count++;
             CHECK(ep.port == 8022);
         }
@@ -330,12 +360,12 @@ void test_tcp_historical_replay() {
 }
 
 void test_unknown_protocol() {
-    write_file("fixtures/unknown_proto.xml",
+    write_temp_file("unknown_proto.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>XYZ</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>233.0.0.1</ip>"
@@ -347,7 +377,7 @@ void test_unknown_protocol() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/unknown_proto.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("unknown_proto.xml").c_str(), groups, issues);
 
     bool found_error = false;
     for (const auto& iss : issues) {
@@ -361,12 +391,12 @@ void test_unknown_protocol() {
 }
 
 void test_missing_udp_src_ip() {
-    write_file("fixtures/no_src_ip.xml",
+    write_temp_file("no_src_ip.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>UDP/IP</protocol>"
         "        <ip>233.0.0.1</ip>"
         "        <port>1234</port>"
@@ -377,7 +407,7 @@ void test_missing_udp_src_ip() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/no_src_ip.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("no_src_ip.xml").c_str(), groups, issues);
 
     bool found_error = false;
     for (const auto& iss : issues) {
@@ -391,12 +421,12 @@ void test_missing_udp_src_ip() {
 }
 
 void test_missing_udp_feed() {
-    write_file("fixtures/no_feed.xml",
+    write_temp_file("no_feed.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>UDP/IP</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>233.0.0.1</ip>"
@@ -407,7 +437,7 @@ void test_missing_udp_feed() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/no_feed.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("no_feed.xml").c_str(), groups, issues);
 
     bool found_error = false;
     for (const auto& iss : issues) {
@@ -422,12 +452,12 @@ void test_missing_udp_feed() {
 }
 
 void test_tcp_no_feed_ok() {
-    write_file("fixtures/tcp_no_feed.xml",
+    write_temp_file("tcp_no_feed.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Historical Replay' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Historical Replay</type>"
         "        <protocol>TCP/IP</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>192.168.1.1</ip>"
@@ -438,7 +468,7 @@ void test_tcp_no_feed_ok() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/tcp_no_feed.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("tcp_no_feed.xml").c_str(), groups, issues);
 
     // Should NOT have a "missing feed" error for TCP
     bool found_feed_error = false;
@@ -454,12 +484,12 @@ void test_tcp_no_feed_ok() {
 }
 
 void test_true_duplicate_endpoint() {
-    write_file("fixtures/dup_endpoint.xml",
+    write_temp_file("dup_endpoint.xml",
         "<configuration>"
-        "  <MarketDataGroup feedType='Incremental' marketID='D' label='TEST'>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
         "    <connections>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>UDP/IP</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>233.0.0.1</ip>"
@@ -467,7 +497,7 @@ void test_true_duplicate_endpoint() {
         "        <feed>A</feed>"
         "      </connection>"
         "      <connection>"
-        "        <type>MarketData</type>"
+        "        <type>Incremental</type>"
         "        <protocol>UDP/IP</protocol>"
         "        <src-ip>1.2.3.4</src-ip>"
         "        <ip>233.0.0.1</ip>"
@@ -479,21 +509,86 @@ void test_true_duplicate_endpoint() {
         "</configuration>");
     std::vector<moex_fast::FeedGroup> groups;
     std::vector<moex_fast::InspectionIssue> issues;
-    moex_fast::parse_configuration_xml("fixtures/dup_endpoint.xml", groups, issues);
+    moex_fast::parse_configuration_xml(temp_path("dup_endpoint.xml").c_str(), groups, issues);
 
-    // The parser itself doesn't detect duplicates (inspector does),
-    // but we verify both endpoints are parsed
+    // Both endpoints should be parsed
     CHECK(groups.size() == 1);
     CHECK(groups[0].endpoints.size() == 2);
 
     TEST_PASS("true duplicate endpoint");
 }
 
+void test_missing_feedtype() {
+    write_temp_file("no_feedtype.xml",
+        "<configuration>"
+        "  <MarketDataGroup marketID='D' label='Test'>"
+        "    <connections>"
+        "      <connection>"
+        "        <type>Incremental</type>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>1234</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
+        "</configuration>");
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml(temp_path("no_feedtype.xml").c_str(), groups, issues);
+
+    bool found_error = false;
+    for (const auto& iss : issues) {
+        if (iss.message.find("feedType") != std::string::npos &&
+            iss.message.find("missing") != std::string::npos) {
+            found_error = true;
+        }
+    }
+    CHECK(found_error);
+    CHECK(groups.empty());
+
+    TEST_PASS("missing feedType detected");
+}
+
+void test_missing_connection_type() {
+    write_temp_file("no_conn_type.xml",
+        "<configuration>"
+        "  <MarketDataGroup feedType='TEST-GROUP' marketID='D' label='Test'>"
+        "    <connections>"
+        "      <connection>"
+        "        <protocol>UDP/IP</protocol>"
+        "        <src-ip>1.2.3.4</src-ip>"
+        "        <ip>233.0.0.1</ip>"
+        "        <port>1234</port>"
+        "        <feed>A</feed>"
+        "      </connection>"
+        "    </connections>"
+        "  </MarketDataGroup>"
+        "</configuration>");
+    std::vector<moex_fast::FeedGroup> groups;
+    std::vector<moex_fast::InspectionIssue> issues;
+    moex_fast::parse_configuration_xml(temp_path("no_conn_type.xml").c_str(), groups, issues);
+
+    bool found_error = false;
+    for (const auto& iss : issues) {
+        if (iss.message.find("<type>") != std::string::npos &&
+            iss.message.find("missing") != std::string::npos) {
+            found_error = true;
+        }
+    }
+    CHECK(found_error);
+
+    TEST_PASS("missing connection/type detected");
+}
+
 }  // namespace
 
 int main() {
     test_valid_config_parse();
-    test_feed_type_per_endpoint();
+    test_feed_type_is_group_id();
+    test_endpoint_role_per_connection();
+    test_endpoint_role_not_feed_type();
     test_feed_endpoints_ab();
     test_endpoint_attributes();
     test_malformed_config();
@@ -512,6 +607,8 @@ int main() {
     test_missing_udp_feed();
     test_tcp_no_feed_ok();
     test_true_duplicate_endpoint();
+    test_missing_feedtype();
+    test_missing_connection_type();
 
     std::cout << "\nAll configuration parser tests PASSED.\n";
     return 0;

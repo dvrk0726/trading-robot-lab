@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-  <MarketDataGroup feedType="Instrument Replay" marketID="D" label="FUT-INFO">
+  <!-- FUT-INFO: futures definitions, one MarketDataGroup with all connection roles -->
+  <MarketDataGroup feedType="FUT-INFO" marketID="D" label="Futures defintion">
     <connections>
       <connection>
-        <type>MarketData</type>
+        <type>Instrument Replay</type>
         <protocol>UDP/IP</protocol>
         <src-ip>192.0.2.1</src-ip>
         <ip>233.0.0.11</ip>
@@ -11,19 +12,15 @@
         <feed>A</feed>
       </connection>
       <connection>
-        <type>MarketData</type>
+        <type>Instrument Replay</type>
         <protocol>UDP/IP</protocol>
         <src-ip>192.0.2.2</src-ip>
         <ip>233.0.0.12</ip>
         <port>49011</port>
         <feed>B</feed>
       </connection>
-    </connections>
-  </MarketDataGroup>
-  <MarketDataGroup feedType="Instrument Incremental" marketID="D" label="FUT-INFO">
-    <connections>
       <connection>
-        <type>MarketData</type>
+        <type>Instrument Incremental</type>
         <protocol>UDP/IP</protocol>
         <src-ip>192.0.2.1</src-ip>
         <ip>233.0.0.13</ip>
@@ -31,7 +28,7 @@
         <feed>A</feed>
       </connection>
       <connection>
-        <type>MarketData</type>
+        <type>Instrument Incremental</type>
         <protocol>UDP/IP</protocol>
         <src-ip>192.0.2.2</src-ip>
         <ip>233.0.0.14</ip>
@@ -40,10 +37,11 @@
       </connection>
     </connections>
   </MarketDataGroup>
-  <MarketDataGroup feedType="Incremental" marketID="D" label="ORDERS-LOG">
+  <!-- ORDERS-LOG: full orders log, one MarketDataGroup with all connection roles -->
+  <MarketDataGroup feedType="ORDERS-LOG" marketID="D" label="Full orders log">
     <connections>
       <connection>
-        <type>MarketData</type>
+        <type>Incremental</type>
         <protocol>UDP/IP</protocol>
         <src-ip>192.0.2.1</src-ip>
         <ip>233.0.0.40</ip>
@@ -51,19 +49,15 @@
         <feed>A</feed>
       </connection>
       <connection>
-        <type>MarketData</type>
+        <type>Incremental</type>
         <protocol>UDP/IP</protocol>
         <src-ip>192.0.2.2</src-ip>
         <ip>233.0.0.41</ip>
         <port>49040</port>
         <feed>B</feed>
       </connection>
-    </connections>
-  </MarketDataGroup>
-  <MarketDataGroup feedType="Snapshot" marketID="D" label="ORDERS-LOG">
-    <connections>
       <connection>
-        <type>MarketData</type>
+        <type>Snapshot</type>
         <protocol>UDP/IP</protocol>
         <src-ip>192.0.2.1</src-ip>
         <ip>233.0.0.42</ip>
@@ -71,19 +65,15 @@
         <feed>A</feed>
       </connection>
       <connection>
-        <type>MarketData</type>
+        <type>Snapshot</type>
         <protocol>UDP/IP</protocol>
         <src-ip>192.0.2.2</src-ip>
         <ip>233.0.0.43</ip>
         <port>49041</port>
         <feed>B</feed>
       </connection>
-    </connections>
-  </MarketDataGroup>
-  <MarketDataGroup feedType="Historical Replay" marketID="D" label="ORDERS-LOG">
-    <connections>
       <connection>
-        <type>MarketData</type>
+        <type>Historical Replay</type>
         <protocol>TCP/IP</protocol>
         <src-ip>192.0.2.1</src-ip>
         <ip>192.0.2.10</ip>

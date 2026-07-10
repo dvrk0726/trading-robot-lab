@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-10  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-1 FAST config/template inspector implementation in progress
+Статус: RT-1 Round 3 corrections applied, awaiting review
 
 ## Архитектура
 
@@ -107,14 +107,16 @@ legacy direct-main documents marked superseded;
 main protection option guide.
 ```
 
+Main protection: Option B active.
+
 ## RT-1 status
 
 ```text
 Issue #14: [MIMO][C++] RT-1 FAST configuration/templates inspector
-Status: CHANGES_REQUIRED
+Status: CHANGES_REQUIRED → Round 3 corrections applied
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Review cycle: Round 2 CHANGES_REQUIRED → Round 2 corrections applied
+Review cycle: Round 3 CHANGES_REQUIRED → Round 3 corrections applied
 ```
 
 RT-1 task package:
@@ -146,8 +148,8 @@ No second MiMo task starts while the previous task is in progress, review or cha
 ## Immediate next actions
 
 ```text
-1. Apply Round 2 corrections for RT-1 on feat/rt-1-fast-config-inspector.
-2. Run all tests including 20 QSH/M10X regressions.
+1. Round 3 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
+2. All tests pass including 20 QSH/M10X regressions.
 3. Push to PR #16.
 4. Move Issue #14 to READY_FOR_REVIEW.
 5. Stop — do not merge, do not start RT-2.

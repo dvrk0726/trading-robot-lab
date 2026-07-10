@@ -8,17 +8,12 @@
 
 namespace {
 
-void write_file(const char* path, const char* content) {
-    std::ofstream ofs(path);
-    ofs << content;
-}
-
 void test_empty_file() {
-    write_file("fixtures/empty_file.xml", "");
+    write_temp_file("empty_file.xml", "");
 
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_templates_xml("fixtures/empty_file.xml", templates, issues);
+    bool ok = moex_fast::parse_templates_xml(temp_path("empty_file.xml").c_str(), templates, issues);
     CHECK(!ok);
     CHECK(!issues.empty());
 
@@ -26,12 +21,12 @@ void test_empty_file() {
 }
 
 void test_truncated_file() {
-    write_file("fixtures/truncated.xml",
+    write_temp_file("truncated.xml",
         "<?xml version=\"1.0\"?><templates><template id='1' name='X'>");
 
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_templates_xml("fixtures/truncated.xml", templates, issues);
+    bool ok = moex_fast::parse_templates_xml(temp_path("truncated.xml").c_str(), templates, issues);
     (void)ok;  // pugixml may partially parse or fail; no crash is the test
 
     TEST_PASS("truncated file (no crash)");
@@ -45,11 +40,11 @@ void test_large_template_count() {
         xml += "</template>";
     }
     xml += "</templates>";
-    write_file("fixtures/large_templates.xml", xml.c_str());
+    write_temp_file("large_templates.xml", xml.c_str());
 
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_templates_xml("fixtures/large_templates.xml", templates, issues);
+    bool ok = moex_fast::parse_templates_xml(temp_path("large_templates.xml").c_str(), templates, issues);
     CHECK(ok);
     CHECK(templates.size() == 100);
 
@@ -62,11 +57,11 @@ void test_large_field_count() {
         xml += "<uInt32 name='Field" + std::to_string(i) + "'/>";
     }
     xml += "</template></templates>";
-    write_file("fixtures/large_fields.xml", xml.c_str());
+    write_temp_file("large_fields.xml", xml.c_str());
 
     std::vector<moex_fast::FastTemplateDescriptor> templates;
     std::vector<moex_fast::InspectionIssue> issues;
-    bool ok = moex_fast::parse_templates_xml("fixtures/large_fields.xml", templates, issues);
+    bool ok = moex_fast::parse_templates_xml(temp_path("large_fields.xml").c_str(), templates, issues);
     CHECK(ok);
     CHECK(templates.size() == 1);
     CHECK(templates[0].fields.size() == 50);
@@ -95,11 +90,11 @@ void test_no_crash_on_invalid_xml() {
         "<?xml version='1.0'?>\n<templates>\n</templates>",
         "<templates><!-- comment --></templates>",
     };
-    for (const auto* c : cases) {
-        write_file("fixtures/invalid_case.xml", c);
+    for (int i = 0; i < 5; ++i) {
+        write_temp_file("invalid_case.xml", cases[i]);
         std::vector<moex_fast::FastTemplateDescriptor> templates;
         std::vector<moex_fast::InspectionIssue> issues;
-        moex_fast::parse_templates_xml("fixtures/invalid_case.xml", templates, issues);
+        moex_fast::parse_templates_xml(temp_path("invalid_case.xml").c_str(), templates, issues);
     }
 
     TEST_PASS("no crash on invalid XML variants");

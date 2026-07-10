@@ -45,6 +45,8 @@ struct FastFieldDescriptor {
     std::string charset;
     // Name of the enclosing sequence, empty for top-level fields.
     std::string parent_sequence;
+    // Non-empty if the presence attribute had an unsupported value.
+    std::string unknown_presence;
 };
 
 struct FastTemplateDescriptor {
@@ -60,13 +62,13 @@ struct FeedEndpoint {
     std::uint16_t port{};
     std::string feed_id;
     bool is_tcp{};
-    // Role carried by this specific feed/source (Incremental, Snapshot, etc.)
-    std::string feed_type;
-    std::string connection_type;
+    // Endpoint role from connection/type: Incremental, Snapshot, Historical Replay, etc.
+    std::string endpoint_role;
 };
 
 struct FeedGroup {
-    std::string name;
+    std::string name;       // MarketDataGroup@feedType: FUT-INFO, ORDERS-LOG
+    std::string label;      // MarketDataGroup@label: human-readable description
     std::string market_id;
     std::vector<FeedEndpoint> endpoints;
 };
