@@ -3,56 +3,48 @@
 Date: 2026-07-10  
 Branch: mimo/issue-18-rt2-raw-capture-replay  
 Pull Request: #20  
-Implementation commit: `d303d74` (code) / `395cfd4` (GCC fix)  
+Implementation commit: `1451bc6` (Round 5 code) / `8a30e24` (CI fix)  
 Executor: MiMo Code
 
 ## Summary
 
 Implemented the first offline raw-market-data source-of-truth layer under `cpp/moex_raw/`. Creates versioned immutable `.mxraw` segments with deterministic synthetic data. No network access, no FAST decode, no real capture.
 
-## Round 3 Corrections
+## Round 5 Corrections
 
-All 10 Round 3 blockers addressed:
+All 9 Round 5 blockers addressed:
 
-1. **Complete stream-set validation**: Added `parse_canonical_filename()` for strict canonical filename parsing. `validate_stream_set()` now parses filenames, compares filename identity with content identity, sorts numerically by parsed segment index, rejects duplicate/missing indexes, compares all metadata fields (feed_group, endpoint_role, source_label, clock_domain, transport, source_side) and all three provenance hashes, and enforces monotonic timestamp across segment boundaries.
+### 1. IFileHandle abstraction
+Extended `IFileSystem` with `file_size()`, `open_read()`, `open_write()`. Added `IFileHandle` interface with `read()`, `write()`, `seek()`, `flush()`, `close()`. `DefaultFileHandle` wraps `std::FILE*`. Writer uses `IFileHandle` for all I/O. Reader uses `IFileSystem` for file_size and `IFileHandle` for reads. Production defaults use real filesystem.
 
-2. **Per-stream directory inspection**: `cmd_inspect()` now generates independent `RawStreamSummary` entries per stream set in both text and JSON reports. Each stream has its own metadata, counts, hashes and status. Independent streams are not merged.
+### 2. Release-active fault injection tests
+Short write, flush failure, close failure, rename failure all produce `Failed` writer state with no finalized `.mxraw`. Short-read mock returns proper error. FILE_TOO_LARGE mock rejects before allocation/read.
 
-3. **Strict replay ambiguity**: `matches.size() != 1` after selectors now always fails as ambiguous (same-session different source/channel included). `replay_from_directory()` is deprecated but kept as a safe wrapper that fails on any ambiguity.
+### 3. FILE_TOO_LARGE sparse reader test
+`MockFileSystem` returns `kMaxSegmentBytes+1` for `file_size()`. `validate_segment()` returns `Unsupported`/`FILE_TOO_LARGE` before opening file or allocating memory.
 
-4. **Partial file blocks replay**: `.mxraw.partial` files cause non-zero replay exit. `inspect --strict` fails on partial files. Non-strict inspect reports partial as warning.
+### 4. Real capture_utc_ns collection
+`validate_segment()` collects `first_utc_ns`/`last_utc_ns` from records with `kRecordFlagUtcValid` during the main streaming validation pass. Zero semantics when no valid UTC records (both values = 0). Propagated through `validate_stream_set()`. Used in single-file and stream reports.
 
-5. **Writer metadata validation**: `validate_metadata()` called before file creation in `open()`. Validates non-zero IDs/hashes/time, supported enums, UTF-8/no-NUL/128-byte strings, non-empty required strings, exact header <=4096. `write_length_string()` returns false on oversized strings (no silent truncation).
+### 5. Multi-stream top-level fields
+For directory with multiple stream sets, singular top-level stream metadata/index/hash/timestamp/count fields remain empty/zero. Authoritative data only in deterministic `stream_sets[]`. For single stream set, top-level filled completely.
 
-6. **Hard 64 GiB cap**: Enforced regardless of `max_segment_bytes=0`. Reader rejects files above 64 GiB. Checked arithmetic for segment/capture indexes, counts, bytes. CLI rejects negative/signed/whitespace numeric strings.
+### 6. One-segment aggregate hashes
+`content_sha256`/`file_sha256` populated with segment values for single-segment streams.
 
-7. **Status classification fixed**: Unsupported version returns `SegmentStatus::Unsupported`. Footer magic checked at correct position (start of 92-byte footer, not EOF-8). Distinguishes unsupported, partial, truncated, corrupt and I/O error.
+### 7. Issue path preservation
+`RawValidationIssue` gets specific `source`/`path` at creation time in `validate_segment()`. Not replaced by first segment's path by caller.
 
-8. **Expanded report schema**: Added `format_version`, full source metadata (clock_domain, transport, source_side, all three hashes), per-stream summaries (`stream_sets[]`), actual timestamp bounds, issue source/path.
+### 8. JSON strict parser tests
+Independent test-only JSON parser in `test_round5.cpp` verifies: numeric types (not strings), arrays, nested `stream_sets`, issue `source`/`path`, escaping quotes/backslashes/newlines/control chars, and deterministic ordering.
 
-9. **Replay summary digest**: `ReplayResult.summary.replay_sha256` populated via single streaming SHA-256 context in `replay_stream()`. Hard-coded independently derived MXREPLAY1 golden digest test. Rotation-invariance and metadata/payload change detection tests.
+### 9. Writer prospective validation
+`next_capture_index`, `record_count`, `total_payload_bytes` computed before write. Only committed after successful write. `start_capture_index=UINT64_MAX` negative test proves no mutation/final publication.
 
-10. **Fault/resource tests**: Filename mismatch, metadata/hash mismatch, duplicate/missing indexes, cross-segment monotonic, same-session multiple channels/sources, valid+partial semantics, 64 GiB rejection, checked arithmetic, callback stop, portable handling.
-
-## Round 4 Corrections
-
-All 8 Round 4 blockers addressed:
-
-1. **Cross-segment monotonic**: `validate_segment()` now returns first/last monotonic timestamps collected during the main validation pass (no second unsafe walk). `validate_stream_set()` compares `first_monotonic(current) >= last_monotonic(previous)`. Real negative fixture uses two separate writers to create decreasing boundary.
-
-2. **replay_stream numeric order**: Iterates validated sorted entries (not original input order). Derives digest from validated `metas[0]` (not caller-supplied meta). Reversed-input replay test proves callback order and digest are unchanged.
-
-3. **Partial blocks directory replay**: `replay_from_directory()` rejects any partial candidates. `replay_from_stream_set()` remains for explicitly resolved sets. Library valid+partial negative test.
-
-4. **Writer validates record_flags and monotonic**: Rejects unknown record flag bits. Rejects non-decreasing `capture_monotonic_ns`. Checked arithmetic for `next_capture_index_`, `current_segment_index_`, `record_count_`, `total_payload_bytes_`. CLI checked arithmetic for `records*segments` and synthetic timestamps.
-
-5. **Exact header and canonical filename**: `deserialize_header()` rejects trailing bytes inside `header_size`. `parse_canonical_filename()` rejects uppercase hex digits. Exact negative tests for both.
-
-6. **Report completeness**: Added source_id/channel_id/clock_domain/transport/source_side/configuration/templates/fingerprint SHA-256 to single-file and replay reports. Per-segment content/file hashes in stream summaries. Populated first/last UTC bounds. Added source/path to `RawValidationIssue`. Deterministic sort stream_sets by (session_id, source_id, channel_id). JSON tests parse actual values.
-
-7. **Real tests replace placeholders**: Hard-coded literal MXREPLAY1 SHA-256 (`2817df...`). Two real differently rotated segment sets with same digest. Real negative cross-segment monotonic fixture. Injectable rename failure via IFileSystem mock. Library valid+partial rejection. Uppercase/trailing-header rejection. Portable NUL vs /dev/null.
-
-8. **GCC -Werror fix**: Initialize all `RawValidationIssue` fields for `-Werror=missing-field-initializers`.
+### Additional fixes
+- **Classification**: `.mxraw.partial` → `Partial` for incomplete files; malformed finalized `.mxraw` → `Corrupt`/`Truncated`/`Unsupported`
+- **Rotation fix**: Moved `should_rotate()` check before prospective state computation so `record_count_` reflects post-rotation reset
+- **CI update**: Test inventory updated from 16 to 17 for both Windows/MSVC and Linux/GCC
 
 ## Context Read
 
@@ -73,29 +65,35 @@ All 8 Round 4 blockers addressed:
 
 ## What Was Implemented
 
-- C++20/CMake module `cpp/moex_raw/` with library, CLI and 16 test executables
+- C++20/CMake module `cpp/moex_raw/` with library, CLI and 17 test executables
 - v1 binary segment contract: `MXRAWV1\0` preamble, segment metadata, `REC1` packet records, `MXENDV1\0` footer
 - Pure C++ CRC32C (Castagnoli) with known vectors
 - Pure C++ SHA-256 with streaming context for incremental hashing
 - Little-endian serialization primitives with checked add/multiply overflow detection
 - UTF-8 string validation (128-byte limit, no embedded NUL, proper encoding)
-- `RawSegmentWriter` with `.mxraw.partial` -> finalized lifecycle
+- `IFileHandle`/`IFileSystem` abstraction for deterministic I/O injection
+- `RawSegmentWriter` with `.mxraw.partial` -> finalized lifecycle via `IFileHandle`
+- Writer prospective state validation (checked arithmetic before write, commit only after success)
 - Writer metadata validation before file creation (all IDs, hashes, enums, strings, header size)
 - Hard 64 GiB segment cap enforced regardless of rotation policy
 - `write_length_string` rejects oversized strings (no silent truncation)
-- Bounded streaming reader/validator with checked arithmetic
+- Bounded streaming reader/validator with checked arithmetic via `IFileHandle`
+- Real capture_utc_ns collection from records with kRecordFlagUtcValid (zero semantics when none)
 - Canonical filename parsing and filename/content identity comparison
 - Stream-set validation: numeric sorting, duplicate/missing detection, full metadata/hash equality, monotonic timestamp across boundaries
 - Directory grouping by `(session_id, source_id, channel_id)` with full candidate reporting
-- Per-stream independent summaries in text and JSON reports
+- Per-stream independent summaries in text and JSON reports (multi-stream: no singular top-level fields)
+- One-segment aggregate hashes populated from segment values
+- Issue path preservation at creation time
 - Expanded report schema with format_version, source metadata, provenance hashes, per-stream summaries
 - Deterministic replay callback with `MXREPLAY1\0` canonical digest (single streaming SHA-256 context)
 - `replay_from_stream_set()` for explicit session selection
 - `replay_from_directory()` deprecated as safe wrapper that fails on any ambiguity
 - CLI: `moex-raw synth`, `moex-raw inspect`, `moex-raw replay` with strict numeric/hex validation
-- Status classification: unsupported, partial, truncated, corrupt, I/O error
+- Status classification: unsupported, partial (`.mxraw.partial` only), truncated, corrupt, I/O error
 - Portable 64-bit file position
 - Independent golden MXREPLAY1 digest test
+- Strict JSON parser test with type/array/escape/ordering verification
 
 ## What Was Intentionally Not Implemented
 
@@ -109,53 +107,25 @@ All 8 Round 4 blockers addressed:
 - No FIX/TWIME or order sending
 - No production enablement
 
-## Files Changed
+## Files Changed (Round 5)
 
 ```text
-M  cpp/moex_raw/include/moex_raw/strings.hpp             (Round 3: write_length_string returns bool)
-M  cpp/moex_raw/include/moex_raw/raw_types.hpp           (Round 3: ParsedFilename, RawStreamSummary, report fields)
-M  cpp/moex_raw/include/moex_raw/raw_replay.hpp          (Round 3: deprecated replay_from_directory comment)
-M  cpp/moex_raw/src/strings.cpp                          (Round 3: write_length_string overflow check)
-M  cpp/moex_raw/src/raw_types.cpp                        (Round 3: parse_canonical_filename, serialize_header checks)
-M  cpp/moex_raw/src/raw_segment_writer.cpp               (Round 3: validate_metadata, hard 64 GiB cap, checked arithmetic)
-M  cpp/moex_raw/src/raw_segment_reader.cpp               (Round 3: filename parsing, sorting, metadata/hash equality, monotonic, classification)
-M  cpp/moex_raw/src/raw_replay.cpp                       (Round 3: streaming SHA-256 in replay_stream, strict ambiguity)
-M  cpp/moex_raw/src/raw_report.cpp                       (Round 3: per-stream summaries, expanded schema)
-M  cpp/moex_raw/src/main.cpp                             (Round 3: per-stream inspect, strict replay, partial blocking, number validation)
-M  cpp/moex_raw/tests/test_resource_safety.cpp           (Round 3: canonical filename for corrupt test)
-A  cpp/moex_raw/tests/test_round3.cpp                    (Round 3: golden digest, filename mismatch, sorting, dup/missing, ambiguity, partial, metadata validation, 64 GiB, classification, report schema, callback stop)
-M  cpp/moex_raw/CMakeLists.txt                           (Round 3: +test_round3)
+M  cpp/moex_raw/include/moex_raw/raw_segment.hpp         (IFileHandle, IFileSystem extended, validate_segment/stream_set signatures)
+M  cpp/moex_raw/include/moex_raw/raw_replay.hpp          (replay_stream IFileSystem* param)
+M  cpp/moex_raw/src/raw_segment_writer.cpp               (IFileHandle, prospective validation)
+M  cpp/moex_raw/src/raw_segment_reader.cpp               (IFileSystem, UTC collection, classification, issue paths)
+M  cpp/moex_raw/src/raw_replay.cpp                       (IFileSystem threading)
+M  cpp/moex_raw/src/main.cpp                             (multi-stream top-level, UTC bounds, one-segment hashes, issue paths)
+M  cpp/moex_raw/tests/test_round3.cpp                    (MockFileSystem extended for IFileHandle)
+A  cpp/moex_raw/tests/test_round5.cpp                    (fault injection, FILE_TOO_LARGE, UINT64_MAX, classification, UTC, JSON parser)
+M  cpp/moex_raw/CMakeLists.txt                           (+test_round5)
+M  .github/workflows/ci.yml                              (test inventory 16→17)
 ```
 
-## Commands Run
-
-```powershell
-# Build RT-2
-cmake -S cpp/moex_raw -B build/moex_raw -A x64
-cmake --build build/moex_raw --config Release --parallel 2
-
-# Test RT-2
-ctest --test-dir build/moex_raw -C Release --output-on-failure
-
-# Build and test RT-1 (regression)
-cmake -S cpp/moex_fast -B build/moex_fast -A x64
-cmake --build build/moex_fast --config Release --parallel 2
-ctest --test-dir build/moex_fast -C Release --output-on-failure
-
-# Build and test QSH/M10X (regression)
-cmake -S cpp/qsh_ingest -B build/qsh_ingest
-cmake --build build/qsh_ingest --config Release --parallel 2
-ctest --test-dir build/qsh_ingest -C Release --output-on-failure
-
-# Python and hygiene
-python -m pytest -q
-python tools/check_repository_hygiene.py
-```
-
-## Local Test Results (Round 3)
+## Local Test Results (Round 5)
 
 ```text
-RT-2 (16/16 passed, Windows Release):
+RT-2 (17/17 passed, Windows Release):
   test_crc32c .............. Passed
   test_endian .............. Passed
   test_strings ............. Passed
@@ -172,6 +142,7 @@ RT-2 (16/16 passed, Windows Release):
   test_golden_record_layout  Passed
   test_content_sha256_e2e .. Passed
   test_round3 .............. Passed
+  test_round5 .............. Passed
 
 RT-1 (6/6 passed, no regression):
   test_template_parser ..... Passed
@@ -185,24 +156,15 @@ QSH/M10X (20/20 passed, no regression)
 
 Python (3/3 passed)
 Shared schemas (5/5 valid)
-Repository hygiene: PASS (276 files)
-```
-
-## Compiler
-
-```text
-MSVC 19.42.34436.0
-Windows SDK 10.0.22621.0
-CMake 4.3
-C++20 / Release / x64
+Repository hygiene: PASS
 ```
 
 ## GitHub Actions
 
 ```text
-CI #51 (run 29111638220): ALL GREEN — 7/7 jobs passed
-  C++ MOEX RAW Windows/MSVC (16 tests): PASSED
-  C++ MOEX RAW Linux/GCC (16 tests): PASSED
+CI #56 (run 29117870425): ALL GREEN — 7/7 jobs passed
+  C++ MOEX RAW Windows/MSVC (17 tests): PASSED
+  C++ MOEX RAW Linux/GCC (17 tests): PASSED
   C++ MOEX FAST inspector Windows (6 tests): PASSED
   C++ MOEX FAST inspector Linux (6 tests): PASSED
   C++ QSH M10X regression (20 tests): PASSED
@@ -222,6 +184,8 @@ CI #51 (run 29111638220): ALL GREEN — 7/7 jobs passed
 - [x] QSH semantics unchanged
 - [x] `strategy_ready` gating not weakened
 - [x] No unrelated architecture expansion
+- [x] `-Werror` / `/WX` preserved
+- [x] Release CHECK macros active
 
 ## Final Handoff
 
