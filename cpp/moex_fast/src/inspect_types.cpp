@@ -11,6 +11,7 @@ WireType parse_wire_type(const std::string& name) {
     if (name == "unicode") return WireType::UnicodeString;
     if (name == "decimal") return WireType::Decimal;
     if (name == "sequence") return WireType::Sequence;
+    if (name == "length") return WireType::uInt32;
     return WireType::Unknown;
 }
 

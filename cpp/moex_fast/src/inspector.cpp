@@ -23,15 +23,61 @@ std::string filename_from_path(const std::string& path) {
     return (pos == std::string::npos) ? path : path.substr(pos + 1);
 }
 
-void validate_templates(
-    const std::vector<FastTemplateDescriptor>& templates,
-    bool strict,
-    std::vector<InspectionIssue>& issues,
-    std::vector<RequiredCheckResult>& required_results) {
+// Detect profile from template ID/name evidence.
+std::string detect_profile(const std::vector<FastTemplateDescriptor>& templates,
+                           std::string& evidence) {
+    // Build lookup by ID
+    std::map<std::uint32_t, std::string> id_to_name;
+    for (const auto& t : templates) {
+        id_to_name[t.id] = t.name;
+    }
 
-    // Required template ID/name pairs per MOEX SPECTRA specification
-    struct RequiredPair { std::uint32_t id; const char* name; };
-    static const RequiredPair required_pairs[] = {
+    bool has_40_secdef = (id_to_name.count(40) && id_to_name[40] == "SecurityDefinition");
+    bool has_47_secdef = (id_to_name.count(47) && id_to_name[47] == "SecurityDefinition");
+    bool has_48_secstatus = (id_to_name.count(48) && id_to_name[48] == "SecurityStatus");
+
+    if (has_40_secdef && !has_47_secdef) {
+        evidence = "ID 40 SecurityDefinition present, ID 47 absent";
+        return "spectra-1.29";
+    }
+    if (has_47_secdef && has_48_secstatus && !has_40_secdef) {
+        evidence = "ID 47 SecurityDefinition and ID 48 SecurityStatus present, ID 40 absent";
+        return "spectra-1.30";
+    }
+    if (has_40_secdef && has_47_secdef) {
+        evidence = "Both ID 40 and ID 47 named SecurityDefinition — ambiguous";
+        return "ambiguous";
+    }
+    if (has_47_secdef && !has_48_secstatus) {
+        evidence = "ID 47 SecurityDefinition present but ID 48 SecurityStatus missing";
+        return "ambiguous";
+    }
+    if (has_48_secstatus && !has_47_secdef) {
+        evidence = "ID 48 SecurityStatus present but ID 47 SecurityDefinition missing";
+        return "ambiguous";
+    }
+    evidence = "No distinguishing SecurityDefinition/SecurityStatus ID evidence";
+    return "unknown";
+}
+
+struct RequiredPair { std::uint32_t id; const char* name; };
+
+// Get required pairs for a given profile.
+std::vector<RequiredPair> required_pairs_for_profile(const std::string& profile) {
+    if (profile == "spectra-1.30") {
+        return {
+            {29, "OrdersLogMessage"},
+            {30, "BookMessage"},
+            {31, "DefaultIncrementalRefreshMessage"},
+            {32, "DefaultSnapshotMessage"},
+            {47, "SecurityDefinition"},
+            {45, "SecurityGroupStatus"},
+            {46, "TradingSessionStatus"},
+            {48, "SecurityStatus"}
+        };
+    }
+    // Default: spectra-1.29 (includes unknown profile)
+    return {
         {29, "OrdersLogMessage"},
         {30, "BookMessage"},
         {31, "DefaultIncrementalRefreshMessage"},
@@ -40,6 +86,16 @@ void validate_templates(
         {45, "SecurityGroupStatus"},
         {46, "TradingSessionStatus"}
     };
+}
+
+void validate_templates(
+    const std::vector<FastTemplateDescriptor>& templates,
+    bool strict,
+    const std::string& profile,
+    std::vector<InspectionIssue>& issues,
+    std::vector<RequiredCheckResult>& required_results) {
+
+    auto required_pairs = required_pairs_for_profile(profile);
 
     // Build lookup by ID
     std::map<std::uint32_t, const FastTemplateDescriptor*> by_id;
@@ -185,10 +241,55 @@ InspectionReport run_inspector(const InspectorOptions& opts) {
     report.configuration_info.parse_ok = parse_configuration_xml(
         opts.configuration_path, report.feed_groups, report.issues);
 
+    // Detect profile
+    std::string profile_to_use;
+    if (opts.profile.empty() || opts.profile == "auto") {
+        std::string evidence;
+        std::string detected = detect_profile(report.templates, evidence);
+        report.profile_evidence = evidence;
+
+        if (detected == "ambiguous") {
+            report.detected_profile = "ambiguous";
+            report.compatibility_status = "mismatch";
+            report.issues.push_back({opts.strict ? Severity::Error : Severity::Warning,
+                IssueSource::Template,
+                "Profile detection ambiguous: " + evidence});
+            // Fall back to spectra-1.29 as default
+            profile_to_use = "spectra-1.29";
+        } else if (detected == "unknown") {
+            report.detected_profile = "unknown";
+            report.compatibility_status = "unknown";
+            profile_to_use = "spectra-1.29";
+        } else {
+            report.detected_profile = detected;
+            report.compatibility_status = "compatible";
+            profile_to_use = detected;
+        }
+    } else {
+        // Explicit profile override
+        profile_to_use = opts.profile;
+        report.detected_profile = opts.profile;
+        report.profile_evidence = "explicit CLI override";
+
+        // Validate that the override matches the actual template evidence
+        std::string evidence;
+        std::string auto_detected = detect_profile(report.templates, evidence);
+        if (auto_detected != "unknown" && auto_detected != profile_to_use &&
+            auto_detected != "ambiguous") {
+            report.compatibility_status = "mismatch";
+            report.issues.push_back({opts.strict ? Severity::Error : Severity::Warning,
+                IssueSource::Template,
+                "Profile mismatch: requested '" + profile_to_use +
+                "' but templates indicate '" + auto_detected + "'"});
+        } else {
+            report.compatibility_status = "compatible";
+        }
+    }
+
     // Validate templates independently
     if (report.templates_info.parse_ok) {
         std::size_t issue_start = report.issues.size();
-        validate_templates(report.templates, opts.strict,
+        validate_templates(report.templates, opts.strict, profile_to_use,
                           report.issues, report.required_template_results);
         // Check only template-sourced issues for templates validation_ok
         report.templates_info.validation_ok = true;

@@ -9,6 +9,7 @@ static void print_usage() {
         "  --configuration <path/configuration.xml> \\\n"
         "  --templates <path/templates.xml> \\\n"
         "  [--json-out <path/report.json>] \\\n"
+        "  [--profile auto|spectra-1.29|spectra-1.30] \\\n"
         "  [--strict]\n"
         "\n"
         "Inspect MOEX SPECTRA FAST configuration and template XML files.\n"
@@ -43,6 +44,12 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             opts.json_out_path = argv[++i];
+        } else if (std::strcmp(argv[i], "--profile") == 0) {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --profile requires an argument (auto|spectra-1.29|spectra-1.30)\n";
+                return 1;
+            }
+            opts.profile = argv[++i];
         } else if (std::strcmp(argv[i], "--strict") == 0) {
             opts.strict = true;
         } else {

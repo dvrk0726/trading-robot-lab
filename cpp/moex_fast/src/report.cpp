@@ -52,6 +52,11 @@ std::string report_to_json(const InspectionReport& r) {
     indent(oss, 1); oss << "\"schema_version\": "; json_escape(oss, r.schema_version); oss << ",\n";
     indent(oss, 1); oss << "\"inspector_version\": "; json_escape(oss, r.inspector_version); oss << ",\n";
 
+    // Profile information
+    indent(oss, 1); oss << "\"detected_profile\": "; json_escape(oss, r.detected_profile); oss << ",\n";
+    indent(oss, 1); oss << "\"profile_evidence\": "; json_escape(oss, r.profile_evidence); oss << ",\n";
+    indent(oss, 1); oss << "\"compatibility_status\": "; json_escape(oss, r.compatibility_status); oss << ",\n";
+
     // Input provenance - templates
     indent(oss, 1); oss << "\"templates_file\": {\n";
     indent(oss, 2); oss << "\"path\": "; json_escape(oss, r.templates_info.path); oss << ",\n";
@@ -200,7 +205,10 @@ std::string report_to_text(const InspectionReport& r) {
     std::ostringstream oss;
     oss << "=== MOEX FAST Configuration/Template Inspector ===\n";
     oss << "Schema version: " << r.schema_version << "\n";
-    oss << "Inspector version: " << r.inspector_version << "\n\n";
+    oss << "Inspector version: " << r.inspector_version << "\n";
+    oss << "Detected profile: " << r.detected_profile << "\n";
+    oss << "Profile evidence: " << r.profile_evidence << "\n";
+    oss << "Compatibility status: " << r.compatibility_status << "\n\n";
 
     oss << "--- Templates file ---\n";
     oss << "  Path: " << r.templates_info.path << "\n";

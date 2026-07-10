@@ -315,6 +315,213 @@ void test_parent_sequence_in_json() {
     TEST_PASS("parent_sequence in JSON");
 }
 
+// --- Round 5 tests ---
+
+void test_length_wire_type_valid() {
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+    opts.strict = true;
+
+    auto report = moex_fast::run_inspector(opts);
+
+    // No "Unknown wire type" issues should exist (length is now uInt32)
+    for (const auto& iss : report.issues) {
+        CHECK_MSG(iss.message.find("Unknown wire type") == std::string::npos,
+            "Unexpected 'Unknown wire type' issue: " + iss.message);
+    }
+
+    TEST_PASS("length wire type — no Unknown wire type issues");
+}
+
+void test_strict_valid_synthetic() {
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+    opts.strict = true;
+
+    auto report = moex_fast::run_inspector(opts);
+
+    // Strict mode with valid synthetic input must produce "valid" with zero issues
+    CHECK_MSG(report.overall_status == "valid",
+        "Expected overall_status 'valid', got '" + report.overall_status + "'");
+    CHECK_MSG(report.issues.empty(),
+        "Expected zero issues, got " + std::to_string(report.issues.size()));
+
+    TEST_PASS("strict valid synthetic — valid with zero issues");
+}
+
+void test_profile_auto_detected_129() {
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "spectra-1.29");
+    CHECK(report.compatibility_status == "compatible");
+
+    auto json = moex_fast::report_to_json(report);
+    CHECK(json.find("\"detected_profile\"") != std::string::npos);
+    CHECK(json.find("\"profile_evidence\"") != std::string::npos);
+    CHECK(json.find("\"compatibility_status\"") != std::string::npos);
+    CHECK(json.find("spectra-1.29") != std::string::npos);
+
+    TEST_PASS("profile auto-detected spectra-1.29");
+}
+
+void test_profile_auto_detected_130() {
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates_130.xml";
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "spectra-1.30");
+    CHECK(report.compatibility_status == "compatible");
+
+    // spectra-1.30 must have 8 required template checks
+    CHECK(report.required_template_results.size() == 8);
+
+    // All required templates should be present
+    for (const auto& r : report.required_template_results) {
+        CHECK(r.present);
+    }
+
+    TEST_PASS("profile auto-detected spectra-1.30");
+}
+
+void test_profile_explicit_override() {
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+    opts.profile = "spectra-1.29";
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "spectra-1.29");
+    CHECK(report.profile_evidence == "explicit CLI override");
+    CHECK(report.compatibility_status == "compatible");
+
+    TEST_PASS("profile explicit override");
+}
+
+void test_profile_mismatch_warning() {
+    // Request spectra-1.30 but supply spectra-1.29 templates
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+    opts.profile = "spectra-1.30";
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.compatibility_status == "mismatch");
+
+    // Should have a mismatch warning
+    bool found_mismatch = false;
+    for (const auto& iss : report.issues) {
+        if (iss.message.find("mismatch") != std::string::npos) {
+            found_mismatch = true;
+        }
+    }
+    CHECK(found_mismatch);
+
+    TEST_PASS("profile mismatch warning");
+}
+
+void test_profile_mismatch_strict_error() {
+    // Strict mode: mismatch should be an error
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+    opts.profile = "spectra-1.30";
+    opts.strict = true;
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.overall_status == "invalid");
+    CHECK(report.compatibility_status == "mismatch");
+
+    TEST_PASS("profile mismatch strict mode error");
+}
+
+void test_profile_in_text_report() {
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+
+    auto report = moex_fast::run_inspector(opts);
+    auto text = moex_fast::report_to_text(report);
+
+    CHECK(text.find("Detected profile:") != std::string::npos);
+    CHECK(text.find("Profile evidence:") != std::string::npos);
+    CHECK(text.find("Compatibility status:") != std::string::npos);
+    CHECK(text.find("spectra-1.29") != std::string::npos);
+
+    TEST_PASS("profile in text report");
+}
+
+void test_mixed_profile_negative() {
+    // Templates with both ID 40 and ID 47 SecurityDefinition => ambiguous
+    write_temp_file("mixed_profile.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='40' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='47' name='SecurityDefinition'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = temp_path("mixed_profile.xml");
+
+    auto report = moex_fast::run_inspector(opts);
+    CHECK(report.detected_profile == "ambiguous");
+    CHECK(report.compatibility_status == "mismatch");
+
+    TEST_PASS("mixed profile negative test");
+}
+
+void test_wrong_name_profile_negative() {
+    // ID 47 with wrong name
+    write_temp_file("wrong_name_profile.xml",
+        "<templates>"
+        "  <template id='29' name='OrdersLogMessage'><uInt32 name='X'/></template>"
+        "  <template id='30' name='BookMessage'><uInt32 name='X'/></template>"
+        "  <template id='31' name='DefaultIncrementalRefreshMessage'><uInt32 name='X'/></template>"
+        "  <template id='32' name='DefaultSnapshotMessage'><uInt32 name='X'/></template>"
+        "  <template id='45' name='SecurityGroupStatus'><uInt32 name='X'/></template>"
+        "  <template id='46' name='TradingSessionStatus'><uInt32 name='X'/></template>"
+        "  <template id='47' name='WrongName'><uInt32 name='X'/></template>"
+        "</templates>");
+
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = temp_path("wrong_name_profile.xml");
+
+    auto report = moex_fast::run_inspector(opts);
+    // ID 47 with wrong name should not be detected as spectra-1.30
+    CHECK(report.detected_profile != "spectra-1.30");
+
+    TEST_PASS("wrong name profile negative test");
+}
+
+void test_length_no_unknown_wire_type_issue() {
+    // Explicit check: <length name="NoMDEntries" id="268"/> must NOT produce
+    // "Unknown wire type" in any template
+    moex_fast::InspectorOptions opts;
+    opts.configuration_path = "fixtures/synthetic_configuration.xml";
+    opts.templates_path = "fixtures/synthetic_templates.xml";
+
+    auto report = moex_fast::run_inspector(opts);
+
+    for (const auto& iss : report.issues) {
+        CHECK_MSG(iss.message.find("Unknown wire type") == std::string::npos,
+            "Unexpected Unknown wire type issue: " + iss.message);
+    }
+
+    TEST_PASS("NoMDEntries length — no Unknown wire type issue");
+}
+
 }  // namespace
 
 int main() {
@@ -332,6 +539,18 @@ int main() {
     test_endpoint_role_in_json();
     test_label_in_json();
     test_parent_sequence_in_json();
+    // Round 5 tests
+    test_length_wire_type_valid();
+    test_strict_valid_synthetic();
+    test_profile_auto_detected_129();
+    test_profile_auto_detected_130();
+    test_profile_explicit_override();
+    test_profile_mismatch_warning();
+    test_profile_mismatch_strict_error();
+    test_profile_in_text_report();
+    test_mixed_profile_negative();
+    test_wrong_name_profile_negative();
+    test_length_no_unknown_wire_type_issue();
 
     std::cout << "\nAll deterministic report tests PASSED.\n";
     return 0;

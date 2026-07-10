@@ -135,7 +135,10 @@ void test_wire_type_names() {
     CHECK(moex_fast::parse_wire_type("sequence") == moex_fast::WireType::Sequence);
     CHECK(moex_fast::parse_wire_type("unknown_type") == moex_fast::WireType::Unknown);
 
-    TEST_PASS("wire type names");
+    // Round 5: "length" must parse as uInt32
+    CHECK(moex_fast::parse_wire_type("length") == moex_fast::WireType::uInt32);
+
+    TEST_PASS("wire type names (including length as uInt32)");
 }
 
 }  // namespace

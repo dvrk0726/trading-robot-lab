@@ -37,6 +37,7 @@ WireType element_to_wire_type(const char* name) {
     if (n == "unicode") return WireType::UnicodeString;
     if (n == "decimal") return WireType::Decimal;
     if (n == "sequence") return WireType::Sequence;
+    if (n == "length") return WireType::uInt32;
     return WireType::Unknown;
 }
 

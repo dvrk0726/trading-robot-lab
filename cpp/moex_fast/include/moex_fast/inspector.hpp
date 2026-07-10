@@ -8,6 +8,7 @@ struct InspectorOptions {
     std::string configuration_path;
     std::string templates_path;
     std::string json_out_path;
+    std::string profile;  // "auto" (default), "spectra-1.29", "spectra-1.30"
     bool strict{};
 };
 

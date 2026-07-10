@@ -90,6 +90,10 @@ struct InspectionReport {
     std::vector<RequiredCheckResult> required_template_results;
     std::vector<RequiredCheckResult> required_feed_results;
     std::string overall_status;  // "valid", "warning", "invalid"
+    // Version-aware profile fields
+    std::string detected_profile;       // "spectra-1.29", "spectra-1.30", "unknown"
+    std::string profile_evidence;       // why this profile was selected
+    std::string compatibility_status;   // "compatible", "unknown", "mismatch"
 };
 
 WireType parse_wire_type(const std::string& name);

@@ -128,12 +128,19 @@ void test_sequence_fields() {
         if (f.is_sequence_length) {
             has_length = true;
             CHECK(f.name == "NoMDEntries");
+            // Round 5: <length> must be WireType::uInt32, not Unknown
+            CHECK(f.wire_type == moex_fast::WireType::uInt32);
+            // FIX id must be preserved
+            CHECK(f.has_fix_tag);
+            CHECK(f.fix_tag == 268);
+            // parent_sequence must be set
+            CHECK(f.parent_sequence == "MDEntries");
             break;
         }
     }
     CHECK(has_length);
 
-    TEST_PASS("sequence fields");
+    TEST_PASS("sequence fields (length as uInt32, FIX id, parent_sequence)");
 }
 
 void test_sequence_nesting_preserved() {
