@@ -183,7 +183,7 @@ jobs:
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
 
   cpp-moex-raw-windows:
-    name: C++ MOEX RAW Windows/MSVC (17 tests)
+    name: C++ MOEX RAW Windows/MSVC (18 tests)
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -213,15 +213,15 @@ jobs:
           }
           $count = [int](($line.Line -split ':', 2)[1].Trim())
           Write-Host "CTest inventory: $count"
-          if ($count -ne 17) {
-            throw "Expected 17 RT-2 tests, found $count"
+          if ($count -ne 18) {
+            throw "Expected 18 RT-2 tests, found $count"
           }
 
       - name: Run all RT-2 tests
         run: ctest --test-dir build/moex_raw -C Release --output-on-failure
 
   cpp-moex-raw-linux:
-    name: C++ MOEX RAW Linux/GCC (17 tests)
+    name: C++ MOEX RAW Linux/GCC (18 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -240,8 +240,8 @@ jobs:
         run: |
           count=$(ctest --test-dir build/moex_raw -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
           echo "CTest inventory: $count"
-          if [ "$count" -ne 17 ]; then
-            echo "Expected 17 RT-2 tests, found $count"
+          if [ "$count" -ne 18 ]; then
+            echo "Expected 18 RT-2 tests, found $count"
             exit 1
           fi
 
