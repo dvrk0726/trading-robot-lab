@@ -699,7 +699,8 @@ int main() {
             auto sz = std::ftell(f);
             std::fseek(f, 0, SEEK_SET);
             std::vector<std::uint8_t> data(sz);
-            std::fread(data.data(), 1, sz, f);
+            auto n = std::fread(data.data(), 1, sz, f);
+            (void)n;
             std::fclose(f);
 
             auto header_size = read_u32_le(data.data() + 10);
@@ -709,7 +710,6 @@ int main() {
             std::uint64_t pos = header_size;
             while (pos < footer_offset) {
                 std::uint32_t rec_size = read_u32_le(data.data() + pos + 8);
-                std::uint32_t payload_size = read_u32_le(data.data() + pos + 36);
                 RawPacketRecord rec;
                 std::size_t total = 0;
                 std::vector<RawValidationIssue> ri;
