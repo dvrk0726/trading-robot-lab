@@ -95,8 +95,8 @@ READY_FOR_REVIEW (Round 8 corrections applied)
 Issue #14
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Head: (pending — implementation commit SHA recorded in evidence commit after CI)
-CI run: (pending)
+Head: 3e3e89e (3e3e89e7bbb55853da02a56c8e2edfa666a999b3)
+CI run: 30 (29097918074): all five jobs passed.
 Review cycle: Round 8 CHANGES_REQUIRED → Round 8 corrections applied
 ```
 

@@ -3,8 +3,8 @@
 Date: 2026-07-10 (Round 8 corrections)  
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
-Implementation commit: (pending — will be recorded in evidence commit after CI)  
-CI run: (pending)  
+Implementation commit: `3e3e89e7bbb55853da02a56c8e2edfa666a999b3`  
+CI run: 30 (run id `29097918074`): all five jobs passed.  
 Executor: MiMo Code
 
 ## Summary
@@ -321,8 +321,12 @@ cpp/moex_fast/
 
 ## CI Evidence
 
-Implementation commit: (pending — recorded in evidence commit after CI verification)  
-CI run: (pending)
+CI run #30 on commit `3e3e89e` (implementation SHA `3e3e89e7bbb55853da02a56c8e2edfa666a999b3`):
+- Repository hygiene: PASS
+- C++ MOEX FAST inspector Windows (6 tests): PASS
+- C++ MOEX FAST inspector Linux (6 tests): PASS
+- C++ QSH M10X regression (20 tests): PASS
+- Python tests and contracts: PASS
 
 ## Integration Check
 
