@@ -434,7 +434,10 @@ bool RawSegmentWriter::should_rotate(const RawPacketRecord& rec) const {
 
     std::uint32_t payload_size = static_cast<std::uint32_t>(rec.payload.size());
     std::uint32_t record_size = kRecordHeaderSize + payload_size + 4;
-    std::uint64_t new_file_bytes = current_file_bytes_ + record_size;
+    std::uint64_t new_file_bytes = 0;
+    if (!checked_add_u64(current_file_bytes_, record_size, new_file_bytes)) {
+        return true;  // overflow → force rotation path which will be rejected by preflight
+    }
 
     // Check record count limit
     if (policy_.max_records_per_segment > 0 &&

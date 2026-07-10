@@ -242,7 +242,7 @@ SegmentStatus validate_segment(const std::string& path,
         std::uint8_t rec_hdr_buf[kRecordHeaderSize];
         if (f->read(rec_hdr_buf, kRecordHeaderSize) != kRecordHeaderSize) {
             add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read record header", path);
-            return SegmentStatus::Corrupt;
+            return SegmentStatus::IoError;
         }
 
         // Parse record size from header to know how much more to read
@@ -274,7 +274,7 @@ SegmentStatus validate_segment(const std::string& path,
         std::vector<std::uint8_t> rec_tail(remaining_bytes);
         if (f->read(rec_tail.data(), remaining_bytes) != remaining_bytes) {
             add_issue(issues, ValidationSeverity::Error, "IO_ERROR", "Cannot read record tail", path);
-            return SegmentStatus::Corrupt;
+            return SegmentStatus::IoError;
         }
 
         // Build full record for deserialization
@@ -490,7 +490,13 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
 
     // Phase 4: Check contiguous segment indexes
     for (std::size_t i = 1; i < entries.size(); ++i) {
-        if (entries[i].meta.segment_index != entries[i - 1].meta.segment_index + 1) {
+        std::uint64_t expected_seg;
+        if (!checked_add_u64(entries[i - 1].meta.segment_index, 1, expected_seg)) {
+            add_issue(issues, ValidationSeverity::Error, "SEGMENT_INDEX_OVERFLOW",
+                      "segment_index + 1 overflows u64");
+            return SegmentStatus::Corrupt;
+        }
+        if (entries[i].meta.segment_index != expected_seg) {
             add_issue(issues, ValidationSeverity::Error, "NONCONTIGUOUS_SEGMENT_INDEX",
                       "Segment indexes not contiguous: " +
                       std::to_string(entries[i - 1].meta.segment_index) + " -> " +
@@ -568,7 +574,13 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
 
     // Phase 6: Check contiguous capture indexes and cross-segment monotonic timestamps
     for (std::size_t i = 1; i < entries.size(); ++i) {
-        if (entries[i].footer.first_capture_index != entries[i - 1].footer.last_capture_index + 1) {
+        std::uint64_t expected_next_capture;
+        if (!checked_add_u64(entries[i - 1].footer.last_capture_index, 1, expected_next_capture)) {
+            add_issue(issues, ValidationSeverity::Error, "CAPTURE_INDEX_OVERFLOW",
+                      "last_capture_index + 1 overflows u64");
+            return SegmentStatus::Corrupt;
+        }
+        if (entries[i].footer.first_capture_index != expected_next_capture) {
             add_issue(issues, ValidationSeverity::Error, "NONCONTIGUOUS_CAPTURE_INDEX",
                       "capture_index not contiguous across segments");
             return SegmentStatus::Corrupt;
@@ -591,21 +603,19 @@ SegmentStatus validate_stream_set(const std::vector<std::string>& paths,
         footers.push_back(e.footer);
     }
 
-    // Populate UTC bounds across all segments
-    // Scan all sorted segments for first/last UTC-valid timestamps.
+    // Populate UTC bounds across all segments.
+    // Entries are already sorted by segment index.
+    // Select the FIRST non-zero UTC-valid timestamp and the LAST non-zero
+    // UTC-valid timestamp in sorted segment/capture order — not numeric min/max.
     // Use 0/0 only when no UTC-valid records exist in any segment.
     std::uint64_t global_first_utc = 0;
     std::uint64_t global_last_utc = 0;
     for (const auto& e : entries) {
-        if (e.first_utc != 0) {
-            if (global_first_utc == 0 || e.first_utc < global_first_utc) {
-                global_first_utc = e.first_utc;
-            }
+        if (e.first_utc != 0 && global_first_utc == 0) {
+            global_first_utc = e.first_utc;
         }
         if (e.last_utc != 0) {
-            if (e.last_utc > global_last_utc) {
-                global_last_utc = e.last_utc;
-            }
+            global_last_utc = e.last_utc;
         }
     }
     if (first_capture_utc_ns) {

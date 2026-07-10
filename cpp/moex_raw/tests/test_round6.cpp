@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <set>
+#include <functional>
 
 namespace fs = std::filesystem;
 
@@ -84,8 +85,95 @@ struct ScriptedFileHandle : moex_raw::IFileHandle {
     int fail_flush_at = -1;   // flush returns false at this flush #
     int fail_close_at = -1;   // close returns false at this close #
 
+    // Stage-aware failure injection for reader tests.
+    // Tracks which validation stage the reader is in based on seek positions.
+    // The reader calls seek() before each stage, so we track the target position
+    // to determine which stage the next read() belongs to.
+    enum class ReadStage { Header, Footer, ContentHash, FileHash, Record };
+    ReadStage current_read_stage = ReadStage::Header;
+
+    // Per-stage fail/short: set to true to fail/short the NEXT read in that stage
+    bool fail_at_header_read = false;
+    bool short_at_header_read = false;
+    bool fail_at_footer_read = false;
+    bool short_at_footer_read = false;
+    bool fail_at_content_hash_read = false;
+    bool short_at_content_hash_read = false;
+    bool fail_at_file_hash_read = false;
+    bool short_at_file_hash_read = false;
+    bool fail_at_record_read = false;
+    bool short_at_record_read = false;
+
+    // Record-stage read counter (resets when entering Record stage)
+    int record_stage_read_count = 0;
+    // Which read # within the Record stage to fail/short (1-based; 0 = never)
+    int fail_record_tail_at = 0;
+    int short_record_tail_at = 0;
+
+    // Seek-stage failure injection: tracks which seek ordinal to fail
+    // Seek #1 = footer seek, #2 = content SHA seek, #3 = file SHA seek, #4 = records seek
+    int fail_seek_at_ordinal = -1;
+
+    // Callback: invoked before each read(). Return true to short-read (return 1 byte).
+    std::function<bool()> on_before_read;
+
     std::size_t read(void* buf, std::size_t size) override {
         read_count++;
+
+        // Stage-aware failure injection
+        if (current_read_stage == ReadStage::Header && fail_at_header_read) return 0;
+        if (current_read_stage == ReadStage::Header && short_at_header_read) {
+            std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+            if (n == 0) return 0;
+            std::memcpy(buf, data.data() + read_pos, n);
+            read_pos += n;
+            return n;
+        }
+        if (current_read_stage == ReadStage::Footer && fail_at_footer_read) return 0;
+        if (current_read_stage == ReadStage::Footer && short_at_footer_read) {
+            std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+            if (n == 0) return 0;
+            std::memcpy(buf, data.data() + read_pos, n);
+            read_pos += n;
+            return n;
+        }
+        if (current_read_stage == ReadStage::ContentHash && fail_at_content_hash_read) return 0;
+        if (current_read_stage == ReadStage::ContentHash && short_at_content_hash_read) {
+            std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+            if (n == 0) return 0;
+            std::memcpy(buf, data.data() + read_pos, n);
+            read_pos += n;
+            return n;
+        }
+        if (current_read_stage == ReadStage::FileHash && fail_at_file_hash_read) return 0;
+        if (current_read_stage == ReadStage::FileHash && short_at_file_hash_read) {
+            std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+            if (n == 0) return 0;
+            std::memcpy(buf, data.data() + read_pos, n);
+            read_pos += n;
+            return n;
+        }
+        if (current_read_stage == ReadStage::Record) {
+            record_stage_read_count++;
+            if (fail_at_record_read) return 0;
+            if (short_at_record_read) {
+                std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+                if (n == 0) return 0;
+                std::memcpy(buf, data.data() + read_pos, n);
+                read_pos += n;
+                return n;
+            }
+            if (fail_record_tail_at > 0 && record_stage_read_count == fail_record_tail_at) return 0;
+            if (short_record_tail_at > 0 && record_stage_read_count == short_record_tail_at) {
+                std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+                if (n == 0) return 0;
+                std::memcpy(buf, data.data() + read_pos, n);
+                read_pos += n;
+                return n;
+            }
+        }
+
+        // Legacy per-count failure injection
         if (read_count == fail_read_at) return 0;
         if (read_count == short_read_at) {
             std::size_t n = std::min(short_read_bytes, std::min(size, data.size() - read_pos));
@@ -94,6 +182,16 @@ struct ScriptedFileHandle : moex_raw::IFileHandle {
             read_pos += n;
             return n;
         }
+
+        // Callback
+        if (on_before_read && on_before_read()) {
+            std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+            if (n == 0) return 0;
+            std::memcpy(buf, data.data() + read_pos, n);
+            read_pos += n;
+            return n;
+        }
+
         std::size_t n = std::min(size, data.size() - read_pos);
         if (n == 0) return 0;
         std::memcpy(buf, data.data() + read_pos, n);
@@ -117,7 +215,15 @@ struct ScriptedFileHandle : moex_raw::IFileHandle {
 
     bool seek(std::int64_t offset, int origin) override {
         seek_count++;
+
+        // Ordinal-based seek failure injection
+        if (fail_seek_at_ordinal > 0 && seek_count == fail_seek_at_ordinal) {
+            return false;
+        }
+
+        // Legacy per-count seek failure
         if (seek_count == fail_seek_at) return false;
+
         std::size_t new_pos = 0;
         if (origin == SEEK_SET) {
             new_pos = static_cast<std::size_t>(offset);
@@ -129,6 +235,29 @@ struct ScriptedFileHandle : moex_raw::IFileHandle {
         }
         if (new_pos > data.size()) return false;
         read_pos = new_pos;
+
+        // Determine which validation stage the next read() belongs to,
+        // based on the seek target position.
+        // Seek #1: seek to footer_offset (footer read)
+        // Seek #2: seek to 0 (content SHA-256)
+        // Seek #3: seek to 0 (file SHA-256)
+        // Seek #4: seek to header_size (records)
+        if (origin == SEEK_SET) {
+            if (offset == 0 && seek_count >= 2 && current_read_stage == ReadStage::Footer) {
+                // Seek to start after footer = content hash stage
+                current_read_stage = ReadStage::ContentHash;
+            } else if (offset == 0 && current_read_stage == ReadStage::ContentHash) {
+                // Second seek to start = file hash stage
+                current_read_stage = ReadStage::FileHash;
+            } else if (offset > 0 && current_read_stage == ReadStage::FileHash) {
+                // Seek to header_size = record stage
+                current_read_stage = ReadStage::Record;
+            } else if (offset > 0 && current_read_stage == ReadStage::Header) {
+                // First seek to footer_offset = footer stage
+                current_read_stage = ReadStage::Footer;
+            }
+        }
+
         return true;
     }
 
@@ -153,6 +282,10 @@ struct ScriptedFileSystem : moex_raw::IFileSystem {
     // Track created handles for post-configuration
     std::vector<ScriptedFileHandle*> created_handles;
 
+    // Pre-configured handle: if set, open_write returns this handle
+    // (used to inject failures before open() calls open_write)
+    std::unique_ptr<ScriptedFileHandle> preconfigured_handle;
+
     bool exists(const std::string&) override { return false; }
     bool rename(const std::string&, const std::string&) override { return !fail_rename; }
     bool remove(const std::string&) override { return true; }
@@ -171,6 +304,11 @@ struct ScriptedFileSystem : moex_raw::IFileSystem {
 
     std::unique_ptr<moex_raw::IFileHandle> open_write(const std::string&) override {
         if (fail_open_write) return nullptr;
+        if (preconfigured_handle) {
+            auto* raw = preconfigured_handle.get();
+            created_handles.push_back(raw);
+            return std::move(preconfigured_handle);
+        }
         auto h = std::make_unique<ScriptedFileHandle>();
         created_handles.push_back(h.get());
         return h;
@@ -470,6 +608,28 @@ int main() {
 
     // ============================================================
     // Blocker 1: Scripted short-I/O — short header write
+    // Preconfigure handle BEFORE open() so the header write itself short-fails.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        ScriptedFileSystem fs;
+
+        // Preconfigure: the header write (write #1 inside open()) short-writes
+        auto h = std::make_unique<ScriptedFileHandle>();
+        h->short_write_at = 1;
+        h->short_write_bytes = 1;
+        fs.preconfigured_handle = std::move(h);
+
+        RawSegmentWriter w(meta, dir, {}, &fs);
+        auto err = w.open();
+        CHECK(!err.empty());
+        CHECK(w.state() == WriterState::Failed);
+        CHECK(w.finalized_paths().empty());
+    }
+
+    // ============================================================
+    // Blocker 1: Short record write (first record)
     // ============================================================
     {
         auto dir = temp_dir();
@@ -825,6 +985,266 @@ int main() {
     }
 
     // ============================================================
+    // Blocker 1: Reader — short record-header read returns IoError
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto path = create_valid_segment(dir);
+        bool ok = false;
+        auto real_size = DefaultFileSystem().file_size(path, ok);
+        CHECK(ok);
+
+        ScriptedFileSystem sfs;
+        sfs.mock_file_size = real_size;
+
+        struct RecordHeaderReadFS : IFileSystem {
+            std::uint64_t sz;
+            std::string real_path;
+            bool exists(const std::string&) override { return true; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return sz; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override {
+                auto h = std::make_unique<ScriptedFileHandle>();
+                std::ifstream ifs(real_path, std::ios::binary);
+                h->data.resize(sz);
+                ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
+                h->fail_at_record_read = true;
+                return h;
+            }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
+        };
+
+        RecordHeaderReadFS rfs;
+        rfs.sz = real_size;
+        rfs.real_path = path;
+
+        RawSegmentMetadata vmeta;
+        RawFooter vfooter;
+        std::vector<RawValidationIssue> issues;
+        std::string ch, fh;
+        auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
+                                    nullptr, nullptr, nullptr, nullptr, &rfs);
+        CHECK(st == SegmentStatus::IoError);
+
+        bool found_io = false;
+        bool found_path = false;
+        for (const auto& issue : issues) {
+            if (issue.code == "IO_ERROR") found_io = true;
+            if (issue.path == path) found_path = true;
+        }
+        CHECK(found_io);
+        CHECK(found_path);
+    }
+
+    // ============================================================
+    // Blocker 1: Reader — short record-tail read returns IoError
+    // Record-tail = second read in Record stage (first is header).
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto path = create_valid_segment(dir);
+        bool ok = false;
+        auto real_size = DefaultFileSystem().file_size(path, ok);
+        CHECK(ok);
+
+        struct RecordTailReadFS : IFileSystem {
+            std::uint64_t sz;
+            std::string real_path;
+            bool exists(const std::string&) override { return true; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return sz; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override {
+                auto h = std::make_unique<ScriptedFileHandle>();
+                std::ifstream ifs(real_path, std::ios::binary);
+                h->data.resize(sz);
+                ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
+                // Short-read the second read in Record stage (tail read)
+                h->short_record_tail_at = 2;
+                return h;
+            }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
+        };
+
+        RecordTailReadFS rfs;
+        rfs.sz = real_size;
+        rfs.real_path = path;
+
+        RawSegmentMetadata vmeta;
+        RawFooter vfooter;
+        std::vector<RawValidationIssue> issues;
+        std::string ch, fh;
+        auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
+                                    nullptr, nullptr, nullptr, nullptr, &rfs);
+        CHECK(st == SegmentStatus::IoError);
+    }
+
+    // ============================================================
+    // Blocker 1: Reader — short content-hash read returns IoError
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto path = create_valid_segment(dir);
+        bool ok = false;
+        auto real_size = DefaultFileSystem().file_size(path, ok);
+        CHECK(ok);
+
+        struct ContentHashReadFS : IFileSystem {
+            std::uint64_t sz;
+            std::string real_path;
+            bool exists(const std::string&) override { return true; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return sz; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override {
+                auto h = std::make_unique<ScriptedFileHandle>();
+                std::ifstream ifs(real_path, std::ios::binary);
+                h->data.resize(sz);
+                ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
+                h->fail_at_content_hash_read = true;
+                return h;
+            }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
+        };
+
+        ContentHashReadFS cfs;
+        cfs.sz = real_size;
+        cfs.real_path = path;
+
+        RawSegmentMetadata vmeta;
+        RawFooter vfooter;
+        std::vector<RawValidationIssue> issues;
+        std::string ch, fh;
+        auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
+                                    nullptr, nullptr, nullptr, nullptr, &cfs);
+        CHECK(st == SegmentStatus::IoError);
+    }
+
+    // ============================================================
+    // Blocker 1: Reader — short whole-file-hash read returns IoError
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto path = create_valid_segment(dir);
+        bool ok = false;
+        auto real_size = DefaultFileSystem().file_size(path, ok);
+        CHECK(ok);
+
+        struct FileHashReadFS : IFileSystem {
+            std::uint64_t sz;
+            std::string real_path;
+            bool exists(const std::string&) override { return true; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return sz; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override {
+                auto h = std::make_unique<ScriptedFileHandle>();
+                std::ifstream ifs(real_path, std::ios::binary);
+                h->data.resize(sz);
+                ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
+                h->fail_at_file_hash_read = true;
+                return h;
+            }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
+        };
+
+        FileHashReadFS ffs;
+        ffs.sz = real_size;
+        ffs.real_path = path;
+
+        RawSegmentMetadata vmeta;
+        RawFooter vfooter;
+        std::vector<RawValidationIssue> issues;
+        std::string ch, fh;
+        auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
+                                    nullptr, nullptr, nullptr, nullptr, &ffs);
+        CHECK(st == SegmentStatus::IoError);
+    }
+
+    // ============================================================
+    // Blocker 1: Reader — seek failure on file SHA-256 (seek #3)
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto path = create_valid_segment(dir);
+        bool ok = false;
+        auto real_size = DefaultFileSystem().file_size(path, ok);
+        CHECK(ok);
+
+        struct SeekFailFileHashFS : IFileSystem {
+            std::uint64_t sz;
+            std::string real_path;
+            bool exists(const std::string&) override { return true; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return sz; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override {
+                auto h = std::make_unique<ScriptedFileHandle>();
+                std::ifstream ifs(real_path, std::ios::binary);
+                h->data.resize(sz);
+                ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
+                h->fail_seek_at_ordinal = 3;  // seek #3 = file SHA-256
+                return h;
+            }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
+        };
+
+        SeekFailFileHashFS sfs;
+        sfs.sz = real_size;
+        sfs.real_path = path;
+
+        RawSegmentMetadata vmeta;
+        RawFooter vfooter;
+        std::vector<RawValidationIssue> issues;
+        std::string ch, fh;
+        auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
+                                    nullptr, nullptr, nullptr, nullptr, &sfs);
+        CHECK(st == SegmentStatus::IoError);
+    }
+
+    // ============================================================
+    // Blocker 1: Reader — seek failure on record scan (seek #4)
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto path = create_valid_segment(dir);
+        bool ok = false;
+        auto real_size = DefaultFileSystem().file_size(path, ok);
+        CHECK(ok);
+
+        struct SeekFailRecordFS : IFileSystem {
+            std::uint64_t sz;
+            std::string real_path;
+            bool exists(const std::string&) override { return true; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return sz; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override {
+                auto h = std::make_unique<ScriptedFileHandle>();
+                std::ifstream ifs(real_path, std::ios::binary);
+                h->data.resize(sz);
+                ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
+                h->fail_seek_at_ordinal = 4;  // seek #4 = records scan
+                return h;
+            }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
+        };
+
+        SeekFailRecordFS sfs;
+        sfs.sz = real_size;
+        sfs.real_path = path;
+
+        RawSegmentMetadata vmeta;
+        RawFooter vfooter;
+        std::vector<RawValidationIssue> issues;
+        std::string ch, fh;
+        auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
+                                    nullptr, nullptr, nullptr, nullptr, &sfs);
+        CHECK(st == SegmentStatus::IoError);
+    }
+
+    // ============================================================
     // Blocker 2: UINT64_MAX start_capture_index — no mutation
     // ============================================================
     {
@@ -1091,6 +1511,65 @@ int main() {
         CHECK(status == SegmentStatus::ValidFinalized);
         CHECK(first_utc == 7000);
         CHECK(last_utc == 7000);
+    }
+
+    // ============================================================
+    // Blocker 4: UTC bounds — decreasing UTC values (order, not min/max)
+    // Later segments have numerically smaller UTC; first/last must follow
+    // capture order, not numeric min/max.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+
+        // Segment 0: UTC = 50000
+        {
+            RawSegmentWriter w(meta, dir, {});
+            w.open();
+            RawPacketRecord rec;
+            rec.record_flags = kRecordFlagUtcValid;
+            rec.capture_index = 0;
+            rec.capture_utc_ns = 50000;
+            rec.capture_monotonic_ns = 0;
+            rec.payload = {0x01};
+            w.append(rec);
+            w.finalize();
+        }
+
+        // Segment 1: UTC = 30000 (numerically smaller than seg 0)
+        auto meta1 = meta;
+        meta1.segment_index = 1;
+        meta1.start_capture_index = 1;
+        {
+            RawSegmentWriter w(meta1, dir, {});
+            w.open();
+            RawPacketRecord rec;
+            rec.record_flags = kRecordFlagUtcValid;
+            rec.capture_index = 1;
+            rec.capture_utc_ns = 30000;
+            rec.capture_monotonic_ns = 1000;
+            rec.payload = {0x02};
+            w.append(rec);
+            w.finalize();
+        }
+
+        std::vector<std::string> paths;
+        for (const auto& entry : fs::directory_iterator(dir)) {
+            if (entry.path().extension() == ".mxraw") paths.push_back(entry.path().string());
+        }
+        std::sort(paths.begin(), paths.end());
+
+        std::vector<RawSegmentMetadata> metas;
+        std::vector<RawFooter> footers;
+        std::vector<RawValidationIssue> issues;
+        std::uint64_t first_utc = 0, last_utc = 0;
+        auto status = validate_stream_set(paths, metas, footers, issues, &first_utc, &last_utc);
+        CHECK(status == SegmentStatus::ValidFinalized);
+        // first_utc = first non-zero in order = 50000 (from segment 0)
+        // last_utc = last non-zero in order = 30000 (from segment 1)
+        // NOT min(50000,30000)=30000 / max(50000,30000)=50000
+        CHECK(first_utc == 50000);
+        CHECK(last_utc == 30000);
     }
 
     // ============================================================
@@ -1598,6 +2077,24 @@ int main() {
         std::uint64_t max_ts_offset;
         bool overflow = !checked_mul_u64(UINT64_MAX - 1, 1000000, max_ts_offset);
         CHECK(overflow);
+    }
+
+    // ============================================================
+    // Blocker 4: UINT64_MAX checked_add_u64 for stream-set arithmetic
+    // Validates that segment_index + 1 and last_capture_index + 1
+    // would be caught by checked_add_u64 before comparison.
+    // ============================================================
+    {
+        // segment_index + 1 overflow
+        std::uint64_t result = 0;
+        CHECK(!checked_add_u64(UINT64_MAX, 1, result));
+
+        // last_capture_index + 1 overflow
+        CHECK(!checked_add_u64(UINT64_MAX, 1, result));
+
+        // Verify boundary: UINT64_MAX - 1 + 1 = UINT64_MAX (no overflow)
+        CHECK(checked_add_u64(UINT64_MAX - 1, 1, result));
+        CHECK(result == UINT64_MAX);
     }
 
     // ============================================================
