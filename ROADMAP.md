@@ -95,8 +95,8 @@ READY_FOR_REVIEW (Round 5 corrections applied)
 Issue #14
 Branch: feat/rt-1-fast-config-inspector
 PR: #16
-Head: 1d8b12a703ba4860262210ff430cb7ff10c5d2f6
-CI run #20: all 5 jobs green (pending push)
+Head: 37e13e9 (code: 1d8b12a703ba4860262210ff430cb7ff10c5d2f6)
+CI run #24: all 5 jobs green
 Review cycle: Round 5 CHANGES_REQUIRED → Round 5 corrections applied
 ```
 
@@ -230,7 +230,7 @@ production remains disabled by default.
 ```text
 1. Round 5 corrections applied for RT-1 on feat/rt-1-fast-config-inspector.
 2. Commit 1d8b12a703ba4860262210ff430cb7ff10c5d2f6.
-3. CI run #20: all 5 jobs green (Windows 6/6, Linux 6/6, QSH 20/20, Python 3/3, hygiene PASS).
+3. CI run #24: all 5 jobs green (Windows 6/6, Linux 6/6, QSH 20/20, Python 3/3, hygiene PASS).
 4. Issue #14 moved to READY_FOR_REVIEW.
 5. Stop — do not merge, do not start RT-2.
 ```

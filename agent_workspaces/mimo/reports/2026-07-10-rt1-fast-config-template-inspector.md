@@ -4,7 +4,7 @@ Date: 2026-07-10 (Round 5 corrections)
 Branch: feat/rt-1-fast-config-inspector  
 Pull Request: #16  
 Head: `1d8b12a703ba4860262210ff430cb7ff10c5d2f6`  
-CI run: #20 (all 5 jobs green, pending push)  
+CI run: #24 (all 5 jobs green)  
 Executor: MiMo Code
 
 ## Summary
@@ -234,7 +234,7 @@ cpp/moex_fast/
 
 ## CI Evidence
 
-CI run #20 on commit `1d8b12a703ba4860262210ff430cb7ff10c5d2f6`:
+CI run #24 on commit `37e13e9` (code `1d8b12a703ba4860262210ff430cb7ff10c5d2f6`):
 - C++ MOEX FAST inspector Windows (6 tests): PASS
 - C++ MOEX FAST inspector Linux (6 tests): PASS
 - C++ QSH M10X regression (20 tests): PASS
