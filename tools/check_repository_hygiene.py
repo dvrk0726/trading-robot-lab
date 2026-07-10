@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Fail when tracked or pending repository files violate project hygiene rules.
 
-This check is intentionally conservative. It checks filenames, file sizes and a
-small set of high-confidence secret signatures. It does not replace code review.
+The check covers high-confidence secret signatures, forbidden private/raw file
+classes, generated artifacts and project file-size limits. It complements, but
+does not replace, code review.
 """
 
 from __future__ import annotations
@@ -28,6 +29,10 @@ FORBIDDEN_EXACT_NAMES = {
     "id_ed25519",
     "cookies.txt",
     "session.json",
+    # Owner-provided MOEX files must remain outside Git. Synthetic fixtures must
+    # use explicit synthetic/sample names instead of these official filenames.
+    "configuration.xml",
+    "templates.xml",
 }
 
 FORBIDDEN_SUFFIXES = {
@@ -43,6 +48,7 @@ FORBIDDEN_SUFFIXES = {
     ".dylib",
     ".jar",
     ".bin",
+    ".dat",
     ".qsh",
     ".pcap",
     ".pcapng",
@@ -54,6 +60,12 @@ FORBIDDEN_SUFFIXES = {
     ".feather",
     ".h5",
     ".hdf5",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",
+    ".tgz",
 }
 
 FORBIDDEN_PATH_PARTS = {
@@ -159,6 +171,11 @@ def is_allowed_cmd(path: str) -> bool:
     )
 
 
+def is_allowed_sample_csv(path: str) -> bool:
+    lower_path = path.lower()
+    return lower_path.startswith("data/sample/") or lower_path.endswith(".sample.csv")
+
+
 def filename_violations(path: str) -> list[str]:
     violations: list[str] = []
     posix = PurePosixPath(path)
@@ -175,6 +192,9 @@ def filename_violations(path: str) -> list[str]:
 
     if lower_suffix in FORBIDDEN_SUFFIXES:
         violations.append(f"forbidden file type {lower_suffix}")
+
+    if lower_suffix == ".csv" and not is_allowed_sample_csv(path):
+        violations.append("CSV is allowed only as explicit synthetic/sample data")
 
     if lower_suffix == ".ps1" and not lower_path.startswith(ALLOWED_PS1_PREFIX):
         violations.append("PowerShell scripts are allowed only under tools/")
