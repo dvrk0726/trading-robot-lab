@@ -1,8 +1,8 @@
 # AI Context
 
-Дата обновления: 2026-07-10  
+Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-2 Round 7 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
+Текущий gate: RT-2 Round 9 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Назначение проекта
 
@@ -134,31 +134,26 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — Round 8 corrections complete
+## RT-2 — Round 9 corrections complete
 
 ```text
-Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
+Issue #18: READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `0d9748f`
-CI #64 (run 29142169316): ALL GREEN (7/7 jobs)
+Implementation commit: `95a6626`
+Implementation CI #66 (run 29142699176): ALL GREEN (7/7 jobs)
 ```
 
-Round 8 corrections delivered:
+Round 9 corrections delivered:
 
 ```text
-rotation failure semantics: start_new_segment constructs candidate metadata/paths locally,
-  commits only after successful open_write and header write;
-  any error after publishing previous segment leaves writer in coherent Failed state;
-should_rotate() checked arithmetic: checked_add_u64 for footer-inclusive prospective size;
-zero-byte failed header write test (fail_write_at=1) distinct from short write;
-partial positive read followed by premature EOF for content SHA-256;
-partial positive read followed by premature EOF for whole-file SHA-256;
-post-finalize target race test (exists returns true during start_new_segment);
-open_write failure for next segment after finalize succeeds;
-focused boundary tests for should_rotate() checked arithmetic;
-portable command quoting helper (q()) for CLI tests with Windows space-safe paths;
-CLI inspect --strict for directory containing .mxraw.partial returns non-zero;
+partial-positive hash EOF tests: keep full backing buffer, inject stage-aware
+  partial-EOF via partial_content_hash_eof and partial_file_hash_eof flags;
+  first read returns positive partial, second read returns 0;
+  assert SegmentStatus::IoError, exact path, stage-specific message/code,
+  and read counter proving both reads at the required stage;
+end-to-end CLI test with directory and JSON paths containing spaces:
+  synth, inspect --json-out, replay all succeed; JSON parsed by strict parser;
 18/18 Release tests (Windows + Linux).
 ```
 
@@ -192,7 +187,7 @@ DONE
 ## Immediate actions
 
 ```text
-1. Owner reviews RT-2 Round 7 corrections in PR #20.
+1. Owner reviews RT-2 Round 9 corrections in PR #20.
 2. If accepted, merge PR #20.
 3. Move Issue #18 to DONE.
 4. Do not start RT-3 until RT-2 is DONE.

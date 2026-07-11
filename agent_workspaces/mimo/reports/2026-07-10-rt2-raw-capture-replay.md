@@ -3,32 +3,29 @@
 Date: 2026-07-11  
 Branch: mimo/issue-18-rt2-raw-capture-replay  
 Pull Request: #20  
-Implementation commit: `0d9748f` (Round 8 code)  
-Implementation CI: #64 (run 29142169316): ALL GREEN 7/7  
+Implementation commit: `95a6626` (Round 9 code)  
+Implementation CI: #66 (run 29142699176): ALL GREEN 7/7  
 Executor: MiMo Code
 
 ## Summary
 
 Implemented the first offline raw-market-data source-of-truth layer under `cpp/moex_raw/`. Creates versioned immutable `.mxraw` segments with deterministic synthetic data. No network access, no FAST decode, no real capture.
 
-## Round 8 Corrections
+## Round 9 Corrections
 
-All Round 8 blockers addressed:
+All Round 9 blockers addressed:
 
-### 1. Rotation failure semantics
-`start_new_segment()` now constructs candidate metadata and paths locally. Metadata and file handle are committed only after successful `open_write()` and header write. Any failure after publishing the previous segment leaves the writer in a coherent `Failed` state with no stale metadata pointing at non-existent segments. Added deterministic injected tests for post-finalize target race and `open_write` failure.
+### 1. Partial-positive hash EOF tests — stage-correct injection
+Previous tests truncated the backing data buffer, causing footer seek to fail before reaching the content/file hash stages. Fixed by keeping the full backing buffer and injecting partial-EOF behavior by stage:
+- Added `partial_content_hash_eof` and `partial_file_hash_eof` flags to `ScriptedFileHandle`
+- First read in stage returns 1 byte (positive partial), second read returns 0 (premature EOF)
+- Content-hash test asserts `SegmentStatus::IoError`, exact path, `"IO_ERROR"` code with `"SHA-256"` message, and `content_hash_read_count == 2`
+- File-hash test asserts `SegmentStatus::IoError`, exact path, `"IO_ERROR"` code with `"file SHA-256"` message, and `file_hash_read_count == 2`
 
-### 2. should_rotate() checked arithmetic
-Replaced direct `new_file_bytes + kFooterSize` with `checked_add_u64` for the footer-inclusive prospective size. Added focused boundary tests proving rotation triggers at exact byte limit and does not trigger when two records fit.
+### 2. End-to-end CLI test with paths containing spaces
+Added test creating a directory named `"path with spaces"` and JSON path `"my report.json"`. Runs real `synth`, `inspect --json-out`, and `replay` through the quoted paths. Verifies success, JSON existence, and strict parser acceptance.
 
-### 3. Fault injection evidence
-- Zero-byte failed header write (`fail_write_at=1`) distinct from the existing short-header-write test
-- Partial positive read followed by premature EOF for content SHA-256 (data truncated after first read chunk)
-- Partial positive read followed by premature EOF for whole-file SHA-256
-- Portable command quoting helper `q()` wrapping paths in double quotes only when they contain spaces
-- CLI `inspect --strict` for directory containing `.mxraw.partial` returns non-zero exit code
-
-### 4. Handoff synchronization
+### 3. Handoff synchronization
 Updated AI_CONTEXT.md, PROJECT_STATE.md, ROADMAP.md, MiMo report, PR description and Issue #18 with actual implementation SHA and CI run.
 
 ## Previous Round Corrections
@@ -141,7 +138,7 @@ M  cpp/moex_raw/CMakeLists.txt                           (+test_round5)
 M  .github/workflows/ci.yml                              (test inventory 16→17)
 ```
 
-## Local Test Results (Round 8)
+## Local Test Results (Round 9)
 
 ```text
 RT-2 (18/18 passed, Windows Release):
@@ -173,7 +170,7 @@ Hygiene: PASS
 ## GitHub Actions
 
 ```text
-CI #64 (run 29142169316): ALL GREEN — 7/7 jobs passed
+CI #66 (run 29142699176): ALL GREEN — 7/7 jobs passed
   C++ MOEX RAW Windows/MSVC (18 tests): PASSED
   C++ MOEX RAW Linux/GCC (18 tests): PASSED
   C++ MOEX FAST inspector Windows (6 tests): PASSED

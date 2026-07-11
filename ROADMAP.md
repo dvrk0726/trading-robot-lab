@@ -1,8 +1,8 @@
 # Roadmap
 
-Дата обновления: 2026-07-10  
+Дата обновления: 2026-07-11  
 Статус: gated engineering roadmap  
-Текущий gate: RT-2 Round 7 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
+Текущий gate: RT-2 Round 9 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Главный порядок
 
@@ -110,11 +110,11 @@ RT-1 deliberately excluded network, binary FAST decoding, recovery, books and or
 Current status:
 
 ```text
-Issue #18: READY_FOR_REVIEW (Round 8 corrections complete)
+Issue #18: READY_FOR_REVIEW (Round 9 corrections complete)
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `0d9748f`
-CI #64 (run 29142169316): ALL GREEN (7/7 jobs)
+Implementation commit: `95a6626`
+Implementation CI #66 (run 29142699176): ALL GREEN (7/7 jobs)
 ```
 
 Delivered:
@@ -250,7 +250,7 @@ Issue #17 preserves future SPECTRA FIX 4.4 session, order-control and Drop Copy 
 ## Immediate sequence
 
 ```text
-1. Owner reviews RT-2 Round 7 corrections in PR #20.
+1. Owner reviews RT-2 Round 9 corrections in PR #20.
 2. If accepted, merge PR #20.
 3. Move Issue #18 to DONE.
 4. Do not start RT-3 until RT-2 is DONE.
