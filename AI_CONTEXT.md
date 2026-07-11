@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-3 specialized FAST decoder specification — Issue #21 DRAFT
+Текущий gate: RT-3 specification PR #22 — owner review
 
 ## Назначение проекта
 
@@ -167,11 +167,14 @@ Windows/Linux 18-test gates.
 
 RT-2 payload bytes remain opaque. `capture_index` is not FAST `MsgSeqNum` or exchange sequence.
 
-## RT-3 — architecture specification DRAFT
+## RT-3 — specification owner review
 
 ```text
-Issue #21: DRAFT
+Issue #21: DRAFT — OWNER_SPEC_REVIEW
 Architecture branch: docs/issue-21-rt3-fast-decoder-spec
+Specification PR: #22
+Specification head before evidence update: 8dd3cfb7e53c85e9bcfbdcdafc2a735dd4dd0708
+Specification CI #75 (run 29148020256): green 7/7
 Task package: tasks/RT-3-specialized-fast-decoder-foundation/
 MiMo implementation: NOT AUTHORIZED
 RT-4: BLOCKED
@@ -253,11 +256,10 @@ DONE
 ## Immediate actions
 
 ```text
-1. Open the RT-3 specification PR from docs/issue-21-rt3-fast-decoder-spec.
-2. Owner reviews the specification only.
-3. Do not run MiMo implementation while Issue #21 is DRAFT.
-4. After explicit approval, merge the specification PR manually.
-5. Confirm green post-merge main CI.
-6. Move Issue #21 to READY_FOR_MIMO only after that gate.
-7. Do not start RT-4 until RT-3 is DONE.
+1. Owner reviews RT-3 specification PR #22.
+2. Do not run MiMo implementation while Issue #21 is DRAFT.
+3. After explicit approval, merge PR #22 manually.
+4. Confirm green post-merge main CI.
+5. Move Issue #21 to READY_FOR_MIMO only after that gate.
+6. Do not start RT-4 until RT-3 is DONE.
 ```
