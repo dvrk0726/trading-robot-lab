@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-2 Round 10 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
+Статус: RT-2 DONE; RT-3 architecture specification in progress under Issue #21
 
 ## Архитектура
 
@@ -120,73 +120,101 @@ deterministic text/JSON reports;
 Windows/Linux Release-active tests.
 ```
 
-## RT-2 — Round 10 corrections complete
+## RT-2 — DONE
 
 ```text
-Issue #18: READY_FOR_REVIEW
-Implementation PR: #20
-Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `088ceef`
-Implementation CI #68 (run 29143755544): ALL GREEN (7/7 jobs)
+Issue #18: DONE
+Specification PR #19: merged
+Implementation PR #20: merged
+Merge commit: 060371112d921c1c1f4055cfbdb99049bdf8a2af
+Current main control head: 5f1f9c1beaee080fe44eaccda7c7370d9324546d
+Post-merge/current-main CI #74: passed
+Owner Release build: passed
+Owner CTest: 18/18
+Owner strict synthetic inspect: valid, 4 segments, 10 records, 0 issues
+Owner replay: valid, 4 segments, 10 records, 320 payload bytes, 0 issues
 ```
 
 Delivered:
 
 ```text
-C++20/CMake module: cpp/moex_raw/
-v1 binary segment contract (preamble, header, records, footer)
-CRC32C (Castagnoli) and pure C++ SHA-256 implementations
-Little-endian serialization primitives with checked arithmetic
-UTF-8 string validation with 128-byte limit
-RawSegmentWriter with .partial -> finalized lifecycle
-Writer metadata validation before file creation
-write_length_string rejects oversized strings (no silent truncation)
-Hard 64 GiB segment cap regardless of rotation policy
-Incremental content SHA-256 (no fread on wb-stream)
-Deterministic rotation by record count and byte limits
-First-record byte-limit validation
-Bounded streaming reader/validator (no whole-file loading)
-Canonical filename parsing and filename/content identity
-Stream-set validation: numeric sorting, duplicate/missing detection,
-  full metadata/hash equality, monotonic timestamp across boundaries
-Directory grouping by full (session_id, source_id, channel_id) key
-Per-stream independent summaries in text and JSON reports
-Expanded report schema with format_version, source metadata, provenance hashes
-Ambiguity detection for multiple matching streams (strict: matches.size() != 1)
-Deterministic replay callback with MXREPLAY1 canonical digest
-Single streaming SHA-256 context in replay_stream()
-replay_from_stream_set() for explicit session selection
-Status classification: unsupported, partial, truncated, corrupt, I/O error
-CLI: moex-raw synth, moex-raw inspect, moex-raw replay
-Strict CLI numeric/hex validation (reject negative/signed/whitespace)
-Release-active CHECK macros (active under NDEBUG)
-Independent golden byte-vector test
-End-to-end content SHA-256 verification test
-Independent MXREPLAY1 golden digest test
-CI jobs for Windows/MSVC and Linux/GCC (18 tests each)
+C++20/CMake module: cpp/moex_raw/;
+v1 binary segment contract;
+CRC32C and SHA-256 provenance;
+checked little-endian serialization;
+RawSegmentWriter .partial -> finalized lifecycle;
+deterministic record/byte rotation;
+bounded streaming validation;
+canonical stream-set grouping and ordering;
+per-stream text/JSON reports;
+deterministic MXREPLAY1 replay;
+CLI synth/inspect/replay;
+Windows/Linux Release tests: 18 each.
 ```
 
-Test results:
+Explicit RT-2 non-goals remain:
 
 ```text
-RT-2:         18/18 tests passed (Windows + Linux Release)
-RT-1:          6/6  tests passed (no regression)
-QSH/M10X:     20/20 tests passed (no regression)
-Python:         3/3  passed
-Hygiene:        PASS (276 files checked)
-```
-
-Explicit RT-2 non-goals:
-
-```text
-no sockets or multicast;
-no real packet capture;
+no sockets, multicast or real capture;
 no FAST binary decode;
 no A/B deduplication or recovery;
 no book building;
 no database/object-storage integration;
 no FIX/TWIME or order sending;
-no pcap/raw/private data in Git.
+no raw/private data in Git.
+```
+
+## RT-3 — specification DRAFT
+
+```text
+Issue #21: DRAFT
+Architecture branch: docs/issue-21-rt3-fast-decoder-spec
+Task package: tasks/RT-3-specialized-fast-decoder-foundation/
+Specification PR: pending creation from the architecture branch
+MiMo implementation: NOT AUTHORIZED
+RT-4: BLOCKED
+```
+
+Proposed decoder foundation:
+
+```text
+exactly one bounded FAST message payload;
+immutable compiled template tree preserving operators and nesting;
+presence maps and stop-bit integer primitives;
+nullable integer/string/byte-vector values;
+exact decimal exponent/mantissa;
+template-ID state;
+none/constant/default/copy/increment/delta/tail;
+canonical dictionaries and per-stream DecoderSession;
+transactional state journal and rollback;
+groups, sequences and explicit safety limits;
+deterministic DecodedMessage tree and CLI reports;
+span-based compatibility with RawPacketRecord.payload;
+independent golden vectors and reference encoder;
+Windows/Linux Release-active tests.
+```
+
+RT-3 does not include:
+
+```text
+SPECTRA UDP packet framing;
+network capture;
+MsgSeqNum/gap policy;
+A/B merge or deduplication;
+Snapshot/Incremental bootstrap or recovery;
+normalized market events;
+order-log/book semantics;
+FIX/TWIME or order sending;
+strategy/paper/production enablement.
+```
+
+Required specification files:
+
+```text
+tasks/RT-3-specialized-fast-decoder-foundation/00_OVERVIEW.md
+tasks/RT-3-specialized-fast-decoder-foundation/01_REQUIREMENTS.md
+tasks/RT-3-specialized-fast-decoder-foundation/02_TEST_PLAN.md
+tasks/RT-3-specialized-fast-decoder-foundation/03_ACCEPTANCE.md
 ```
 
 ## Future runtime requirement preservation
@@ -209,8 +237,11 @@ DRAFT
 ## Immediate next actions
 
 ```text
-1. Owner reviews RT-2 Round 10 corrections in PR #20.
-2. If accepted, merge PR #20.
-3. Move Issue #18 to DONE.
-4. Do not start RT-3 until RT-2 is DONE.
+1. Open the RT-3 architecture specification Pull Request for Issue #21.
+2. Owner and Architecture/Review inspect the specification only.
+3. Do not run MiMo implementation from the docs branch.
+4. After explicit owner approval, merge the specification PR manually.
+5. Confirm post-merge CI on main.
+6. Only then move Issue #21 to READY_FOR_MIMO.
+7. Do not start RT-4 until RT-3 is DONE.
 ```
