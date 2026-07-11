@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-2 DONE; RT-3 architecture specification in progress under Issue #21
+Статус: RT-2 DONE; RT-3 specification PR #22 ready for owner review
 
 ## Архитектура
 
@@ -164,13 +164,15 @@ no FIX/TWIME or order sending;
 no raw/private data in Git.
 ```
 
-## RT-3 — specification DRAFT
+## RT-3 — specification owner review
 
 ```text
-Issue #21: DRAFT
+Issue #21: DRAFT — OWNER_SPEC_REVIEW
 Architecture branch: docs/issue-21-rt3-fast-decoder-spec
+Specification PR: #22
+Specification head before evidence update: 8dd3cfb7e53c85e9bcfbdcdafc2a735dd4dd0708
+Specification CI #75 (run 29148020256): green 7/7
 Task package: tasks/RT-3-specialized-fast-decoder-foundation/
-Specification PR: pending creation from the architecture branch
 MiMo implementation: NOT AUTHORIZED
 RT-4: BLOCKED
 ```
@@ -237,11 +239,10 @@ DRAFT
 ## Immediate next actions
 
 ```text
-1. Open the RT-3 architecture specification Pull Request for Issue #21.
-2. Owner and Architecture/Review inspect the specification only.
-3. Do not run MiMo implementation from the docs branch.
-4. After explicit owner approval, merge the specification PR manually.
-5. Confirm post-merge CI on main.
-6. Only then move Issue #21 to READY_FOR_MIMO.
-7. Do not start RT-4 until RT-3 is DONE.
+1. Owner and Architecture/Review inspect RT-3 specification PR #22.
+2. Do not run MiMo implementation from the docs branch.
+3. After explicit owner approval, merge PR #22 manually.
+4. Confirm green post-merge CI on main.
+5. Only then move Issue #21 to READY_FOR_MIMO.
+6. Do not start RT-4 until RT-3 is DONE.
 ```
