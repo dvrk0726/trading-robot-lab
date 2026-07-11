@@ -143,7 +143,7 @@ jobs:
 
   # RT-1 inspector: 6 tests on Windows/MSVC
   cpp-moex-fast-inspector:
-    name: C++ MOEX FAST inspector Windows/MSVC (RT-1: 6 tests, RT-3: 7 tests)
+    name: "C++ MOEX FAST inspector Windows/MSVC (RT-1: 6 tests, RT-3: 7 tests)"
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -182,7 +182,7 @@ jobs:
 
   # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 7 tests on Linux/GCC
   cpp-moex-fast-inspector-linux:
-    name: C++ MOEX FAST inspector Linux/GCC (RT-1: 6 tests, RT-3: 7 tests)
+    name: "C++ MOEX FAST inspector Linux/GCC (RT-1: 6 tests, RT-3: 7 tests)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
