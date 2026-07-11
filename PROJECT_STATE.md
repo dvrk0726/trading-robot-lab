@@ -120,14 +120,14 @@ deterministic text/JSON reports;
 Windows/Linux Release-active tests.
 ```
 
-## RT-2 — Round 7 corrections complete
+## RT-2 — Round 8 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `7f72647`
-CI #62 (run 29122599257): ALL GREEN (7/7 jobs)
+Implementation commit: `0d9748f`
+CI #64 (run 29142169316): ALL GREEN (7/7 jobs)
 ```
 
 Delivered:

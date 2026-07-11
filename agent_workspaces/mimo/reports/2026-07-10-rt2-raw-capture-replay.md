@@ -1,18 +1,37 @@
 # RT-2 Implementation Report — Raw Segment Format and Synthetic Capture/Replay
 
-Date: 2026-07-10  
+Date: 2026-07-11  
 Branch: mimo/issue-18-rt2-raw-capture-replay  
 Pull Request: #20  
-Implementation commit: `1451bc6` (Round 5 code) / `8a30e24` (CI fix)  
+Implementation commit: `0d9748f` (Round 8 code)  
+Implementation CI: #64 (run 29142169316): ALL GREEN 7/7  
 Executor: MiMo Code
 
 ## Summary
 
 Implemented the first offline raw-market-data source-of-truth layer under `cpp/moex_raw/`. Creates versioned immutable `.mxraw` segments with deterministic synthetic data. No network access, no FAST decode, no real capture.
 
-## Round 5 Corrections
+## Round 8 Corrections
 
-All 9 Round 5 blockers addressed:
+All Round 8 blockers addressed:
+
+### 1. Rotation failure semantics
+`start_new_segment()` now constructs candidate metadata and paths locally. Metadata and file handle are committed only after successful `open_write()` and header write. Any failure after publishing the previous segment leaves the writer in a coherent `Failed` state with no stale metadata pointing at non-existent segments. Added deterministic injected tests for post-finalize target race and `open_write` failure.
+
+### 2. should_rotate() checked arithmetic
+Replaced direct `new_file_bytes + kFooterSize` with `checked_add_u64` for the footer-inclusive prospective size. Added focused boundary tests proving rotation triggers at exact byte limit and does not trigger when two records fit.
+
+### 3. Fault injection evidence
+- Zero-byte failed header write (`fail_write_at=1`) distinct from the existing short-header-write test
+- Partial positive read followed by premature EOF for content SHA-256 (data truncated after first read chunk)
+- Partial positive read followed by premature EOF for whole-file SHA-256
+- Portable command quoting helper `q()` wrapping paths in double quotes only when they contain spaces
+- CLI `inspect --strict` for directory containing `.mxraw.partial` returns non-zero exit code
+
+### 4. Handoff synchronization
+Updated AI_CONTEXT.md, PROJECT_STATE.md, ROADMAP.md, MiMo report, PR description and Issue #18 with actual implementation SHA and CI run.
+
+## Previous Round Corrections
 
 ### 1. IFileHandle abstraction
 Extended `IFileSystem` with `file_size()`, `open_read()`, `open_write()`. Added `IFileHandle` interface with `read()`, `write()`, `seek()`, `flush()`, `close()`. `DefaultFileHandle` wraps `std::FILE*`. Writer uses `IFileHandle` for all I/O. Reader uses `IFileSystem` for file_size and `IFileHandle` for reads. Production defaults use real filesystem.
@@ -65,7 +84,7 @@ Independent test-only JSON parser in `test_round5.cpp` verifies: numeric types (
 
 ## What Was Implemented
 
-- C++20/CMake module `cpp/moex_raw/` with library, CLI and 17 test executables
+- C++20/CMake module `cpp/moex_raw/` with library, CLI and 18 test executables
 - v1 binary segment contract: `MXRAWV1\0` preamble, segment metadata, `REC1` packet records, `MXENDV1\0` footer
 - Pure C++ CRC32C (Castagnoli) with known vectors
 - Pure C++ SHA-256 with streaming context for incremental hashing
@@ -122,10 +141,10 @@ M  cpp/moex_raw/CMakeLists.txt                           (+test_round5)
 M  .github/workflows/ci.yml                              (test inventory 16→17)
 ```
 
-## Local Test Results (Round 5)
+## Local Test Results (Round 8)
 
 ```text
-RT-2 (17/17 passed, Windows Release):
+RT-2 (18/18 passed, Windows Release):
   test_crc32c .............. Passed
   test_endian .............. Passed
   test_strings ............. Passed
@@ -143,28 +162,20 @@ RT-2 (17/17 passed, Windows Release):
   test_content_sha256_e2e .. Passed
   test_round3 .............. Passed
   test_round5 .............. Passed
+  test_round6 .............. Passed
 
-RT-1 (6/6 passed, no regression):
-  test_template_parser ..... Passed
-  test_config_parser ....... Passed
-  test_provenance .......... Passed
-  test_deterministic_report  Passed
-  test_resource_safety ..... Passed
-  test_cli ................. Passed
-
+RT-1 (6/6 passed, no regression)
 QSH/M10X (20/20 passed, no regression)
-
 Python (3/3 passed)
-Shared schemas (5/5 valid)
-Repository hygiene: PASS
+Hygiene: PASS
 ```
 
 ## GitHub Actions
 
 ```text
-CI #56 (run 29117870425): ALL GREEN — 7/7 jobs passed
-  C++ MOEX RAW Windows/MSVC (17 tests): PASSED
-  C++ MOEX RAW Linux/GCC (17 tests): PASSED
+CI #64 (run 29142169316): ALL GREEN — 7/7 jobs passed
+  C++ MOEX RAW Windows/MSVC (18 tests): PASSED
+  C++ MOEX RAW Linux/GCC (18 tests): PASSED
   C++ MOEX FAST inspector Windows (6 tests): PASSED
   C++ MOEX FAST inspector Linux (6 tests): PASSED
   C++ QSH M10X regression (20 tests): PASSED

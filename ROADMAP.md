@@ -110,11 +110,11 @@ RT-1 deliberately excluded network, binary FAST decoding, recovery, books and or
 Current status:
 
 ```text
-Issue #18: READY_FOR_REVIEW (Round 7 corrections complete)
+Issue #18: READY_FOR_REVIEW (Round 8 corrections complete)
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `7f72647`
-CI #62 (run 29122599257): ALL GREEN (7/7 jobs)
+Implementation commit: `0d9748f`
+CI #64 (run 29142169316): ALL GREEN (7/7 jobs)
 ```
 
 Delivered:

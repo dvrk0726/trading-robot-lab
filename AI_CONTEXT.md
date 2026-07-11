@@ -134,31 +134,31 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — Round 7 corrections complete
+## RT-2 — Round 8 corrections complete
 
 ```text
 Issue #18: CHANGES_REQUIRED -> READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `7f72647`
-CI #62 (run 29122599257): ALL GREEN (7/7 jobs)
+Implementation commit: `0d9748f`
+CI #64 (run 29142169316): ALL GREEN (7/7 jobs)
 ```
 
-Round 7 corrections delivered:
+Round 8 corrections delivered:
 
 ```text
-stage-accurate fault injection: real short-header-write test (preconfigured before open);
-stage-aware reader fault injection for record-header, record-tail, content-hash, file-hash reads;
-seek failure at file-hash and record-scan stages;
-reader record-header/tail I/O failures return IoError (not Corrupt);
-real CLI end-to-end tests: single-file, one-stream, two-stream inspect JSON via moex-raw executable;
-strict partial/corrupt exit codes; synth overflow with empty output dir;
-invalid JSON output path; deterministic repeated JSON output; strict JSON parser on CLI output;
-UTC aggregation: ordered first/last non-zero UTC-valid timestamp (not min/max);
-fixture with numerically decreasing UTC values;
-checked cross-segment arithmetic: checked_add_u64 for segment_index + 1 and last_capture_index + 1;
-SEGMENT_INDEX_OVERFLOW and CAPTURE_INDEX_OVERFLOW issue codes;
-should_rotate() uses checked_add_u64; UINT64_MAX boundary tests;
+rotation failure semantics: start_new_segment constructs candidate metadata/paths locally,
+  commits only after successful open_write and header write;
+  any error after publishing previous segment leaves writer in coherent Failed state;
+should_rotate() checked arithmetic: checked_add_u64 for footer-inclusive prospective size;
+zero-byte failed header write test (fail_write_at=1) distinct from short write;
+partial positive read followed by premature EOF for content SHA-256;
+partial positive read followed by premature EOF for whole-file SHA-256;
+post-finalize target race test (exists returns true during start_new_segment);
+open_write failure for next segment after finalize succeeds;
+focused boundary tests for should_rotate() checked arithmetic;
+portable command quoting helper (q()) for CLI tests with Windows space-safe paths;
+CLI inspect --strict for directory containing .mxraw.partial returns non-zero;
 18/18 Release tests (Windows + Linux).
 ```
 
