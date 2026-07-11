@@ -131,14 +131,16 @@ int main(int argc, char* argv[]) {
 
     // Generate report
     std::string text = moex_fast::decode_text_report(
-        result, templates_path, compile_result.compiled.templates_sha256,
+        result, templates_path, compile_result.compiled.templates_file_size,
+        compile_result.compiled.templates_sha256,
         input_bytes.size(), input_sha256);
 
     std::cout << text;
 
     if (!json_out.empty()) {
         std::string json = moex_fast::decode_json_report(
-            result, templates_path, compile_result.compiled.templates_sha256,
+            result, templates_path, compile_result.compiled.templates_file_size,
+            compile_result.compiled.templates_sha256,
             input_bytes.size(), input_sha256);
         std::ofstream ofs(json_out);
         if (!ofs) {

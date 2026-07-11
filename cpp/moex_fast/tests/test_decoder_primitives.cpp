@@ -54,7 +54,10 @@ static void test_stopbit_u32() {
         CHECK_EQ(val, 256u);
     }
     // UINT32_MAX: encoded as 5 bytes
-    // 0x0F 0x7F 0x7F 0x7F 0xFF
+    // 0xFFFFFFFF = 32 data bits => 5 stop-bit bytes (7*5=35 bits, 3 leading zeros)
+    // 35-bit value: 000_11111111_11111111_11111111_11111111
+    // 7-bit groups: 0x0F, 0x7F, 0x7F, 0x7F, 0x7F (last gets stop bit 0x80)
+    // Bytes: 0x0F 0x7F 0x7F 0x7F 0xFF
     {
         auto bytes = make_bytes({0x0F, 0x7F, 0x7F, 0x7F, 0xFF});
         WireCursor c(bytes.data(), bytes.size());
@@ -250,7 +253,7 @@ static void test_decimal() {
         std::int32_t exp = 0;
         std::int64_t man = 0;
         bool is_null = false;
-        CHECK(c.read_decimal(exp, man, is_null) == DecodeStatus::Ok);
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::Ok);
         CHECK(!is_null);
         CHECK_EQ(exp, 2);
         CHECK_EQ(man, 5000);
@@ -262,7 +265,7 @@ static void test_decimal() {
         std::int32_t exp = 99;
         std::int64_t man = 99;
         bool is_null = true;
-        CHECK(c.read_decimal(exp, man, is_null) == DecodeStatus::Ok);
+        CHECK(c.read_decimal(exp, man, is_null, true, false) == DecodeStatus::Ok);
         CHECK(is_null);
     }
     TEST_PASS("decimal");

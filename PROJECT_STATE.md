@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-2 DONE; RT-3 specification PR #22 ready for owner review
+Статус: RT-2 DONE; RT-3 implementation PR #23 architecture review (CHANGES_REQUIRED)
 
 ## Архитектура
 
@@ -164,34 +164,33 @@ no FIX/TWIME or order sending;
 no raw/private data in Git.
 ```
 
-## RT-3 — specification owner review
+## RT-3 — implementation (CHANGES_REQUIRED)
 
 ```text
-Issue #21: DRAFT — OWNER_SPEC_REVIEW
-Architecture branch: docs/issue-21-rt3-fast-decoder-spec
-Specification PR: #22
-Specification head before evidence update: 8dd3cfb7e53c85e9bcfbdcdafc2a735dd4dd0708
-Specification CI #75 (run 29148020256): green 7/7
+Issue #21: CHANGES_REQUIRED
+Implementation branch: mimo/issue-21-rt3-fast-decoder
+Implementation PR: #23
+Specification PR: #22 (merged)
 Task package: tasks/RT-3-specialized-fast-decoder-foundation/
-MiMo implementation: NOT AUTHORIZED
 RT-4: BLOCKED
 ```
 
-Proposed decoder foundation:
+Implemented decoder foundation:
 
 ```text
 exactly one bounded FAST message payload;
 immutable compiled template tree preserving operators and nesting;
-presence maps and stop-bit integer primitives;
-nullable integer/string/byte-vector values;
-exact decimal exponent/mantissa;
-template-ID state;
-none/constant/default/copy/increment/delta/tail;
+normative FIX FAST 1.1 stop-bit primitives with overflow-before-shift;
+nullable integer/string/byte-vector values with correct mappings;
+exact decimal exponent/mantissa with null-exponent semantics;
+template-ID state with reuse and rollback;
+none/constant/default/copy/increment/delta/tail operator table;
 canonical dictionaries and per-stream DecoderSession;
 transactional state journal and rollback;
 groups, sequences and explicit safety limits;
 deterministic DecodedMessage tree and CLI reports;
 span-based compatibility with RawPacketRecord.payload;
+13 tests (6 RT-1 + 7 RT-3 decoder) on Windows/MSVC and Linux/GCC;
 independent golden vectors and reference encoder;
 Windows/Linux Release-active tests.
 ```

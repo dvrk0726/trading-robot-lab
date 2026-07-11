@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Статус: gated engineering roadmap  
-Текущий gate: RT-3 specification PR #22 — owner review
+Текущий gate: RT-3 implementation PR #23 — architecture review (CHANGES_REQUIRED)
 
 ## Главный порядок
 
@@ -160,13 +160,11 @@ no database, pcap, FIX/TWIME or order sending.
 Current status:
 
 ```text
-Issue #21: DRAFT — OWNER_SPEC_REVIEW
-Architecture branch: docs/issue-21-rt3-fast-decoder-spec
-Specification PR: #22
-Specification head before evidence update: 8dd3cfb7e53c85e9bcfbdcdafc2a735dd4dd0708
-Specification CI #75 (run 29148020256): green 7/7
+Issue #21: CHANGES_REQUIRED
+Implementation branch: mimo/issue-21-rt3-fast-decoder
+Implementation PR: #23
+Specification PR: #22 (merged)
 Task package: tasks/RT-3-specialized-fast-decoder-foundation/
-MiMo implementation: NOT AUTHORIZED
 RT-4: BLOCKED
 ```
 

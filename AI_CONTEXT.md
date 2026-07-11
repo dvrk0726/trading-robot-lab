@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-3 specification PR #22 — owner review
+Текущий gate: RT-3 implementation PR #23 — architecture review
 
 ## Назначение проекта
 
@@ -167,16 +167,14 @@ Windows/Linux 18-test gates.
 
 RT-2 payload bytes remain opaque. `capture_index` is not FAST `MsgSeqNum` or exchange sequence.
 
-## RT-3 — specification owner review
+## RT-3 — implementation (CHANGES_REQUIRED)
 
 ```text
-Issue #21: DRAFT — OWNER_SPEC_REVIEW
-Architecture branch: docs/issue-21-rt3-fast-decoder-spec
-Specification PR: #22
-Specification head before evidence update: 8dd3cfb7e53c85e9bcfbdcdafc2a735dd4dd0708
-Specification CI #75 (run 29148020256): green 7/7
+Issue #21: CHANGES_REQUIRED
+Implementation branch: mimo/issue-21-rt3-fast-decoder
+Implementation PR: #23
+Specification PR: #22 (merged)
 Task package: tasks/RT-3-specialized-fast-decoder-foundation/
-MiMo implementation: NOT AUTHORIZED
 RT-4: BLOCKED
 ```
 

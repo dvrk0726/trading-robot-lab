@@ -2,9 +2,10 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include <unordered_map>
+#include <map>
 #include <variant>
 #include <memory>
+#include <cstddef>
 
 namespace moex_fast {
 
@@ -17,11 +18,11 @@ struct CompileLimits {
 
 // --- Decode limits ---
 struct DecodeLimits {
-    std::size_t max_message_bytes = 1024 * 1024;       // 1 MiB
+    std::size_t max_message_bytes = 1024 * 1024;        // 1 MiB
     std::size_t max_presence_map_bytes = 64;
     std::uint32_t max_sequence_entries = 100000;
     std::uint32_t max_total_nodes = 1000000;
-    std::size_t max_string_bytes = 1024 * 1024;         // 1 MiB
+    std::size_t max_string_bytes = 1024 * 1024;          // 1 MiB
 };
 
 // --- Wire types ---
@@ -35,13 +36,13 @@ const char* dec_wire_type_name(DecWireType wt);
 
 // --- Operator kinds ---
 enum class OpKind : std::uint8_t {
-    None,       // no operator — direct wire value
-    Constant,   // static value, no wire bytes consumed
-    Default,    // wire value or initial default
-    Copy,       // wire value or previous dictionary value
-    Increment,  // wire value or previous+1
-    Delta,      // base + delta from wire
-    Tail        // retained prefix + tail from wire
+    None,
+    Constant,
+    Default,
+    Copy,
+    Increment,
+    Delta,
+    Tail
 };
 
 const char* op_kind_name(OpKind ok);
@@ -67,50 +68,44 @@ struct CompileIssue {
 struct OpInstruction {
     OpKind kind = OpKind::None;
     DictScope scope = DictScope::Global;
-    std::string dict_key;           // canonical dictionary key
-    std::string explicit_key;       // key attribute if present
+    std::string dict_key;
+    std::string explicit_key;
 
-    // Initial/default value (for default, copy, increment)
     bool has_initial = false;
     std::int64_t initial_int = 0;
     std::string initial_str;
 
-    // For constant operator
     bool has_constant = false;
     std::int64_t constant_int = 0;
+    std::uint64_t constant_uint = 0;
     std::string constant_str;
 
-    // For decimal: nested exponent/mantissa instructions
-    bool is_decimal_component = false;  // true if this is exponent or mantissa sub-instruction
+    bool is_decimal_component = false;
 };
 
 // --- Compiled field ---
 struct CompiledField {
-    std::uint32_t index = 0;        // field index within template
+    std::uint32_t index = 0;
     std::string name;
     std::int32_t fix_tag = 0;
     bool has_fix_tag = false;
     DecWireType wire_type = DecWireType::uInt32;
     bool is_mandatory = true;
-    bool has_pmap_bit = false;      // whether this field consumes a presence-map bit
+    bool has_pmap_bit = false;
 
-    OpInstruction op;               // primary operator
+    OpInstruction op;
 
-    // For decimal: separate exponent and mantissa instructions
     bool is_decimal = false;
     OpInstruction exponent_op;
     OpInstruction mantissa_op;
 
-    // For sequence: length instruction
     bool is_sequence = false;
     OpInstruction length_op;
-    std::uint32_t length_field_index = 0;  // index of length field in parent
+    std::uint32_t length_field_index = 0;
 
-    // For group/sequence: child fields
     bool has_children = false;
     std::vector<CompiledField> children;
 
-    // Sequence entry has its own presence map
     bool entry_has_pmap = false;
 };
 
@@ -119,16 +114,17 @@ struct CompiledTemplate {
     std::uint32_t id = 0;
     std::string name;
     std::vector<CompiledField> fields;
-    std::uint32_t total_pmap_bits = 0;  // total presence-map bits for this template
+    std::uint32_t total_pmap_bits = 0;
 };
 
-// --- Compiled template set ---
+// --- Compiled template set (immutable after compilation) ---
 struct CompiledTemplateSet {
     std::vector<CompiledTemplate> templates;
-    std::unordered_map<std::uint32_t, std::size_t> id_to_index;
+    std::map<std::uint32_t, std::size_t> id_to_index;  // ordered map for determinism
     std::string templates_sha256;
-    std::string compiler_version = "0.1.0";
+    std::string compiler_version = "0.2.0";
     std::string schema_version = "1.0";
+    std::size_t templates_file_size = 0;
 
     const CompiledTemplate* find(std::uint32_t id) const;
 };
@@ -179,12 +175,12 @@ struct DecodedDecimal {
 };
 
 using DecodedScalar = std::variant<
-    std::monostate,         // null
-    std::uint64_t,          // uInt32/uInt64
-    std::int64_t,           // int32/int64
-    std::string,            // ASCII, Unicode
-    std::vector<std::uint8_t>, // byte vector
-    DecodedDecimal          // decimal
+    std::monostate,
+    std::uint64_t,
+    std::int64_t,
+    std::string,
+    std::vector<std::uint8_t>,
+    DecodedDecimal
 >;
 
 // --- Value source ---
@@ -208,16 +204,15 @@ struct DecodedField {
     DecodedScalar value;
     ValueSource source = ValueSource::Wire;
     bool is_null = false;
-    bool is_present = true;     // false for absent optional group
+    bool is_present = true;
     std::string field_path;
 
-    // For groups/sequences
     bool is_group = false;
     std::vector<DecodedField> children;
 
     bool is_sequence = false;
-    std::vector<std::vector<DecodedField>> entries;  // each entry is a group of fields
-    bool sequence_is_null = false;  // null optional sequence vs present empty
+    std::vector<std::vector<DecodedField>> entries;
+    bool sequence_is_null = false;
 };
 
 // --- Decoded message ---
@@ -236,12 +231,24 @@ struct DecodeResult {
     std::vector<DecodeIssue> issues;
 };
 
-// --- Session fingerprint for rollback testing ---
+// --- Dictionary entry for deterministic fingerprint ---
+struct DictEntry {
+    std::string key;
+    bool defined = false;
+    bool is_null = false;
+    std::uint64_t uint_val = 0;
+    std::int64_t int_val = 0;
+    std::string str_val;
+    std::vector<std::uint8_t> bytes_val;
+    DecWireType wire_type = DecWireType::uInt32;
+};
+
+// --- Session fingerprint for rollback testing (deterministic) ---
 struct SessionFingerprint {
     bool has_template_id = false;
     std::uint32_t template_id = 0;
     std::size_t dict_entry_count = 0;
-    std::uint64_t dict_hash = 0;  // deterministic hash of all dict entries
+    std::string dict_hash;  // deterministic hex hash of all dict entries
 };
 
 }  // namespace moex_fast

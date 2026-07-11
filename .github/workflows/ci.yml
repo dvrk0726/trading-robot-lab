@@ -141,8 +141,9 @@ jobs:
       - name: Run all QSH M10X regression tests
         run: ctest --test-dir build/qsh_ingest -C Release --output-on-failure
 
+  # RT-1 inspector: 6 tests on Windows/MSVC
   cpp-moex-fast-inspector:
-    name: C++ MOEX FAST inspector Windows (6 tests)
+    name: C++ MOEX FAST inspector Windows/MSVC (RT-1: 6 tests, RT-3: 7 tests)
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -160,11 +161,28 @@ jobs:
       - name: Build moex_fast and tests
         run: cmake --build build/moex_fast --config Release --parallel 2
 
-      - name: Run all MOEX FAST inspector tests
+      - name: Verify RT-3 decoder test inventory (7 tests)
+        run: |
+          $output = ctest --test-dir build/moex_fast -C Release -N
+          if ($LASTEXITCODE -ne 0) {
+            throw "ctest inventory failed with exit code $LASTEXITCODE"
+          }
+          $line = $output | Select-String '^Total Tests:'
+          if (-not $line) {
+            throw 'CTest did not report Total Tests.'
+          }
+          $count = [int](($line.Line -split ':', 2)[1].Trim())
+          Write-Host "CTest inventory: $count (expected 13: 6 RT-1 + 7 RT-3)"
+          if ($count -ne 13) {
+            throw "Expected 13 moex_fast tests (6 RT-1 + 7 RT-3), found $count"
+          }
+
+      - name: Run all moex_fast tests (RT-1 + RT-3)
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
 
+  # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 7 tests on Linux/GCC
   cpp-moex-fast-inspector-linux:
-    name: C++ MOEX FAST inspector Linux (6 tests)
+    name: C++ MOEX FAST inspector Linux/GCC (RT-1: 6 tests, RT-3: 7 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -179,7 +197,16 @@ jobs:
       - name: Build moex_fast and tests
         run: cmake --build build/moex_fast --config Release --parallel 2
 
-      - name: Run all MOEX FAST inspector tests
+      - name: Verify RT-3 decoder test inventory (7 tests)
+        run: |
+          count=$(ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
+          echo "CTest inventory: $count (expected 13: 6 RT-1 + 7 RT-3)"
+          if [ "$count" -ne 13 ]; then
+            echo "Expected 13 moex_fast tests (6 RT-1 + 7 RT-3), found $count"
+            exit 1
+          fi
+
+      - name: Run all moex_fast tests (RT-1 + RT-3)
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
 
   cpp-moex-raw-windows:

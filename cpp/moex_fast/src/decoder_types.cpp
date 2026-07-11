@@ -33,10 +33,10 @@ const char* op_kind_name(OpKind ok) {
 
 const char* dict_scope_name(DictScope ds) {
     switch (ds) {
-        case DictScope::Global:     return "global";
+        case DictScope::Global:       return "global";
         case DictScope::TemplateType: return "templateType";
-        case DictScope::TypeRef:    return "typeRef";
-        case DictScope::ExplicitKey: return "explicitKey";
+        case DictScope::TypeRef:      return "typeRef";
+        case DictScope::ExplicitKey:  return "explicitKey";
     }
     return "unknown";
 }
@@ -64,13 +64,13 @@ const char* decode_status_name(DecodeStatus s) {
 
 const char* value_source_name(ValueSource vs) {
     switch (vs) {
-        case ValueSource::Wire:     return "wire";
-        case ValueSource::Constant: return "constant";
-        case ValueSource::Default:  return "default";
-        case ValueSource::Copy:     return "copy";
-        case ValueSource::Increment:return "increment";
-        case ValueSource::Delta:    return "delta";
-        case ValueSource::Tail:     return "tail";
+        case ValueSource::Wire:      return "wire";
+        case ValueSource::Constant:  return "constant";
+        case ValueSource::Default:   return "default";
+        case ValueSource::Copy:      return "copy";
+        case ValueSource::Increment: return "increment";
+        case ValueSource::Delta:     return "delta";
+        case ValueSource::Tail:      return "tail";
     }
     return "unknown";
 }
