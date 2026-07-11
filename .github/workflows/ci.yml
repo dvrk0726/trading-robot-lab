@@ -141,9 +141,9 @@ jobs:
       - name: Run all QSH M10X regression tests
         run: ctest --test-dir build/qsh_ingest -C Release --output-on-failure
 
-  # RT-1 inspector: 6 tests on Windows/MSVC, RT-3 decoder: 8 tests on Windows/MSVC
+  # RT-1 inspector: 6 tests on Windows/MSVC, RT-3 decoder: 9 tests on Windows/MSVC
   cpp-moex-fast-inspector:
-    name: "C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 8)"
+    name: "C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)"
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -180,7 +180,7 @@ jobs:
           }
           Write-Host "RT-1 inventory verified: $($expected.Count) tests present"
 
-      - name: Verify exact RT-3 decoder test inventory (8 tests)
+      - name: Verify exact RT-3 decoder test inventory (9 tests)
         run: |
           $expected = @(
             'test_decoder_primitives',
@@ -190,7 +190,8 @@ jobs:
             'test_decoder_sequences',
             'test_decoder_rollback',
             'test_decoder_cli',
-            'test_decoder_limits'
+            'test_decoder_limits',
+            'test_decoder_reference_oracle'
           )
           $output = ctest --test-dir build/moex_fast -C Release -N
           $names = ($output | Select-String '^\s*Test\s+#\d+:\s+(.+?)\s*$').ForEach({ $_.Matches.Groups[1].Value })
@@ -201,22 +202,22 @@ jobs:
           }
           Write-Host "RT-3 inventory verified: $($expected.Count) tests present"
 
-      - name: Verify total test count (14)
+      - name: Verify total test count (15)
         run: |
           $output = ctest --test-dir build/moex_fast -C Release -N
           $line = $output | Select-String '^Total Tests:'
           $count = [int](($line.Line -split ':', 2)[1].Trim())
-          Write-Host "CTest inventory: $count (expected 14: 6 RT-1 + 8 RT-3)"
-          if ($count -ne 14) {
-            throw "Expected 14 moex_fast tests (6 RT-1 + 8 RT-3), found $count"
+          Write-Host "CTest inventory: $count (expected 15: 6 RT-1 + 9 RT-3)"
+          if ($count -ne 15) {
+            throw "Expected 15 moex_fast tests (6 RT-1 + 9 RT-3), found $count"
           }
 
       - name: Run all moex_fast tests (RT-1 + RT-3)
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
 
-  # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 8 tests on Linux/GCC
+  # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 9 tests on Linux/GCC
   cpp-moex-fast-inspector-linux:
-    name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 8)"
+    name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -241,22 +242,22 @@ jobs:
           done
           echo "RT-1 inventory verified: 6 tests present"
 
-      - name: Verify exact RT-3 decoder test inventory (8 tests)
+      - name: Verify exact RT-3 decoder test inventory (9 tests)
         run: |
-          for name in test_decoder_primitives test_decoder_compiler test_decoder_session test_decoder_operators test_decoder_sequences test_decoder_rollback test_decoder_cli test_decoder_limits; do
+          for name in test_decoder_primitives test_decoder_compiler test_decoder_session test_decoder_operators test_decoder_sequences test_decoder_rollback test_decoder_cli test_decoder_limits test_decoder_reference_oracle; do
             if ! ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -q "$name"; then
               echo "RT-3 test '$name' not found in CTest inventory"
               exit 1
             fi
           done
-          echo "RT-3 inventory verified: 8 tests present"
+          echo "RT-3 inventory verified: 9 tests present"
 
-      - name: Verify total test count (14)
+      - name: Verify total test count (15)
         run: |
           count=$(ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
-          echo "CTest inventory: $count (expected 14: 6 RT-1 + 8 RT-3)"
-          if [ "$count" -ne 14 ]; then
-            echo "Expected 14 moex_fast tests (6 RT-1 + 8 RT-3), found $count"
+          echo "CTest inventory: $count (expected 15: 6 RT-1 + 9 RT-3)"
+          if [ "$count" -ne 15 ]; then
+            echo "Expected 15 moex_fast tests (6 RT-1 + 9 RT-3), found $count"
             exit 1
           fi
 
