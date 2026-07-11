@@ -110,6 +110,14 @@ struct ScriptedFileHandle : moex_raw::IFileHandle {
     int fail_record_tail_at = 0;
     int short_record_tail_at = 0;
 
+    // Stage-aware partial-positive-then-EOF injection.
+    // When active: first read returns 1 byte, second+ reads return 0.
+    // This simulates "one positive read then premature EOF" within the stage.
+    bool partial_content_hash_eof = false;
+    int content_hash_read_count = 0;
+    bool partial_file_hash_eof = false;
+    int file_hash_read_count = 0;
+
     // Seek-stage failure injection: tracks which seek ordinal to fail
     // Seek #1 = footer seek, #2 = content SHA seek, #3 = file SHA seek, #4 = records seek
     int fail_seek_at_ordinal = -1;
@@ -137,6 +145,17 @@ struct ScriptedFileHandle : moex_raw::IFileHandle {
             read_pos += n;
             return n;
         }
+        if (current_read_stage == ReadStage::ContentHash && partial_content_hash_eof) {
+            content_hash_read_count++;
+            if (content_hash_read_count == 1) {
+                std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+                if (n == 0) return 0;
+                std::memcpy(buf, data.data() + read_pos, n);
+                read_pos += n;
+                return n;
+            }
+            return 0;
+        }
         if (current_read_stage == ReadStage::ContentHash && fail_at_content_hash_read) return 0;
         if (current_read_stage == ReadStage::ContentHash && short_at_content_hash_read) {
             std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
@@ -144,6 +163,17 @@ struct ScriptedFileHandle : moex_raw::IFileHandle {
             std::memcpy(buf, data.data() + read_pos, n);
             read_pos += n;
             return n;
+        }
+        if (current_read_stage == ReadStage::FileHash && partial_file_hash_eof) {
+            file_hash_read_count++;
+            if (file_hash_read_count == 1) {
+                std::size_t n = std::min(static_cast<std::size_t>(1), std::min(size, data.size() - read_pos));
+                if (n == 0) return 0;
+                std::memcpy(buf, data.data() + read_pos, n);
+                read_pos += n;
+                return n;
+            }
+            return 0;
         }
         if (current_read_stage == ReadStage::FileHash && fail_at_file_hash_read) return 0;
         if (current_read_stage == ReadStage::FileHash && short_at_file_hash_read) {
@@ -2193,15 +2223,11 @@ int main() {
     }
 
     // ============================================================
-    // Round 8: Partial positive read followed by premature EOF
-    // for content SHA-256. The reader reads some bytes successfully
-    // in the content-hash stage, then the next read returns 0 (EOF).
-    // Strategy: load real data, but truncate it at a position that
-    // leaves remaining > 0 for the content hash read loop.
-    // The header+footer read stages use positions within the real data,
-    // but the content hash stage re-reads from position 0 to footer_offset.
-    // We truncate the data buffer to just past the header so the first
-    // content-hash chunk read succeeds but the second returns 0.
+    // Round 9: Partial positive read followed by premature EOF
+    // for content SHA-256. Keep full backing buffer so footer seek
+    // and earlier stages succeed. Inject partial-EOF at ContentHash
+    // stage via partial_content_hash_eof: first read returns 1 byte,
+    // second read returns 0 while remaining > 0.
     // ============================================================
     {
         auto dir = temp_dir();
@@ -2210,18 +2236,10 @@ int main() {
         auto real_size = DefaultFileSystem().file_size(path, ok);
         CHECK(ok);
 
-        // Read real file to find header_size
-        std::vector<std::uint8_t> real_data(real_size);
-        {
-            std::ifstream ifs(path, std::ios::binary);
-            ifs.read(reinterpret_cast<char*>(real_data.data()), real_size);
-        }
-        std::uint32_t header_size = read_u32_le(real_data.data() + 10);
-
         struct PartialContentHashFS : IFileSystem {
             std::uint64_t sz;
             std::string real_path;
-            std::uint32_t hdr_size;
+            ScriptedFileHandle* handle = nullptr;
             bool exists(const std::string&) override { return true; }
             bool rename(const std::string&, const std::string&) override { return true; }
             bool remove(const std::string&) override { return true; }
@@ -2231,19 +2249,8 @@ int main() {
                 std::ifstream ifs(real_path, std::ios::binary);
                 h->data.resize(sz);
                 ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
-                // Truncate data: keep only header + footer, but leave content area
-                // shorter than footer_offset so the content hash loop hits EOF.
-                // The content hash reads from 0 to footer_offset (= sz - kFooterSize).
-                // We keep header_size + 16 bytes of content, then the footer.
-                // So the first content-hash read returns 16 bytes, second returns 0.
-                std::uint64_t footer_offset = sz - kFooterSize;
-                std::uint64_t keep_content = 16;  // partial content
-                std::uint64_t new_data_size = hdr_size + keep_content;
-                // Append the footer at the end (so footer seek/read works)
-                std::vector<std::uint8_t> footer_data(h->data.begin() + footer_offset,
-                                                       h->data.end());
-                h->data.resize(new_data_size);
-                h->data.insert(h->data.end(), footer_data.begin(), footer_data.end());
+                h->partial_content_hash_eof = true;
+                handle = h.get();
                 return h;
             }
             std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
@@ -2252,7 +2259,6 @@ int main() {
         PartialContentHashFS pfs;
         pfs.sz = real_size;
         pfs.real_path = path;
-        pfs.hdr_size = header_size;
 
         RawSegmentMetadata vmeta;
         RawFooter vfooter;
@@ -2260,18 +2266,33 @@ int main() {
         std::string ch, fh;
         auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
                                     nullptr, nullptr, nullptr, nullptr, &pfs);
-        // The reader uses file_size from the mock (real_size) to compute footer_offset,
-        // but the data buffer is shorter. When seeking to footer_offset, the seek
-        // succeeds (ScriptedFileHandle allows seeking past data.size()),
-        // but the content hash read from 0 will read hdr_size+16 bytes then return 0.
-        // This triggers the n==0 check → IoError.
         CHECK(st == SegmentStatus::IoError);
+
+        // Verify exact path
+        bool found_path = false;
+        bool found_sha_io = false;
+        for (const auto& issue : issues) {
+            if (issue.path == path) found_path = true;
+            if (issue.code == "IO_ERROR" &&
+                issue.message.find("SHA-256") != std::string::npos) {
+                found_sha_io = true;
+            }
+        }
+        CHECK(found_path);
+        CHECK(found_sha_io);
+
+        // Verify read counter: exactly 2 reads at content-hash stage
+        // (first positive partial, second zero)
+        CHECK(pfs.handle != nullptr);
+        CHECK(pfs.handle->content_hash_read_count == 2);
     }
 
     // ============================================================
-    // Round 8: Partial positive read followed by premature EOF
-    // for whole-file SHA-256. Same pattern: load real data, truncate
-    // so the file hash loop hits EOF after partial read.
+    // Round 9: Partial positive read followed by premature EOF
+    // for whole-file SHA-256. Keep full backing buffer so content
+    // hash and earlier stages succeed. Inject partial-EOF at
+    // FileHash stage via partial_file_hash_eof: first read returns
+    // 1 byte, second read returns 0 while remaining > 0.
     // ============================================================
     {
         auto dir = temp_dir();
@@ -2283,6 +2304,7 @@ int main() {
         struct PartialFileHashFS : IFileSystem {
             std::uint64_t sz;
             std::string real_path;
+            ScriptedFileHandle* handle = nullptr;
             bool exists(const std::string&) override { return true; }
             bool rename(const std::string&, const std::string&) override { return true; }
             bool remove(const std::string&) override { return true; }
@@ -2292,10 +2314,8 @@ int main() {
                 std::ifstream ifs(real_path, std::ios::binary);
                 h->data.resize(sz);
                 ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
-                // Truncate data: keep only first 64 bytes. The file hash stage
-                // reads from 0 to file_size (= sz from mock). First read returns
-                // 64 bytes, second returns 0 → IoError.
-                h->data.resize(64);
+                h->partial_file_hash_eof = true;
+                handle = h.get();
                 return h;
             }
             std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
@@ -2311,11 +2331,25 @@ int main() {
         std::string ch, fh;
         auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
                                     nullptr, nullptr, nullptr, nullptr, &ffs);
-        // The content hash stage reads from 0 to footer_offset using the truncated
-        // data, which may or may not trigger IoError depending on sizes.
-        // But the file hash stage reads from 0 to file_size (real_size) and the
-        // data is only 64 bytes, so it will hit EOF → IoError.
         CHECK(st == SegmentStatus::IoError);
+
+        // Verify exact path
+        bool found_path = false;
+        bool found_file_sha_io = false;
+        for (const auto& issue : issues) {
+            if (issue.path == path) found_path = true;
+            if (issue.code == "IO_ERROR" &&
+                issue.message.find("file SHA-256") != std::string::npos) {
+                found_file_sha_io = true;
+            }
+        }
+        CHECK(found_path);
+        CHECK(found_file_sha_io);
+
+        // Verify read counter: exactly 2 reads at file-hash stage
+        // (first positive partial, second zero)
+        CHECK(ffs.handle != nullptr);
+        CHECK(ffs.handle->file_hash_read_count == 2);
     }
 
     // ============================================================

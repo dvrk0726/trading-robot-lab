@@ -838,6 +838,48 @@ int main() {
         CHECK(rc != 0);
     }
 
+    // ============================================================
+    // Round 9: Real CLI — end-to-end with paths containing spaces
+    // synth → inspect --json-out → replay, all through a directory
+    // and JSON path that contain real spaces.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto out_dir = dir + "/path with spaces";
+        auto json_path = dir + "/my report.json";
+
+        // synth into directory with spaces
+        int rc = run_cmd_exit(q(exe) + " synth --out " + q(out_dir) +
+                              " --records 5 --payload-size 16");
+        CHECK(rc == 0);
+        CHECK(fs::exists(out_dir));
+
+        int mxraw_count = 0;
+        for (const auto& entry : fs::directory_iterator(out_dir)) {
+            if (entry.path().extension() == ".mxraw") mxraw_count++;
+        }
+        CHECK(mxraw_count >= 1);
+
+        // inspect --json-out with JSON path containing spaces
+        rc = run_cmd_exit(q(exe) + " inspect --input " + q(out_dir) +
+                          " --json-out " + q(json_path));
+        CHECK(rc == 0);
+        CHECK(fs::exists(json_path));
+
+        // Parse JSON with strict parser
+        auto content = read_file(json_path);
+        CHECK(!content.empty());
+        auto root = cli_json::parse(content);
+        CHECK(root.type == cli_json::Value::Object);
+        CHECK(root["overall_status"].string_val == "valid");
+        CHECK(root["stream_sets"].type == cli_json::Value::Array);
+        CHECK(root["stream_sets"].size() >= 1);
+
+        // replay through directory with spaces
+        rc = run_cmd_exit(q(exe) + " replay --input " + q(out_dir));
+        CHECK(rc == 0);
+    }
+
     std::cout << "test_cli: ALL PASSED\n";
     return 0;
 }
