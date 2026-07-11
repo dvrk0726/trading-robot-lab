@@ -172,7 +172,7 @@ jobs:
             'test_cli'
           )
           $output = ctest --test-dir build/moex_fast -C Release -N
-          $names = ($output | Select-String '^\s+\d+: (.+)$').ForEach({ $_.Matches.Groups[1].Value })
+          $names = ($output | Select-String '^\s*Test\s+#\d+:\s+(.+?)\s*$').ForEach({ $_.Matches.Groups[1].Value })
           foreach ($name in $expected) {
             if ($name -notin $names) {
               throw "RT-1 test '$name' not found in CTest inventory"
@@ -193,7 +193,7 @@ jobs:
             'test_decoder_limits'
           )
           $output = ctest --test-dir build/moex_fast -C Release -N
-          $names = ($output | Select-String '^\s+\d+: (.+)$').ForEach({ $_.Matches.Groups[1].Value })
+          $names = ($output | Select-String '^\s*Test\s+#\d+:\s+(.+?)\s*$').ForEach({ $_.Matches.Groups[1].Value })
           foreach ($name in $expected) {
             if ($name -notin $names) {
               throw "RT-3 test '$name' not found in CTest inventory"
