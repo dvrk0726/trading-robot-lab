@@ -183,17 +183,21 @@ FAST_9.0 `templates.xml` is byte-identical to T0 `templates.xml` (same SHA-256: 
 | Aspect | Source | Location | MOEX-specific / Delegated | Finding | Status |
 |--------|--------|----------|---------------------------|---------|--------|
 | No compression operators in MOEX templates | spectra_fastgate_en.pdf changelog v1.7.0 (2018-12-05) | "Message templates do not now contain the compression operators copy, delta and increment" | MOEX-specific | MOEX removed all compression operators (copy, delta, increment) as of v1.7.0. | confirmed |
-| Exhaustive operator inventory | See §7 below | Reproducible inventory with exact commands and counts | MOEX-specific | **Only two operators are used across all templates**: (1) `constant` (70 fields per template set); (2) `none` (default — no explicit operator element, 307 fields in T0). No `copy`, `delta`, `increment`, `default`, or `tail` operators are present. 19 templates per template set. | confirmed (see §7) |
+| Exhaustive operator inventory | See §7 below | Reproducible inventory with exact commands and counts | MOEX-specific | `constant` is the only explicit operator element (70 fields per template set). All remaining fields have no operator element — 307 in T0 (see §7 for exact counts and reproduction commands). `none` is a project designation for the absence of a field operator, not a FAST operator. No `copy`, `delta`, `increment`, `default`, or `tail` operators are present. 19 templates per template set. | confirmed (see §7) |
 | Default operator behavior | FAST 1.1 §10.5.1 (p.22) | "If a field is mandatory and has no field operator, it will not occupy any bit in the presence map and its value must always appear in the stream." | Delegated to FAST 1.1 | With no operator, field value is always present in the stream (no pmap bit needed unless optional). | confirmed (FAST 1.1, p.22) |
-| Operator types defined | FAST 1.1 §6.3 (p.12) | `fieldOp = constant | \default | copy | increment | delta | tail` | Delegated to FAST 1.1 | Six operator types defined in FAST 1.1. MOEX uses only `constant` and the implicit default (`none`). | confirmed (FAST 1.1, p.12) |
-| Dictionaries | FAST 1.1 §6.3.1 (p.12-13) | Three predefined dictionaries: `template`, `type`, `global`. Plus user-defined. | Delegated to FAST 1.1 | MOEX uses only the default (global) dictionary since only `constant` and `none` operators are used — no dictionary-dependent operators (copy, increment, delta, default, tail). | confirmed (FAST 1.1, p.12-13) |
+| Operator types defined | FAST 1.1 §6.3 (p.12) | `fieldOp = constant | \default | copy | increment | delta | tail` | Delegated to FAST 1.1 | Six operator types defined in FAST 1.1. MOEX uses only `constant` as an explicit operator element; `none` is a project designation for the absence of a field operator, not a FAST operator. | confirmed (FAST 1.1, p.12) |
+| Dictionaries | FAST 1.1 §6.3.1 (p.12-13) | Three predefined dictionaries: `global`, `template`, `type`. Plus user-defined. | Delegated to FAST 1.1 | `constant` is the only explicit operator element in MOEX templates; `none` is a project designation for the absence of a field operator, not a FAST operator. Neither `constant` nor absent-operator accesses any dictionary. No dictionary-dependent operators (copy, increment, delta, default, tail) are present. | confirmed (FAST 1.1, p.12-13) |
 
 ### 3.12. Dictionaries
 
+Per FAST 1.1 §6.3.1 (p.12-13), three predefined dictionaries exist: `global`, `template`, and `type`, plus user-defined dictionaries. MOEX XML template definitions are not the same as the FAST `template` dictionary — the former is a static XML file, the latter is a runtime dictionary accessed by dictionary-dependent operators.
+
 | Aspect | Source | Location | MOEX-specific / Delegated | Finding | Status |
 |--------|--------|----------|---------------------------|---------|--------|
-| Template dictionary | Not used by MOEX | — | — | MOEX does not use FAST template dictionaries. Templates are statically defined in XML files. | confirmed |
-| Field dictionary | Not used by MOEX | — | — | MOEX does not use FAST field dictionaries. | confirmed |
+| Predefined `global` dictionary | Not accessed by MOEX operators | — | — | No dictionary-dependent operator (copy, increment, delta, default, tail) is present. `constant` does not access dictionaries. | confirmed |
+| Predefined `template` dictionary | Not accessed by MOEX operators | — | — | No dictionary-dependent operator is present. MOEX XML template definitions are a different concept from the FAST `template` dictionary. | confirmed |
+| Predefined `type` dictionary | Not accessed by MOEX operators | — | — | No dictionary-dependent operator is present. | confirmed |
+| User-defined dictionaries | Not used by MOEX | — | — | No `dictionary` attribute appears in any MOEX template. | confirmed |
 
 ### 3.13. Sequences
 
@@ -436,8 +440,8 @@ Bit groups (MSB first, 7 bits each) from the 35-bit two's complement entity valu
 | 16 | **Test: nullable i32 value -1 → wire 0x80** | `test_decoder_reference_oracle.cpp:319-323` | FAST 1.1 §10.6.1 (p.23): V=-1 is negative → NOT incremented → stopbit(-1) = `0xFF`. The test expects `0x80` (same as NULL), which is incorrect per the spec rule that only non-negative values are shifted. | FAST 1.1, p.23 | **confirmed discrepancy** (test expectation) |
 | 17 | **Test: nullable u32 max value** | `test_decoder_reference_oracle.cpp:554-558`: `0xFFFFFFFE` → `0x0F 0x7F 0x7F 0x7F 0xFF` | FAST 1.1: V=0xFFFFFFFE → stopbit(0xFFFFFFFE+1)=stopbit(0xFFFFFFFF). Correct. | FAST 1.1, p.23 | confirmed correct |
 | 18 | **MOEX preamble: 4-byte SeqNum before FAST body** | Not implemented in WireCursor (WireCursor operates on FAST body only) | MOEX §3.2: 4-byte preamble contains MsgSeqNum before FAST message. | spectra_fastgate_en.pdf §3.2 | No discrepancy (separate concern) |
-| 19 | **MOEX: only `none` and `constant` operators** | Code implements default (none) operator; constant is handled at template level | Exhaustive XML scan: only `none` and `constant` operators are used across all 19 MOEX templates (70 constant fields, 0 copy/delta/increment/default/tail). | templatesT0/templates.xml (full scan, see §7) | confirmed correct |
-| 20 | **SecurityDesc uses charset="unicode"** | Not directly visible in WireCursor (WireCursor handles raw types) | templatesT0/templates.xml line 110: `<string ... charset="unicode"/>` | templates.xml | No discrepancy (handled at template level) |
+| 19 | **MOEX: only `constant` as explicit operator** | Code implements default (no-operator) behavior; constant is handled at template level | Exhaustive XML scan: `constant` is the only explicit operator element across all 19 MOEX templates (70 constant fields, 0 copy/delta/increment/default/tail). Fields without an operator element use the project designation `none`. | templatesT0/templates.xml (full scan, see §7) | confirmed correct |
+| 20 | **SecurityDesc uses charset="unicode"** | Not directly visible in WireCursor (WireCursor handles raw types) | templatesT0/templates.xml line 110: `<string ... charset="unicode"/>` | templates.xml | confirmed correct (handled at template level) |
 | 21 | **Reference encoder: INT32_MIN encoding produces wrong vector** | `fast_reference_encoder.hpp:119-125`: extracts 7-bit groups from `uint32_t` via `memcpy` | FAST 1.1 §10.6.1.1 (p.23): INT32_MIN in 35-bit two's complement has sign bit (bit 34) = 1. Group 0 = `1111000` = `0x78`. The encoder extracts from `uint32_t` (32 bits), losing sign-extension bits [34..32], producing group 0 = `0001000` = `0x08` (sign bit = 0 → positive). | FAST 1.1, p.23 | **confirmed discrepancy** (reference encoder) |
 | 22 | **Production decoder: nullable NULL detection via byte 0x00** | `wire_cursor.cpp:232,268,288`: `if (data_[pos_] == 0x00)` for nullable NULL | FAST 1.1 §10.6.1 (p.23) + Appendix 3.1.2 Ex.1 (p.33): nullable integer NULL wire = `0x80` (entity value 0x00 stop-bit encoded). The code checks for byte `0x00` (not a valid stop-bit entity) instead of reading the stop-bit value and checking for decoded 0 (wire `0x80`). | FAST 1.1, p.23 + p.33 | **confirmed discrepancy** (production decoder) |
 
@@ -453,9 +457,9 @@ Bit groups (MSB first, 7 bits each) from the 35-bit two's complement entity valu
 - **Preamble endianness**: The MOEX specification does not specify the byte order of the 4-byte preamble (§3.2, spectra_fastgate_en.pdf).
 - **meta.info fetch**: The cause of the HTTP 404 when fetching `meta.info` from the MOEX FTP is unresolved (see §2.2).
 
-**Confirmed correct (12 of 22)**: Items #4, #5, #6, #7, #8, #9, #10, #11, #12, #17, #19, #20 — confirmed correct against the authoritative sources (FAST 1.1 specification and MOEX SPECTRA specification v1.30.2).
+**Confirmed correct (11 of 22)**: Items #4, #5, #6, #7, #8, #9, #10, #11, #12, #17, #19 — confirmed correct against the authoritative sources (FAST 1.1 specification and MOEX SPECTRA specification v1.30.2).
 
-**No discrepancy (1)**: Item #18 — MOEX preamble is a separate concern not handled by WireCursor.
+**No discrepancy (2)**: Items #18, #20 — not discrepancies: #18 is a separate concern not handled by WireCursor; #20 is handled at the template level.
 
 ---
 
@@ -463,7 +467,7 @@ Bit groups (MSB first, 7 bits each) from the 35-bit two's complement entity valu
 
 1. **MOEX delegates all base FAST encoding to FAST 1.1**: The MOEX PDF describes stop-bit encoding at a high level (§3.2.1, §3.2.7) but does NOT restate the full encoding rules. It relies on implementors knowing FAST 1.1 for: canonical encoding, nullable offset-by-1, presence map structure, signed two's complement, decimal composite encoding, sequence length encoding.
 
-2. **MOEX uses only `none` and `constant` operators**: Exhaustive XML scan of all 19 templates in `templatesT0/templates.xml` (619 lines) confirms that only the `constant` operator and the default `none` operator are used (70 constant fields, 0 copy/delta/increment/default/tail). The MOEX changelog v1.7.0 (2018-12-05) states: "Message templates do not now contain the compression operators copy, delta and increment." The XML inventory confirms this is still true in the current templates.
+2. **MOEX uses only `constant` as an explicit operator element**: Exhaustive XML scan of all 19 templates in `templatesT0/templates.xml` (619 lines) confirms that `constant` is the only explicit operator element (70 fields). All other fields have no operator element — `none` is a project designation for this absence, not a FAST operator. The MOEX changelog v1.7.0 (2018-12-05) states: "Message templates do not now contain the compression operators copy, delta and increment." The XML inventory confirms this is still true in the current templates.
 
 3. **MOEX adds a 4-byte preamble**: This is MOEX-specific and not part of FAST 1.1. The preamble contains MsgSeqNum (tag 34), allowing sequence number extraction without FAST decoding. The byte order of the preamble is **not documented** in the MOEX specification (§3.2, Pic.3 shows "Preamble (4 bytes)" then "Message" but does not specify endianness).
 
@@ -485,27 +489,46 @@ The following inventory is hash-bound and reproducible. Each template set was do
 
 ### 7.1. Reproduction Commands
 
+The following PowerShell commands download all three template files, verify their SHA-256 hashes, and produce the exact counts reported in §7.2.
+
 ```powershell
-# Download templates
+# === Download and hash verification ===
 Invoke-WebRequest -Uri "https://ftp.moex.com/pub/FAST/Spectra/test/templatesT0/templates.xml" -UseBasicParsing -OutFile "t0.xml"
 Invoke-WebRequest -Uri "https://ftp.moex.com/pub/FAST/Spectra/test/templatesT1/templates.xml" -UseBasicParsing -OutFile "t1.xml"
 Invoke-WebRequest -Uri "https://ftp.moex.com/pub/FAST/Spectra/test/FAST_9.0/templates.xml" -UseBasicParsing -OutFile "f9.xml"
 
-# SHA-256 verification
 (Get-FileHash "t0.xml" -Algorithm SHA256).Hash  # Expected: DBD50F1E0BECC2B2EBD9DAC8E4C6609BA1538566811B610CDE9B6DD3E7F66A8E
 (Get-FileHash "t1.xml" -Algorithm SHA256).Hash  # Expected: 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 (Get-FileHash "f9.xml" -Algorithm SHA256).Hash  # Expected: DBD50F1E0BECC2B2EBD9DAC8E4C6609BA1538566811B610CDE9B6DD3E7F66A8E
 
-# Operator counts (PowerShell)
-$t0 = Get-Content "t0.xml" -Raw
-"templates: " + ([regex]::Matches($t0, '<template ')).Count        # Expected: 19
-"constant: " + ([regex]::Matches($t0, '<constant')).Count          # Expected: 70
-"copy: " + ([regex]::Matches($t0, '<copy')).Count                  # Expected: 0
-"delta: " + ([regex]::Matches($t0, '<delta')).Count                # Expected: 0
-"increment: " + ([regex]::Matches($t0, '<increment')).Count        # Expected: 0
-"default: " + ([regex]::Matches($t0, '<default')).Count            # Expected: 0
-"tail: " + ([regex]::Matches($t0, '<tail')).Count                  # Expected: 0
-"lines: " + ($t0 -split "`n").Count                                # Expected: 619
+# === Per-file counts ===
+foreach ($f in @("t0.xml","t1.xml","f9.xml")) {
+  $xml = [xml](Get-Content $f -Raw)
+  $templates = $xml.SelectNodes("//template").Count
+  $constant  = $xml.SelectNodes("//constant").Count
+  $copy      = $xml.SelectNodes("//copy").Count
+  $delta     = $xml.SelectNodes("//delta").Count
+  $increment = $xml.SelectNodes("//increment").Count
+  $default   = $xml.SelectNodes("//default").Count
+  $tail      = $xml.SelectNodes("//tail").Count
+  $dictAttrs = $xml.SelectNodes("//*[@dictionary]").Count
+
+  # Count field-type elements and no-operator fields
+  $fieldTypes = @('uInt32','int32','uInt64','int64','string','decimal','byteVector','sequence','length')
+  $fieldCount = 0; $noOpCount = 0
+  foreach ($t in $fieldTypes) {
+    foreach ($n in $xml.SelectNodes("//$t")) {
+      $fieldCount++
+      $hasOp = $false
+      foreach ($child in $n.ChildNodes) {
+        if ($child.LocalName -in @('constant','copy','delta','increment','default','tail')) { $hasOp = $true; break }
+      }
+      if (-not $hasOp) { $noOpCount++ }
+    }
+  }
+
+  "$f : templates=$templates lines=$(($raw = Get-Content $f; $raw.Count)) constant=$constant copy=$copy delta=$delta increment=$increment default=$default tail=$tail dictionary_attrs=$dictAttrs fields=$fieldCount no_operator=$noOpCount"
+}
 ```
 
 ### 7.2. Inventory Results
@@ -521,6 +544,8 @@ $t0 = Get-Content "t0.xml" -Raw
 | `increment` | 0 | 0 | 0 |
 | `default` | 0 | 0 | 0 |
 | `tail` | 0 | 0 | 0 |
+| `dictionary` attributes | 0 | 0 | 0 |
+| No-operator fields | 307 | 307 | 307 |
 | T0 == FAST_9.0 | — | — | byte-identical |
 
 ### 7.3. Template Names (T0/FAST_9.0)
@@ -549,9 +574,12 @@ All 19 templates in `templatesT0/templates.xml`:
 
 ### 7.4. Dictionary Usage
 
-Per FAST 1.1 §6.3.1 (p.12-13), three predefined dictionaries exist: `template`, `type`, `global`. MOEX templates use only `constant` (which does not access dictionaries) and `none` (default, which does not access dictionaries). No `dictionary` attribute appears in any MOEX template. Therefore:
+Per FAST 1.1 §6.3.1 (p.12-13), three predefined dictionaries exist: `global`, `template`, `type`, plus user-defined dictionaries. MOEX XML template definitions are a different concept from the FAST `template` dictionary. The inventory confirms:
 
-- **Template dictionary**: not used
-- **Type dictionary**: not used
-- **Global dictionary**: not used (no dictionary-dependent operators present)
-- **User-defined dictionaries**: not used
+- **Predefined `global` dictionary**: no dictionary-dependent operator accesses it
+- **Predefined `template` dictionary**: no dictionary-dependent operator accesses it
+- **Predefined `type` dictionary**: no dictionary-dependent operator accesses it
+- **User-defined dictionaries**: no `dictionary` attribute in any template
+- **`dictionary` attributes**: 0 across all template sets
+
+`constant` is the only explicit operator element; `none` is a project designation for the absence of a field operator, not a FAST operator. Neither accesses any dictionary.
