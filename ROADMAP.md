@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Статус: gated engineering roadmap  
-Текущий gate: RT-3 specialized FAST decoder specification — Issue #21 DRAFT
+Текущий gate: RT-3 specification PR #22 — owner review
 
 ## Главный порядок
 
@@ -160,9 +160,12 @@ no database, pcap, FIX/TWIME or order sending.
 Current status:
 
 ```text
-Issue #21: DRAFT
+Issue #21: DRAFT — OWNER_SPEC_REVIEW
 Architecture branch: docs/issue-21-rt3-fast-decoder-spec
-Specification task package: tasks/RT-3-specialized-fast-decoder-foundation/
+Specification PR: #22
+Specification head before evidence update: 8dd3cfb7e53c85e9bcfbdcdafc2a735dd4dd0708
+Specification CI #75 (run 29148020256): green 7/7
+Task package: tasks/RT-3-specialized-fast-decoder-foundation/
 MiMo implementation: NOT AUTHORIZED
 RT-4: BLOCKED
 ```
@@ -202,11 +205,9 @@ no strategy, paper or production enablement.
 RT-3 gate:
 
 ```text
-complete architecture specification in docs branch
--> open specification PR
--> owner reviews specification
+owner reviews specification PR #22
 -> owner explicitly approves merge
--> merge specification PR
+-> merge specification PR manually
 -> post-merge main CI green
 -> Issue #21 moves to READY_FOR_MIMO
 -> MiMo implements in a separate mimo/issue-21-* branch and PR
@@ -278,9 +279,9 @@ Issue #17 preserves future SPECTRA FIX 4.4 session, order-control and Drop Copy 
 ## Immediate sequence
 
 ```text
-1. Open and review the RT-3 specification PR for Issue #21.
+1. Owner reviews RT-3 specification PR #22.
 2. Do not run MiMo implementation from the docs branch.
-3. If the owner accepts the specification, merge it manually.
+3. If accepted, merge PR #22 manually.
 4. Confirm green post-merge CI on main.
 5. Only then move Issue #21 to READY_FOR_MIMO.
 6. Do not start RT-4 before RT-3 is DONE.
