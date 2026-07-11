@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Статус: gated engineering roadmap  
-Текущий gate: RT-2 Round 10 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
+Текущий gate: RT-3 specialized FAST decoder specification — Issue #21 DRAFT
 
 ## Главный порядок
 
@@ -105,50 +105,45 @@ Windows/Linux Release-active tests.
 
 RT-1 deliberately excluded network, binary FAST decoding, recovery, books and order entry.
 
-## RT-2 — Raw segment format + synthetic capture/replay
-
-Current status:
+## RT-2 — DONE
 
 ```text
-Issue #18: READY_FOR_REVIEW (Round 10 corrections complete)
-Implementation PR: #20
-Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `088ceef`
-Implementation CI #68 (run 29143755544): ALL GREEN (7/7 jobs)
+Issue #18: DONE
+Specification PR #19: merged
+Implementation PR #20: merged
+Merge commit: 060371112d921c1c1f4055cfbdb99049bdf8a2af
+Current main control head after no-op cleanup: 5f1f9c1beaee080fe44eaccda7c7370d9324546d
+Post-merge/current-main CI #74: passed
+Owner local Release build: passed
+Owner CTest: 18/18
+Owner strict synthetic inspect: 4 segments, 10 records, 0 issues
+Owner replay: 4 segments, 10 records, 320 payload bytes, 0 issues
 ```
 
 Delivered:
 
 ```text
-C++20/CMake module: cpp/moex_raw/
+C++20/CMake module: cpp/moex_raw/;
 versioned immutable .mxraw binary segments;
 fixed-width little-endian manual serialization;
 logical source identity and explicit timestamp domains;
 local capture_index distinct from exchange sequence;
 CRC32C record/footer validation and SHA-256 provenance;
-incremental content SHA-256 (no fread on wb-stream);
+incremental content SHA-256;
 .partial -> finalized lifecycle;
-deterministic record/byte rotation with first-record validation;
-bounded streaming reader/validator (no whole-file loading);
+deterministic record/byte rotation;
+bounded streaming reader/validator;
 canonical filename parsing and filename/content identity;
 full (session_id, source_id, channel_id) stream key;
 numeric sorting, duplicate/missing detection;
-full metadata/hash equality validation;
-monotonic timestamp enforcement across segment boundaries;
-per-stream independent summaries in reports;
-expanded report schema with format_version, source metadata, provenance hashes;
-strict ambiguity detection (matches.size() != 1 always fails);
-deterministic replay callback with MXREPLAY1 canonical digest;
-single streaming SHA-256 context in replay_stream();
-status classification: unsupported, partial, truncated, corrupt, I/O error;
-CLI with strict numeric/hex validation (reject negative/signed/whitespace);
-Release-active CHECK macros (active under NDEBUG);
-golden byte-vector and end-to-end SHA-256 tests;
-independent MXREPLAY1 golden digest test;
-Windows/Linux CI jobs (18 tests each);
+metadata/hash equality and monotonic validation;
+per-stream deterministic reports;
+deterministic replay callback with MXREPLAY1 digest;
+strict status classification and CLI validation;
+Windows/Linux Release-active tests (18 each).
 ```
 
-RT-2 non-goals:
+RT-2 non-goals remain:
 
 ```text
 no sockets, multicast or real capture;
@@ -157,41 +152,74 @@ no exchange sequence extraction;
 no A/B deduplication;
 no Snapshot/Incremental recovery;
 no books;
-no pcap/pcapng dependency;
-no database, compression or object-storage integration;
-no FIX/TWIME or order sending.
-```
-
-RT-2 gate:
-
-```text
-review PR #19
--> owner approves specification
--> merge PR #19
--> move Issue #18 to READY_FOR_MIMO
--> MiMo implements in a new branch/PR
+no database, pcap, FIX/TWIME or order sending.
 ```
 
 ## RT-3 — Specialized C++ FAST decoder foundation
 
-Blocked by accepted RT-2.
-
-Planned scope:
+Current status:
 
 ```text
-FAST primitives/operators;
-template-driven state;
-mandatory-field checks;
-sequence/reset handling;
-differential tests against reference tools;
-no full order-entry stack.
+Issue #21: DRAFT
+Architecture branch: docs/issue-21-rt3-fast-decoder-spec
+Specification task package: tasks/RT-3-specialized-fast-decoder-foundation/
+MiMo implementation: NOT AUTHORIZED
+RT-4: BLOCKED
+```
+
+Specification scope:
+
+```text
+exactly one bounded FAST message payload;
+immutable decoder-specific compiled template tree;
+stop-bit integers, nullable values and presence maps;
+ASCII, Unicode, byte vector and exact decimal primitives;
+template-ID session state;
+none/constant/default/copy/increment/delta/tail operators;
+explicit canonical dictionary scopes/keys;
+groups, sequences and bounded recursion;
+transactional dictionary/template-ID commit and rollback;
+explicit reset API;
+deterministic typed message tree and text/JSON reports;
+RT-2 RawPacketRecord.payload span integration test;
+independent golden vectors and test-only reference encoder;
+Windows/Linux Release tests.
+```
+
+RT-3 boundaries:
+
+```text
+no SPECTRA UDP packet header or datagram framing;
+no multicast/network capture;
+no MsgSeqNum gap policy;
+no A/B sequencing/deduplication;
+no Snapshot/Incremental recovery;
+no normalized market events or book building;
+no FIX/TWIME or order sending;
+no strategy, paper or production enablement.
+```
+
+RT-3 gate:
+
+```text
+complete architecture specification in docs branch
+-> open specification PR
+-> owner reviews specification
+-> owner explicitly approves merge
+-> merge specification PR
+-> post-merge main CI green
+-> Issue #21 moves to READY_FOR_MIMO
+-> MiMo implements in a separate mimo/issue-21-* branch and PR
+-> architecture review and owner local acceptance
+-> owner-approved merge only
 ```
 
 ## RT-4 — SPECTRA feed processors and recovery
 
-Blocked by decoder correctness.
+Blocked by accepted RT-3 decoder correctness.
 
 ```text
+SPECTRA packet/message framing;
 FUT-INFO;
 ORDERS-LOG Snapshot;
 ORDERS-LOG Incremental;
@@ -250,8 +278,10 @@ Issue #17 preserves future SPECTRA FIX 4.4 session, order-control and Drop Copy 
 ## Immediate sequence
 
 ```text
-1. Owner reviews RT-2 Round 10 corrections in PR #20.
-2. If accepted, merge PR #20.
-3. Move Issue #18 to DONE.
-4. Do not start RT-3 until RT-2 is DONE.
+1. Open and review the RT-3 specification PR for Issue #21.
+2. Do not run MiMo implementation from the docs branch.
+3. If the owner accepts the specification, merge it manually.
+4. Confirm green post-merge CI on main.
+5. Only then move Issue #21 to READY_FOR_MIMO.
+6. Do not start RT-4 before RT-3 is DONE.
 ```
