@@ -141,9 +141,9 @@ jobs:
       - name: Run all QSH M10X regression tests
         run: ctest --test-dir build/qsh_ingest -C Release --output-on-failure
 
-  # RT-1 inspector: 6 tests on Windows/MSVC
+  # RT-1 inspector: 6 tests on Windows/MSVC, RT-3 decoder: 8 tests on Windows/MSVC
   cpp-moex-fast-inspector:
-    name: "C++ MOEX FAST inspector Windows/MSVC (RT-1: 6 tests, RT-3: 7 tests)"
+    name: "C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 8)"
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -161,28 +161,62 @@ jobs:
       - name: Build moex_fast and tests
         run: cmake --build build/moex_fast --config Release --parallel 2
 
-      - name: Verify RT-3 decoder test inventory (7 tests)
+      - name: Verify exact RT-1 inspector test inventory (6 tests)
+        run: |
+          $expected = @(
+            'test_template_parser',
+            'test_config_parser',
+            'test_provenance',
+            'test_deterministic_report',
+            'test_resource_safety',
+            'test_cli'
+          )
+          $output = ctest --test-dir build/moex_fast -C Release -N
+          $names = ($output | Select-String '^\s+\d+: (.+)$').ForEach({ $_.Matches.Groups[1].Value })
+          foreach ($name in $expected) {
+            if ($name -notin $names) {
+              throw "RT-1 test '$name' not found in CTest inventory"
+            }
+          }
+          Write-Host "RT-1 inventory verified: $($expected.Count) tests present"
+
+      - name: Verify exact RT-3 decoder test inventory (8 tests)
+        run: |
+          $expected = @(
+            'test_decoder_primitives',
+            'test_decoder_compiler',
+            'test_decoder_session',
+            'test_decoder_operators',
+            'test_decoder_sequences',
+            'test_decoder_rollback',
+            'test_decoder_cli',
+            'test_decoder_limits'
+          )
+          $output = ctest --test-dir build/moex_fast -C Release -N
+          $names = ($output | Select-String '^\s+\d+: (.+)$').ForEach({ $_.Matches.Groups[1].Value })
+          foreach ($name in $expected) {
+            if ($name -notin $names) {
+              throw "RT-3 test '$name' not found in CTest inventory"
+            }
+          }
+          Write-Host "RT-3 inventory verified: $($expected.Count) tests present"
+
+      - name: Verify total test count (14)
         run: |
           $output = ctest --test-dir build/moex_fast -C Release -N
-          if ($LASTEXITCODE -ne 0) {
-            throw "ctest inventory failed with exit code $LASTEXITCODE"
-          }
           $line = $output | Select-String '^Total Tests:'
-          if (-not $line) {
-            throw 'CTest did not report Total Tests.'
-          }
           $count = [int](($line.Line -split ':', 2)[1].Trim())
-          Write-Host "CTest inventory: $count (expected 13: 6 RT-1 + 7 RT-3)"
-          if ($count -ne 13) {
-            throw "Expected 13 moex_fast tests (6 RT-1 + 7 RT-3), found $count"
+          Write-Host "CTest inventory: $count (expected 14: 6 RT-1 + 8 RT-3)"
+          if ($count -ne 14) {
+            throw "Expected 14 moex_fast tests (6 RT-1 + 8 RT-3), found $count"
           }
 
       - name: Run all moex_fast tests (RT-1 + RT-3)
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
 
-  # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 7 tests on Linux/GCC
+  # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 8 tests on Linux/GCC
   cpp-moex-fast-inspector-linux:
-    name: "C++ MOEX FAST inspector Linux/GCC (RT-1: 6 tests, RT-3: 7 tests)"
+    name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 8)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -197,12 +231,32 @@ jobs:
       - name: Build moex_fast and tests
         run: cmake --build build/moex_fast --config Release --parallel 2
 
-      - name: Verify RT-3 decoder test inventory (7 tests)
+      - name: Verify exact RT-1 inspector test inventory (6 tests)
+        run: |
+          for name in test_template_parser test_config_parser test_provenance test_deterministic_report test_resource_safety test_cli; do
+            if ! ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -q "$name"; then
+              echo "RT-1 test '$name' not found in CTest inventory"
+              exit 1
+            fi
+          done
+          echo "RT-1 inventory verified: 6 tests present"
+
+      - name: Verify exact RT-3 decoder test inventory (8 tests)
+        run: |
+          for name in test_decoder_primitives test_decoder_compiler test_decoder_session test_decoder_operators test_decoder_sequences test_decoder_rollback test_decoder_cli test_decoder_limits; do
+            if ! ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -q "$name"; then
+              echo "RT-3 test '$name' not found in CTest inventory"
+              exit 1
+            fi
+          done
+          echo "RT-3 inventory verified: 8 tests present"
+
+      - name: Verify total test count (14)
         run: |
           count=$(ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
-          echo "CTest inventory: $count (expected 13: 6 RT-1 + 7 RT-3)"
-          if [ "$count" -ne 13 ]; then
-            echo "Expected 13 moex_fast tests (6 RT-1 + 7 RT-3), found $count"
+          echo "CTest inventory: $count (expected 14: 6 RT-1 + 8 RT-3)"
+          if [ "$count" -ne 14 ]; then
+            echo "Expected 14 moex_fast tests (6 RT-1 + 8 RT-3), found $count"
             exit 1
           fi
 

@@ -32,7 +32,27 @@ cmake --build build/moex_fast --config Release
 ctest --test-dir build/moex_fast -C Release --output-on-failure
 ```
 
-Current inventory: 13 tests (6 RT-1 + 7 RT-3 decoder).
+Current inventory: 14 tests (6 RT-1 + 8 RT-3 decoder).
+
+### RT-1 Tests (6)
+
+- `test_template_parser` — XML template parsing
+- `test_config_parser` — Feed configuration parsing
+- `test_provenance` — SHA-256 provenance tracking
+- `test_deterministic_report` — Deterministic JSON report output
+- `test_resource_safety` — Resource limit enforcement
+- `test_cli` — CLI integration tests
+
+### RT-3 Tests (8)
+
+- `test_decoder_primitives` — Wire primitives: stop-bit uInt32/uInt64/i32/i64, nullable offset encoding, presence maps (stop-bit termination), ASCII stop-bit strings, Unicode, byte vectors, decimals, JSON escaping
+- `test_decoder_compiler` — Template compiler: valid compilation, duplicate IDs, missing IDs, invalid XML, empty templates, sequences, decimals, dictionary collision detection, reference rejection, operator/type validation, SHA-256 provenance
+- `test_decoder_session` — Session: single message, template-ID reuse, first-message no-ID, unknown ID, trailing bytes, bytes_consumed, reset, optional null
+- `test_decoder_operators` — Operators: default, copy, increment, constant
+- `test_decoder_sequences` — Sequences: simple 2-entry, empty
+- `test_decoder_rollback` — Rollback: copy state, template-ID, fingerprint determinism
+- `test_decoder_cli` — CLI: valid hex, invalid hex, missing templates
+- `test_decoder_limits` — Limits: max_message_bytes, hard ceiling clamping, pmap limit, string limit, nullable non-canonical, signed max-width (INT32_MAX/MIN), cursor restore, session independence
 
 ## Usage: RT-1 Inspector
 

@@ -132,6 +132,118 @@ static void test_decimal_compile() {
     TEST_PASS("decimal_compile");
 }
 
+static void test_dictionary_collision() {
+    // Two fields with same dictionary scope, template, name and type collide
+    // Same explicit key means same dictionary entry — which is ambiguous
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <uInt32 name="Val1" id="1"><copy key="sharedKey"/></uInt32>
+    <uInt32 name="Val2" id="2"><copy key="sharedKey"/></uInt32>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    bool found = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "duplicate_dictionary_key") found = true;
+    }
+    CHECK(found);
+    TEST_PASS("dictionary_collision");
+}
+
+static void test_reference_rejection() {
+    // typeRef should be rejected as unsupported
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <typeRef name="SomeType"/>
+    <uInt32 name="Val" id="1"/>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    bool found = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "unsupported_reference") found = true;
+    }
+    CHECK(found);
+    TEST_PASS("reference_rejection");
+}
+
+static void test_template_ref_rejection() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <templateRef name="OtherTemplate"/>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    bool found = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "unsupported_reference") found = true;
+    }
+    CHECK(found);
+    TEST_PASS("template_ref_rejection");
+}
+
+static void test_unsupported_operator_type() {
+    // tail on uInt32 is unsupported
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <uInt32 name="Val" id="1"><tail/></uInt32>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    bool found = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "unsupported_operator_type") found = true;
+    }
+    CHECK(found);
+    TEST_PASS("unsupported_operator_type");
+}
+
+static void test_copy_with_dictionary_scope() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <uInt32 name="Val" id="1"><copy dictionary="global"/></uInt32>
+    <uInt32 name="Val2" id="2"><copy dictionary="template"/></uInt32>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    const auto& f1 = result.compiled.templates[0].fields[0];
+    CHECK(f1.op.kind == OpKind::Copy);
+    CHECK(f1.op.scope == DictScope::Global);
+    const auto& f2 = result.compiled.templates[0].fields[1];
+    CHECK(f2.op.kind == OpKind::Copy);
+    CHECK(f2.op.scope == DictScope::TemplateType);
+    TEST_PASS("copy_with_dictionary_scope");
+}
+
+static void test_sha256_provenance() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg"><uInt32 name="Val"/></template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK(!result.compiled.templates_sha256.empty());
+    CHECK_EQ(result.compiled.templates_sha256.size(), 64u);  // hex sha256
+    CHECK(result.compiled.templates_file_size > 0);
+    TEST_PASS("sha256_provenance");
+}
+
 int main() {
     test_valid_compile();
     test_duplicate_template_id();
@@ -140,6 +252,12 @@ int main() {
     test_empty_templates();
     test_sequence_compile();
     test_decimal_compile();
+    test_dictionary_collision();
+    test_reference_rejection();
+    test_template_ref_rejection();
+    test_unsupported_operator_type();
+    test_copy_with_dictionary_scope();
+    test_sha256_provenance();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }

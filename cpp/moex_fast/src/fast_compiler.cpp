@@ -381,10 +381,19 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
         break;  // one operator per field
     }
 
-    // Build dictionary key
+    // Build dictionary key and register for collision detection
     if (op.kind != OpKind::None && op.kind != OpKind::Constant) {
         op.dict_key = build_dict_key(op.scope, template_name, field_name, wire_type,
                                       op.explicit_key, false, false);
+        // Register dictionary key for collision detection
+        auto it = ctx.dict_key_to_path.find(op.dict_key);
+        if (it != ctx.dict_key_to_path.end() && it->second != field_path) {
+            ctx.error("duplicate_dictionary_key",
+                      "Dictionary key collision: '" + op.dict_key + "' used by both " +
+                      it->second + " and " + field_path, field_path);
+        } else {
+            ctx.dict_key_to_path[op.dict_key] = field_path;
+        }
     }
 
     // Validate operator/type combination
@@ -443,6 +452,26 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
         f.mantissa_op.kind = OpKind::None;
         f.mantissa_op.dict_key = build_dict_key(DictScope::Global, template_name,
                                                  f.name + ".mantissa", DecWireType::Int64, "", false, true);
+    }
+
+    // Register decimal component keys for collision detection
+    std::string exp_path = field_path + ".exponent";
+    std::string man_path = field_path + ".mantissa";
+    auto exp_it = ctx.dict_key_to_path.find(f.exponent_op.dict_key);
+    if (exp_it != ctx.dict_key_to_path.end() && exp_it->second != exp_path) {
+        ctx.error("duplicate_dictionary_key",
+                  "Dictionary key collision: exponent key '" + f.exponent_op.dict_key +
+                  "' used by both " + exp_it->second + " and " + exp_path, field_path);
+    } else {
+        ctx.dict_key_to_path[f.exponent_op.dict_key] = exp_path;
+    }
+    auto man_it = ctx.dict_key_to_path.find(f.mantissa_op.dict_key);
+    if (man_it != ctx.dict_key_to_path.end() && man_it->second != man_path) {
+        ctx.error("duplicate_dictionary_key",
+                  "Dictionary key collision: mantissa key '" + f.mantissa_op.dict_key +
+                  "' used by both " + man_it->second + " and " + man_path, field_path);
+    } else {
+        ctx.dict_key_to_path[f.mantissa_op.dict_key] = man_path;
     }
 
     return f;
@@ -593,12 +622,16 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
 
         // Handle reference elements (typeRef, templateRef, groupRef)
         if (is_reference_element(name)) {
-            // For the accepted profile, references are resolved at compile time
-            // Mark as compile error if not resolvable
             std::string ref_name = child.attribute("name").as_string("");
             if (ref_name.empty()) {
                 ctx.error("empty_reference_name",
                           "Reference <" + name + "> in " + parent_path + " has empty name", parent_path);
+            } else {
+                // References are not supported in the accepted MOEX SPECTRA profile
+                // Reject as compile error — the profile must use inline definitions
+                ctx.error("unsupported_reference",
+                          "Unsupported reference <" + name + " name=\"" + ref_name + "\"> in " +
+                          parent_path + ": the accepted profile does not use references", parent_path);
             }
             continue;
         }

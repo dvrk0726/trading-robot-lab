@@ -115,3 +115,7 @@ target_compile_definitions(test_decoder_cli PRIVATE
     MOEX_FAST_DECODE_PATH="$<TARGET_FILE:moex-fast-decode>"
 )
 add_test(NAME test_decoder_cli COMMAND test_decoder_cli WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+
+add_executable(test_decoder_limits tests/test_decoder_limits.cpp)
+target_link_libraries(test_decoder_limits PRIVATE moex_decode)
+add_test(NAME test_decoder_limits COMMAND test_decoder_limits)

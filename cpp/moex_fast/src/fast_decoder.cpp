@@ -1101,12 +1101,40 @@ struct DecoderSession::Impl {
         return DecodeStatus::Ok;
     }
 
+    // --- Hard ceiling enforcement ---
+    static DecodeLimits enforce_hard_ceilings(DecodeLimits lim) {
+        constexpr std::size_t HARD_MAX_MESSAGE = 1024 * 1024;        // 1 MiB
+        constexpr std::size_t HARD_MAX_PMAP = 64;
+        constexpr std::uint32_t HARD_MAX_SEQ = 100000;
+        constexpr std::uint32_t HARD_MAX_NODES = 1000000;
+        constexpr std::size_t HARD_MAX_STRING = 1024 * 1024;         // 1 MiB
+
+        if (lim.max_message_bytes > HARD_MAX_MESSAGE) lim.max_message_bytes = HARD_MAX_MESSAGE;
+        if (lim.max_presence_map_bytes > HARD_MAX_PMAP) lim.max_presence_map_bytes = HARD_MAX_PMAP;
+        if (lim.max_sequence_entries > HARD_MAX_SEQ) lim.max_sequence_entries = HARD_MAX_SEQ;
+        if (lim.max_total_nodes > HARD_MAX_NODES) lim.max_total_nodes = HARD_MAX_NODES;
+        if (lim.max_string_bytes > HARD_MAX_STRING) lim.max_string_bytes = HARD_MAX_STRING;
+        return lim;
+    }
+
     // --- Main decode entry point ---
     DecodeResult do_decode(const std::uint8_t* data, std::size_t size, bool exact) {
         DecodeResult result;
         DecodeCtx ctx;
         ctx.cursor = WireCursor(data, size);
         ctx.node_count = 0;
+
+        // Enforce max_message_bytes before any decoding
+        if (size > limits.max_message_bytes) {
+            result.status = DecodeStatus::LimitExceeded;
+            DecodeIssue issue;
+            issue.code = "message_size_limit";
+            issue.offset = 0;
+            issue.message = "Message size " + std::to_string(size) +
+                            " exceeds limit " + std::to_string(limits.max_message_bytes);
+            result.issues.push_back(std::move(issue));
+            return result;
+        }
 
         // Begin transaction for rollback on failure
         begin_transaction();
@@ -1257,7 +1285,7 @@ struct DecoderSession::Impl {
 DecoderSession::DecoderSession(const CompiledTemplateSet& templates, const DecodeLimits& limits)
     : impl_(std::make_unique<Impl>()) {
     impl_->templates = &templates;
-    impl_->limits = limits;
+    impl_->limits = Impl::enforce_hard_ceilings(limits);
 }
 
 DecoderSession::~DecoderSession() = default;

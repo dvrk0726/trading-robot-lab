@@ -1,4 +1,5 @@
 #include "moex_fast/decoder_report.hpp"
+#include "moex_fast/wire_cursor.hpp"
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
@@ -89,29 +90,13 @@ void write_scalar_json(std::ostringstream& oss, const DecodedScalar& val, bool i
     } else if (std::holds_alternative<std::int64_t>(val)) {
         oss << std::get<std::int64_t>(val);
     } else if (std::holds_alternative<std::string>(val)) {
-        oss << "\"";
-        // JSON escape
-        for (char c : std::get<std::string>(val)) {
-            switch (c) {
-                case '"': oss << "\\\""; break;
-                case '\\': oss << "\\\\"; break;
-                case '\n': oss << "\\n"; break;
-                case '\r': oss << "\\r"; break;
-                case '\t': oss << "\\t"; break;
-                default:
-                    if (static_cast<unsigned char>(c) < 0x20) {
-                        oss << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                            << static_cast<int>(static_cast<unsigned char>(c)) << std::dec;
-                    } else {
-                        oss << c;
-                    }
-            }
-        }
-        oss << "\"";
+        oss << "\"" << json_escape_string(std::get<std::string>(val)) << "\"";
     } else if (std::holds_alternative<std::vector<std::uint8_t>>(val)) {
         oss << "\"";
+        // Lowercase hex for byte vectors
+        oss << std::hex << std::nouppercase << std::setfill('0');
         for (auto b : std::get<std::vector<std::uint8_t>>(val)) {
-            oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
+            oss << std::setw(2) << static_cast<int>(b);
         }
         oss << "\"" << std::dec;
     } else if (std::holds_alternative<DecodedDecimal>(val)) {
@@ -120,15 +105,29 @@ void write_scalar_json(std::ostringstream& oss, const DecodedScalar& val, bool i
     }
 }
 
+std::string wire_type_for_field(const DecodedField& field) {
+    if (field.is_sequence) return "sequence";
+    if (field.is_group) return "group";
+    if (std::holds_alternative<std::uint64_t>(field.value)) return "uInt";
+    if (std::holds_alternative<std::int64_t>(field.value)) return "int";
+    if (std::holds_alternative<std::string>(field.value)) return "string";
+    if (std::holds_alternative<std::vector<std::uint8_t>>(field.value)) return "byteVector";
+    if (std::holds_alternative<DecodedDecimal>(field.value)) return "decimal";
+    return "null";
+}
+
 void write_field_json(std::ostringstream& oss, const DecodedField& field, int ind) {
     write_indent(oss, ind);
     oss << "{";
-    oss << "\"name\":\"" << field.name << "\"";
+    oss << "\"name\":\"" << json_escape_string(field.name) << "\"";
     if (field.has_fix_tag) oss << ",\"fixTag\":" << field.fix_tag;
+    oss << ",\"fieldPath\":\"" << json_escape_string(field.field_path) << "\"";
+    oss << ",\"isPresent\":" << (field.is_present ? "true" : "false");
+    oss << ",\"isNull\":" << (field.is_null ? "true" : "false");
     oss << ",\"source\":\"" << value_source_name(field.source) << "\"";
+    oss << ",\"type\":\"" << wire_type_for_field(field) << "\"";
 
     if (field.is_sequence) {
-        oss << ",\"type\":\"sequence\"";
         if (field.sequence_is_null) {
             oss << ",\"value\":null";
         } else {
@@ -145,7 +144,6 @@ void write_field_json(std::ostringstream& oss, const DecodedField& field, int in
             oss << "]";
         }
     } else if (field.is_group) {
-        oss << ",\"type\":\"group\"";
         if (!field.is_present) {
             oss << ",\"value\":null";
         } else {
@@ -237,15 +235,15 @@ std::string decode_json_report(const DecodeResult& result,
         oss << ",\"issues\":[";
         for (std::size_t i = 0; i < result.issues.size(); ++i) {
             if (i > 0) oss << ",";
-            oss << "{\"code\":\"" << result.issues[i].code << "\"";
+            oss << "{\"code\":\"" << json_escape_string(result.issues[i].code) << "\"";
             oss << ",\"offset\":" << result.issues[i].offset;
             if (result.issues[i].has_template_id) {
                 oss << ",\"templateId\":" << result.issues[i].template_id;
             }
             if (!result.issues[i].field_path.empty()) {
-                oss << ",\"fieldPath\":\"" << result.issues[i].field_path << "\"";
+                oss << ",\"fieldPath\":\"" << json_escape_string(result.issues[i].field_path) << "\"";
             }
-            oss << ",\"message\":\"" << result.issues[i].message << "\"}";
+            oss << ",\"message\":\"" << json_escape_string(result.issues[i].message) << "\"}";
         }
         oss << "]";
     }
