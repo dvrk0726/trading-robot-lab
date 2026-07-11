@@ -119,3 +119,8 @@ add_test(NAME test_decoder_cli COMMAND test_decoder_cli WORKING_DIRECTORY ${MOEX
 add_executable(test_decoder_limits tests/test_decoder_limits.cpp)
 target_link_libraries(test_decoder_limits PRIVATE moex_decode)
 add_test(NAME test_decoder_limits COMMAND test_decoder_limits)
+
+# --- RT-3 Reference Oracle (independent, no production linkage) ---
+add_executable(test_decoder_reference_oracle tests/test_decoder_reference_oracle.cpp)
+target_include_directories(test_decoder_reference_oracle PRIVATE ${MOEX_FAST_TEST_DIR})
+add_test(NAME test_decoder_reference_oracle COMMAND test_decoder_reference_oracle)
