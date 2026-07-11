@@ -3,13 +3,26 @@
 Date: 2026-07-11  
 Branch: mimo/issue-18-rt2-raw-capture-replay  
 Pull Request: #20  
-Implementation commit: `95a6626` (Round 9 code)  
-Implementation CI: #66 (run 29142699176): ALL GREEN 7/7  
+Implementation commit: `088ceef` (Round 10 code)  
+Implementation CI: #68 (run 29143755544): ALL GREEN 7/7  
 Executor: MiMo Code
 
 ## Summary
 
 Implemented the first offline raw-market-data source-of-truth layer under `cpp/moex_raw/`. Creates versioned immutable `.mxraw` segments with deterministic synthetic data. No network access, no FAST decode, no real capture.
+
+## Round 10 Corrections
+
+Owner Acceptance Round 10 found one reporting defect: `cmd_replay()` never populated `RawSegmentReport.segment_indexes` or `RawSegmentReport.segment_sizes` after `validate_stream_set()`, causing `generate_text_report()` to print "Segments: 0" and JSON output to contain empty arrays.
+
+### 1. Replay report segment_indexes/segment_sizes
+After `validate_stream_set()` returns validated, canonically sorted `metas` and `target->segment_paths` (both sorted by segment_index), iterate and populate `report.segment_indexes` from `metas[i].segment_index` and `report.segment_sizes` from `std::filesystem::file_size(target->segment_paths[i])`. Explicit error return on file_size failure — no silent zero.
+
+### 2. End-to-end rotated replay report test
+Added test in `test_cli.cpp`: synth 10 records with `--max-records 3 --payload-size 32`, replay text/JSON, assert exactly 4 segments with indexes `[0,1,2,3]`, four positive sizes, `Records: 10`, `Payload Bytes: 320`, non-empty 64-char replay_sha256, `overall_status=valid`.
+
+### 3. Preserved invariants
+18 test executables, `/WX`, `-Werror`, Release-active CHECK macros, current scope and non-goals unchanged.
 
 ## Round 9 Corrections
 
@@ -138,7 +151,7 @@ M  cpp/moex_raw/CMakeLists.txt                           (+test_round5)
 M  .github/workflows/ci.yml                              (test inventory 16→17)
 ```
 
-## Local Test Results (Round 9)
+## Local Test Results (Round 10)
 
 ```text
 RT-2 (18/18 passed, Windows Release):
@@ -170,7 +183,7 @@ Hygiene: PASS
 ## GitHub Actions
 
 ```text
-CI #66 (run 29142699176): ALL GREEN — 7/7 jobs passed
+CI #68 (run 29143755544): ALL GREEN — 7/7 jobs passed
   C++ MOEX RAW Windows/MSVC (18 tests): PASSED
   C++ MOEX RAW Linux/GCC (18 tests): PASSED
   C++ MOEX FAST inspector Windows (6 tests): PASSED

@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-2 Round 9 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
+Текущий gate: RT-2 Round 10 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Назначение проекта
 
@@ -134,14 +134,26 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — Round 9 corrections complete
+## RT-2 — Round 10 corrections complete
 
 ```text
 Issue #18: READY_FOR_REVIEW
 Implementation PR: #20
 Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `95a6626`
-Implementation CI #66 (run 29142699176): ALL GREEN (7/7 jobs)
+Implementation commit: `088ceef`
+Implementation CI #68 (run 29143755544): ALL GREEN (7/7 jobs)
+```
+
+Round 10 corrections delivered:
+
+```text
+replay report segment_indexes/segment_sizes: populate from validated,
+  canonically sorted metas after validate_stream_set; explicit error on
+  file_size failure; indexes [0,1,2,3] and four positive sizes confirmed;
+end-to-end rotated replay report test: synth 10 records --max-records 3,
+  replay text/JSON, assert 4 segments, indexes, sizes, Records=10,
+  Payload Bytes=320, non-empty replay_sha256, overall_status=valid;
+18/18 Release tests (Windows + Linux).
 ```
 
 Round 9 corrections delivered:
@@ -187,7 +199,7 @@ DONE
 ## Immediate actions
 
 ```text
-1. Owner reviews RT-2 Round 9 corrections in PR #20.
+1. Owner reviews RT-2 Round 10 corrections in PR #20.
 2. If accepted, merge PR #20.
 3. Move Issue #18 to DONE.
 4. Do not start RT-3 until RT-2 is DONE.
