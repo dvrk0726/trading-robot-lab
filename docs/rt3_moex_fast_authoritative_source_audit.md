@@ -120,9 +120,9 @@ FAST_9.0 `templates.xml` is byte-identical to T0 `templates.xml` (same SHA-256: 
 |--------|--------|----------|---------------------------|---------|--------|
 | Nullable NULL entity value | FAST 1.1 §10.4 (p.21) | "All nullable types are constructed in such a way that NULL is represented as a 7-bit entity value where all bits are zero." | Delegated to FAST 1.1 | The nullable NULL **entity value** is 7 zero bits (`0x00`). | confirmed (FAST 1.1, p.21) |
 | Nullable NULL wire encoding for integers | FAST 1.1 §10.6.1 (p.23) + Appendix 3.1.2 Ex.1 (p.33) | §10.6.1: "The NULL representation of a nullable integer is a 7-bit entity value where all bits are zero." Example: optional uInt32, input null → FAST `0x80` (10000000) | Delegated to FAST 1.1 | On the wire, nullable integer NULL is encoded as `0x80` (stop bit set, 7 data bits all zero). The entity value `0x00` becomes `0x80` when stop-bit encoded. | confirmed (FAST 1.1, p.23 + p.33) |
-| Offset-by-1 encoding | FAST 1.1 §10.6.1 (p.23) | "If an integer is nullable, every non-negative integer is incremented by 1 before it is encoded." | Delegated to FAST 1.1 | Non-null value V is encoded as stopbit(V+1). For signed integers, the arithmetic wraps correctly through unsigned reinterpretation. | confirmed (FAST 1.1, p.23) |
+| Offset-by-1 encoding | FAST 1.1 §10.6.1 (p.23) | "If an integer is nullable, every non-negative integer is incremented by 1 before it is encoded." | Delegated to FAST 1.1 | **Only non-negative** values are incremented by 1 before encoding. Negative signed values are encoded directly (not incremented). NULL (wire `0x80`) is therefore distinct from every non-null encoding. | confirmed (FAST 1.1, p.23) |
 | Nullable unsigned: decoded 0 (wire 0x81) is value 0 | FAST 1.1 Appendix 3.1.2 Ex.1 (p.33) | Optional uInt32, input 0 → FAST `0x81` (10000001). "Increment by 1 since field is optional" | Delegated to FAST 1.1 | V=0 → stopbit(0+1) = stopbit(1) = `0x81`. Wire `0x80` alone (entity value 0, decoded as raw=0) is the NULL sentinel, not a valid non-null value for nullable unsigned. | confirmed (FAST 1.1, p.33) |
-| Nullable signed: decoded 0 (wire 0x80) maps to value -1 | FAST 1.1 §10.6.1 (p.23) | V=-1 → stopbit(-1+1) = stopbit(0) = `0x80`. | Delegated to FAST 1.1 | This is the same wire byte as NULL (`0x80`). The decoder disambiguates by reading the stop-bit encoded value first: raw=0 means either NULL (if the wire byte was the nullable NULL sentinel) or value -1 (if the wire byte is a valid stop-bit encoded entity). In practice, the decoder checks the nullable NULL case first (raw=0 and this is a nullable field → NULL), otherwise raw=0 is non-canonical for nullable unsigned or value -1 for nullable signed. | confirmed (FAST 1.1, p.23) |
+| Nullable signed: value -1 encoding | FAST 1.1 §10.6.1 (p.23) | "every **non-negative** integer is incremented by 1 before it is encoded." V=-1 is negative → NOT incremented → stopbit(-1) = `0xFF`. | Delegated to FAST 1.1 | NULL (`0x80`) and value -1 (`0xFF`) are **distinct** on the wire. The offset-by-1 rule applies only to non-negative values; negative values use direct two's complement stop-bit encoding. **Defect**: `wire_cursor.cpp:268` checks `data_[pos_] == 0x00` for nullable NULL instead of checking the stop-bit decoded value == 0 (wire `0x80`). `wire_cursor.cpp:281` applies `out = raw - 1` unconditionally instead of only for raw > 0. `fast_reference_encoder.hpp:171` pushes `0x00` for nullable NULL instead of encoding entity value `0x00` with stop bit (`0x80`), and `:177-179` applies `val+1` to all signed values instead of only non-negative ones. | confirmed (FAST 1.1, p.23); code defects documented |
 
 ### 3.5. ASCII String
 
@@ -131,8 +131,8 @@ FAST_9.0 `templates.xml` is byte-identical to T0 `templates.xml` (same SHA-256: 
 | Stop-bit per character | FAST 1.1 §10.6.3 (p.23-24) | "An ASCII String is represented as a stop bit encoded entity. The entity value is interpreted as a sequence of 7-bit ASCII characters." | Delegated to FAST 1.1 | Each byte: bit 7 = stop (1=last), bits 6..0 = character. Stop bit on LAST byte only. | confirmed (FAST 1.1, p.23) |
 | Valid character range | FAST 1.1 §10.6.3 (p.23-24) | The entity value is "a sequence of 7-bit ASCII characters." | Delegated to FAST 1.1 | 0x01..0x7F per character. 0x00 in data position is the zero-preamble, not a valid character. | confirmed (FAST 1.1, p.23) |
 | Empty string encoding (non-nullable) | FAST 1.1 Appendix 3.1.3 Ex.2 (p.34) | Mandatory string, input "" (zero length) → FAST `0x80` | Delegated to FAST 1.1 | Single byte `0x80` (stop bit, data=0). | confirmed (FAST 1.1, p.34) |
-| Nullable ASCII NULL | FAST 1.1 §10.6.3 (p.24) | "If an ASCII String is nullable, an additional zero-preamble is allowed at the start of the string. The bits that follow are interpreted as a non-nullable string, including a possible zero preamble. If there are no remaining bits after removing the preamble the value represents the NULL string." Wire encoding table: `0x00` → Nullable: Yes → NULL | Delegated to FAST 1.1 | On the wire, nullable ASCII NULL is `0x00` (a zero-preamble with no remaining bits). This is distinct from the nullable integer NULL encoding (`0x80`). ASCII strings use the zero-preamble mechanism for null-vs-empty distinction. | confirmed (FAST 1.1, p.24) |
-| Nullable ASCII empty string | FAST 1.1 §10.6.3 (p.24) | Wire encoding table: `0x00 0x00` → Nullable: Yes → Empty String | Delegated to FAST 1.1 | On the wire, nullable ASCII empty string is `0x00 0x00` (zero-preamble + zero-preamble = empty). | confirmed (FAST 1.1, p.24) |
+| Nullable ASCII NULL | FAST 1.1 §10.6.3 (p.24) + Appendix 3.1.3 Ex.1 (p.34) | §10.6.3: "If there are no remaining bits after removing the preamble the value represents the NULL string." The p.24 table shows **entity values** (not wire bytes): entity value `0x00` nullable = NULL. Appendix 3.1.3 Ex.1 (p.34): optional string, input null → FAST `0x80` (10000000). | Delegated to FAST 1.1 | On the wire, nullable ASCII NULL is `0x80` — entity value `0x00` (zero-preamble) stop-bit encoded. This is a completed stop-bit wire sequence. Note: the p.24 table lists entity values; the wire encoding adds the stop bit. | confirmed (FAST 1.1, p.24 + p.34) |
+| Nullable ASCII empty string | FAST 1.1 §10.6.3 (p.24) + Appendix 3.1.3 Ex.1 (p.34) | The p.24 table: entity value `0x00 0x00` nullable = Empty String. Appendix 3.1.3 Ex.1 (p.34): optional string, input "" → FAST `0x00 0x80` (00000000 10000000). | Delegated to FAST 1.1 | On the wire, nullable ASCII empty string is `0x00 0x80` — entity value `0x00 0x00` (zero-preamble + zero-preamble = empty non-nullable string) stop-bit encoded. Both bytes form a completed stop-bit wire sequence (second byte has stop bit). | confirmed (FAST 1.1, p.24 + p.34) |
 | Not null-terminated | FAST 1.1 §10.6.3 (p.23-24) | "An ASCII String is represented as a stop bit encoded entity." No null terminator mentioned. | Delegated to FAST 1.1 | ASCII strings are NOT null-terminated. | confirmed (FAST 1.1, p.23-24) |
 
 ### 3.6. Unicode String
@@ -209,7 +209,7 @@ FAST_9.0 `templates.xml` is byte-identical to T0 `templates.xml` (same SHA-256: 
 
 All byte vectors below are derived from the encoding rules in FAST 1.1 §10.2-§10.7 (delegated by MOEX). The encoding logic is independently cross-checked against the project's test-only reference encoder (`cpp/moex_fast/tests/fast_reference_encoder.hpp`), which implements the same two's complement stop-bit algorithm.
 
-**Important note on nullable integer wire encoding**: Per FAST 1.1 §10.6.1 (p.23) and the Appendix 3.1.2 Example 1 (p.33), nullable integer NULL is encoded on the wire as `0x80` (stop bit set, 7 data bits all zero). The entity value is `0x00` (7 zero bits), which becomes `0x80` when stop-bit encoded. The reference encoder (`fast_reference_encoder.hpp`) uses `0x00` for nullable integer NULL, which is the entity value rather than the wire encoding. The project decoder correctly handles the spec-compliant wire encoding `0x80` for nullable NULL.
+**Important note on nullable integer wire encoding**: Per FAST 1.1 §10.6.1 (p.23) and Appendix 3.1.2 Example 1 (p.33), nullable integer NULL is encoded on the wire as `0x80` (stop bit set, 7 data bits all zero). The entity value is `0x00` (7 zero bits), which becomes `0x80` when stop-bit encoded. Per §10.6.1, only non-negative values are incremented by 1; negative signed values are encoded directly. **Defect in reference encoder**: `fast_reference_encoder.hpp` pushes `0x00` for nullable integer NULL instead of `0x80`, and applies `val+1` to all signed values instead of only non-negative ones. **Defect in production decoder**: `wire_cursor.cpp` checks `data_[pos_] == 0x00` for nullable NULL detection instead of reading the stop-bit encoded value and checking for decoded 0 (wire `0x80`), and applies `raw - 1` unconditionally for nullable signed instead of only for positive decoded values.
 
 ### 4.1. Stop-Bit Unsigned — Value 0
 
@@ -288,26 +288,23 @@ All byte vectors below are derived from the encoding rules in FAST 1.1 §10.2-§
 ### 4.13. Stop-Bit Signed — INT32_MIN (-2147483648)
 
 **Source**: FAST 1.1 §10.6.1.1 (p.23) + §6.2.1 (p.10)
-**Calculation**: INT32_MIN = -2147483648. In two's complement, this value requires 33 bits to represent (the 32-bit pattern `0x80000000` has sign bit 0 in bit 31, which would be interpreted as a positive number; sign extension to 33 bits produces `1_10000000_00000000_00000000_00000000` where bit 32 = 1 correctly indicates negative).
+**Calculation**: INT32_MIN = -2147483648. The 32-bit two's complement pattern is `0x80000000`. A stop-bit entity value is always a multiple of 7 bits; 4 bytes (28 data bits) covers only [-134217728, 134217727], so 5 bytes (35 data bits) is required. The 35-bit two's complement of -2147483648 is obtained by sign-extending the 32-bit pattern: bits [34..32] = `111` (sign extension), bit 31 = `1`, bits [30..0] = `0`. The entity value is `1111000_0000000_0000000_0000000_0000000`. The sign bit (bit 34) = 1 → negative.
 
-Bit groups (MSB first, 7 bits each) from the 33-bit two's complement value:
+Bit groups (MSB first, 7 bits each) from the 35-bit two's complement entity value:
 
-| Group | Bits (33-bit value) | Binary | Byte |
+| Group | Bits (35-bit value) | Binary | Byte |
 |-------|---------------------|--------|------|
-| 0 | [32..26] | `0001000` | `0x08` |
-| 1 | [25..19] | `0000000` | `0x00` |
-| 2 | [18..12] | `0000000` | `0x00` |
-| 3 | [11..5] | `0000000` | `0x00` |
-| 4 (stop) | [4..0]+stop | `00000` + stop | `0x80` |
+| 0 | [34..28] | `1111000` | `0x78` |
+| 1 | [27..21] | `0000000` | `0x00` |
+| 2 | [20..14] | `0000000` | `0x00` |
+| 3 | [13..7] | `0000000` | `0x00` |
+| 4 (stop) | [6..0]+stop | `0000000` + stop | `0x80` |
 
-**Wire**: `[0x08, 0x00, 0x00, 0x00, 0x80]`
+**Wire**: `[0x78, 0x00, 0x00, 0x00, 0x80]`
 
-**Derivation from normative rule**: Per FAST 1.1 §10.6.1.1 (p.23): "The entity value is a two's complement integer representation [TWOC]. The most significant data bit of the entity value is the sign bit." For INT32_MIN (-2147483648), the minimum two's complement representation needs 33 bits because:
-- 32-bit two's complement of -2147483648 = `1000_0000_0000_0000_0000_0000_0000_0000` (hex `0x80000000`)
-- Bit 31 (MSB of 32-bit) = 1. If interpreted as a 32-bit entity value, the sign bit (bit 31) = 1 → negative. However, bits [31..30] = `10` — the top data bit is 1 but the second is 0, so the entity value `1000...0` in 32 bits represents -2147483648 correctly.
-- BUT: the stop-bit encoding must ensure the value is not overlong. With 4 bytes (28 data bits), the top bit would be in bit 27 = 0 (positive), which is wrong. With 5 bytes (35 data bits), bit 34 = 0, bit 33 = 0, bit 32 = 1 → sign bit = 1 → negative. Bits [32..0] = `1_10000000_00000000_00000000_00000000` = -2147483648 in 33-bit two's complement. This is the minimum correct encoding.
+**Derivation from normative rule**: Per FAST 1.1 §10.6.1.1 (p.23): "The entity value is a two's complement integer representation [TWOC]. The most significant data bit of the entity value is the sign bit." The stop-bit encoding must ensure the value is not overlong (§10.6.1, p.23). With 4 bytes (28 data bits), the sign bit (bit 27) would be 0 → positive, which is wrong for -2147483648. With 5 bytes (35 data bits), sign-extending the 32-bit pattern `0x80000000` yields bits [34..31] = `1111`, bit 30..0 = `0...0`. The sign bit (bit 34) = 1 → negative. This is the minimum correct encoding. Overlong check: removing the top 7 data bits yields `0000000_0000000_0000000_0000000` = 0 (positive) ≠ -2147483648, so the encoding is not overlong.
 
-**Cross-check**: The project's reference encoder (`fast_reference_encoder.hpp:101-126`) computes the same encoding for INT32_MIN. For val=-2147483648, the encoder computes nbits=33 (via `while (v < -1) { nbits++; v >>= 1; }`), ngroups=5, and emits `[0x08, 0x00, 0x00, 0x00, 0x80]`. This is agreement with the normative derivation above, but the cross-check is not used as primary evidence.
+**Cross-check**: The project's reference encoder (`fast_reference_encoder.hpp:101-126`) produces `[0x08, 0x00, 0x00, 0x00, 0x80]` for INT32_MIN, which is **incorrect**: group 0 = `0x08` = `0001000` → sign bit (bit 34) = 0 → positive. The encoder uses `memcpy` into `uint32_t` and extracts 7-bit groups directly, which loses the sign-extension bits [34..32]. The correct output is `[0x78, 0x00, 0x00, 0x00, 0x80]`. This is a **defect** in the reference encoder.
 
 ### 4.14. Nullable Unsigned — Null
 
@@ -326,8 +323,9 @@ Bit groups (MSB first, 7 bits each) from the 33-bit two's complement value:
 ### 4.16. Nullable Signed — Value -1
 
 **Source**: FAST 1.1 §10.6.1 (p.23)
-**Calculation**: V=-1 → stopbit(-1+1) = stopbit(0) = `0x80`.
-**Wire**: `[0x80]`
+**Calculation**: Per §10.6.1 (p.23): "every **non-negative** integer is incremented by 1 before it is encoded." V=-1 is negative → NOT incremented. stopbit(-1) = two's complement -1 in 7 data bits = `1111111`, + stop bit = `0xFF`.
+**Wire**: `[0xFF]`
+**Note**: NULL (wire `0x80`) and value -1 (wire `0xFF`) are **distinct**. The current reference encoder and production decoder incorrectly apply the +1 shift to all signed values including negatives, which would produce wire `0x80` for -1 (same as NULL) — this is a defect (see §3.4, §5).
 
 ### 4.17. Presence Map — 7 bits, pattern 0110000
 
@@ -335,11 +333,11 @@ Bit groups (MSB first, 7 bits each) from the 33-bit two's complement value:
 **Calculation**: Bits `[0,1,1,0,0,0,0]` → data byte = `0110000` = `0x30`, + stop = `0xB0`.
 **Wire**: `[0xB0]`
 
-### 4.18. Presence Map — 14 bits all zero
+### 4.18. Presence Map — All Zero (Minimal Encoding)
 
 **Source**: FAST 1.1 §10.5 (p.21)
-**Calculation**: 14 bits → ceil(14/7) = 2 bytes. Byte 0: `0x00` (no stop), byte 1: `0x80` (stop, data=0).
-**Wire**: `[0x00, 0x80]`
+**Calculation**: Per §10.5 (p.21): "This makes it possible to truncate a presence map that ends in a sequence where the bits are all zero." An all-zero presence map is minimally encoded as a single byte with stop bit and 7 zero data bits. The encoding `[0x00, 0x80]` (14 zero bits + stop) is **overlong** because removing the top 7 zero bits yields the same value (all zeros).
+**Wire**: `[0x80]` (7 zero data bits + stop bit; minimal non-overlong encoding)
 
 ### 4.19. ASCII String — Empty (non-nullable)
 
@@ -361,15 +359,17 @@ Bit groups (MSB first, 7 bits each) from the 33-bit two's complement value:
 
 ### 4.22. Nullable ASCII — Null
 
-**Source**: FAST 1.1 §10.6.3 (p.24)
-**Wire**: `[0x00]` (zero-preamble, no remaining bits → NULL)
-**Official text**: "If an ASCII String is nullable, an additional zero-preamble is allowed at the start of the string. The bits that follow are interpreted as a non-nullable string, including a possible zero preamble. If there are no remaining bits after removing the preamble the value represents the NULL string." (p.24)
+**Source**: FAST 1.1 §10.6.3 (p.24) + Appendix 3.1.3 Ex.1 (p.34)
+**Calculation**: The p.24 table lists **entity values** (not wire bytes). Entity value `0x00` nullable = NULL. Stop-bit encoding of entity value `0x00` (7 zero data bits + stop bit) = `0x80`.
+**Wire**: `[0x80]` (completed stop-bit wire sequence)
+**Official example**: Appendix 3.1.3 Ex.1 (p.34): optional string, input null → FAST `0x80` (10000000).
 
 ### 4.23. Nullable ASCII — Empty String
 
-**Source**: FAST 1.1 §10.6.3 (p.24)
-**Wire**: `[0x00, 0x00]` (zero-preamble + zero-preamble = empty string)
-**Official text**: Wire encoding table on p.24: `0x00 0x00` → Nullable: Yes → Empty String
+**Source**: FAST 1.1 §10.6.3 (p.24) + Appendix 3.1.3 Ex.1 (p.34)
+**Calculation**: Entity value `0x00 0x00` nullable = Empty String. Stop-bit encoding: first byte data=`0000000` (no stop) = `0x00`, second byte data=`0000000` (stop) = `0x80`.
+**Wire**: `[0x00, 0x80]` (completed stop-bit wire sequence; second byte carries stop bit)
+**Official example**: Appendix 3.1.3 Ex.1 (p.34): optional string, input "" → FAST `0x00 0x80` (00000000 10000000).
 
 ### 4.24. Unicode String — Empty
 
@@ -418,9 +418,9 @@ Bit groups (MSB first, 7 bits each) from the 33-bit two's complement value:
 
 | # | Topic | Current Code | Authoritative Rule | Source | Status |
 |---|-------|--------------|-------------------|--------|--------|
-| 1 | **Nullable signed: INT32_MIN handling** | `wire_cursor.cpp:278` rejects `raw == INT32_MIN` as overflow | FAST 1.1 §10.6.1 (p.23): nullable signed = decoded-1. Decoded INT32_MIN would give value INT32_MIN-1 which overflows int32. This rejection is CORRECT. | FAST 1.1, p.23 | confirmed correct |
-| 2 | **Nullable signed: decoded 0 maps to -1** | `wire_cursor.cpp:281`: `out = raw - 1` where raw=0 → out=-1 | FAST 1.1: V=-1 → stopbit(-1+1)=stopbit(0)=0x80. Decoding 0x80: raw=0, out=0-1=-1. Correct. | FAST 1.1, p.23 | confirmed correct |
-| 3 | **Nullable unsigned: decoded 0 (wire 0x80) rejected** | `wire_cursor.cpp:241`: `if (raw == 0) return NonCanonicalEncoding` | FAST 1.1: nullable unsigned, NULL wire=`0x80` (raw=0), non-null encodes V+1. Minimum non-null wire is 0x81 (V=0). Wire 0x80 (raw=0) is the NULL sentinel for nullable unsigned, not a valid non-null value. | FAST 1.1, p.23 + p.33 | confirmed correct |
+| 1 | **Nullable signed: INT32_MIN handling** | `wire_cursor.cpp:278` rejects `raw == INT32_MIN` as overflow | FAST 1.1 §10.6.1 (p.23): only non-negative values are incremented. Negative values are encoded/decoded directly. INT32_MIN as a decoded raw value is negative → value = raw = INT32_MIN (no decrement). The overflow guard exists only because the code unconditionally applies `raw - 1`. | FAST 1.1, p.23 | **confirmed discrepancy** (production decoder) |
+| 2 | **Nullable signed: unconditional raw-1** | `wire_cursor.cpp:281`: `out = raw - 1` applied to all decoded values | FAST 1.1 §10.6.1 (p.23): only non-negative integers are incremented by 1. Negative values are NOT incremented. The decoder should apply `raw - 1` only for raw > 0; for raw < 0, value = raw directly. NULL is detected by decoded raw == 0 (wire `0x80`). | FAST 1.1, p.23 | **confirmed discrepancy** (production decoder) |
+| 3 | **Nullable unsigned: NULL detection and wire 0x80 rejection** | `wire_cursor.cpp:232`: NULL via `data_[pos_] == 0x00`; `:241`: rejects `raw == 0` as NonCanonical | FAST 1.1 §10.6.1 (p.23) + Appendix 3.1.2 Ex.1 (p.33): nullable unsigned NULL wire = `0x80` (entity value 0x00, stop-bit encoded). The code checks byte `0x00` for NULL (wrong byte), then rejects wire `0x80` (the correct NULL encoding) as NonCanonical. | FAST 1.1, p.23 + p.33 | **confirmed discrepancy** (production decoder) |
 | 4 | **Stop-bit signed canonical: range check in i32** | `wire_cursor.cpp:142-153`: checks if decoded value fits in (bytes_read-1)*7 bits | FAST 1.1 §10.6.1 (p.23): "An integer is overlong if the entity value still represents the same integer after removing seven or more of the most significant bits." The range check `[lo, hi]` for prev_bits is correct. | FAST 1.1, p.23 | confirmed correct |
 | 5 | **Stop-bit signed i64: pre-shift overflow guard** | `wire_cursor.cpp:177-184`: for bytes beyond 9, checks top 7 bits are sign extension before shifting | FAST 1.1: max 10 bytes for int64. The 10th byte's 7 data bits would shift left by 63, overflowing uint64_t. The pre-shift check is a necessary guard. | FAST 1.1, p.10 | confirmed correct |
 | 6 | **Presence map: implicit zero padding** | `wire_cursor.cpp:337-339`: pads with false after stop bit | FAST 1.1 §10.5 (p.21): "Logically a presence map has an infinite suffix of zeroes." | FAST 1.1, p.21 | confirmed correct |
@@ -430,25 +430,32 @@ Bit groups (MSB first, 7 bits each) from the 33-bit two's complement value:
 | 10 | **Unicode: nullable uses nullable_u32 for length** | `wire_cursor.cpp:461`: `read_nullable_u32(len, len_null)` | FAST 1.1 §10.6.4-§10.6.5 (p.24): nullable Unicode is nullable Byte Vector. NULL size preamble = NULL string. Correct. | FAST 1.1, p.24 | confirmed correct |
 | 11 | **Byte vector: nullable uses nullable_u32 for length** | `wire_cursor.cpp:508`: `read_nullable_u32(len, len_null)` | FAST 1.1 §10.6.5 (p.24): "A nullable byte vector has a nullable size preamble. The NULL byte vector is represented by a NULL size preamble." Correct. | FAST 1.1, p.24 | confirmed correct |
 | 12 | **Decimal: null decimal skips mantissa** | `wire_cursor.cpp:538-541`: if exponent nullable and null, returns without reading mantissa | FAST 1.1 §10.6.2 (p.23): "A NULL scaled number is represented as a NULL exponent. The mantissa is present in the stream iff the exponent is not NULL." Correct. | FAST 1.1, p.23 | confirmed correct |
-| 13 | **Reference encoder: nullable integer NULL uses 0x00** | `fast_reference_encoder.hpp:151-157` (and similar for i32/i64/u64): `buf.push_back(0x00)` for null | FAST 1.1 §10.6.1 (p.23) + Appendix 3.1.2 Ex.1 (p.33): nullable integer NULL wire encoding = `0x80` (entity value 0x00, stop-bit encoded). The reference encoder emits the entity value `0x00` instead of the wire encoding `0x80`. This is a **shared defect** in the reference encoder. The project decoder correctly handles the spec-compliant `0x80` wire encoding for nullable NULL. | FAST 1.1, p.23 + p.33 | **confirmed discrepancy** (reference encoder, not production decoder) |
-| 14 | **Reference encoder: nullable i32 encoding** | `fast_reference_encoder.hpp:177-179`: `encode_stopbit_i32(buf, shifted)` where shifted = (uint32_t(val)+1) cast to int32 | FAST 1.1 §10.6.1 (p.23): nullable signed V → stopbit(V+1). For V=INT32_MAX, V+1 wraps to INT32_MIN (via unsigned). The encoder correctly uses unsigned arithmetic then reinterprets. | FAST 1.1, p.23 | confirmed correct (excluding NULL encoding) |
-| 15 | **Reference encoder: nullable i64 encoding** | `fast_reference_encoder.hpp:188-190`: same pattern as i32 | Same reasoning. Correct. | FAST 1.1, p.23 | confirmed correct (excluding NULL encoding) |
-| 16 | **Test: nullable i32 value -1 → wire 0x80** | `test_decoder_reference_oracle.cpp:319-323` | FAST 1.1: V=-1 → stopbit(-1+1)=stopbit(0)=0x80. Correct. | FAST 1.1, p.23 | confirmed correct |
+| 13 | **Reference encoder: nullable integer NULL uses 0x00** | `fast_reference_encoder.hpp:153,162,171,186`: `buf.push_back(0x00)` for null | FAST 1.1 §10.6.1 (p.23) + Appendix 3.1.2 Ex.1 (p.33): nullable integer NULL wire encoding = `0x80` (entity value 0x00, stop-bit encoded). The reference encoder emits the entity value `0x00` instead of the wire encoding `0x80`. | FAST 1.1, p.23 + p.33 | **confirmed discrepancy** (reference encoder) |
+| 14 | **Reference encoder: nullable signed applies val+1 to all values** | `fast_reference_encoder.hpp:177-179`: shifts all signed values by +1 | FAST 1.1 §10.6.1 (p.23): "every **non-negative** integer is incremented by 1." Negative values should be encoded directly (not incremented). The encoder applies `val+1` to all signed values including negatives, producing the same wire code as NULL for value -1. | FAST 1.1, p.23 | **confirmed discrepancy** (reference encoder) |
+| 15 | **Reference encoder: nullable i64 applies val+1 to all values** | `fast_reference_encoder.hpp:188-190`: same pattern as i32 | Same defect as #14 for 64-bit. | FAST 1.1, p.23 | **confirmed discrepancy** (reference encoder) |
+| 16 | **Test: nullable i32 value -1 → wire 0x80** | `test_decoder_reference_oracle.cpp:319-323` | FAST 1.1 §10.6.1 (p.23): V=-1 is negative → NOT incremented → stopbit(-1) = `0xFF`. The test expects `0x80` (same as NULL), which is incorrect per the spec rule that only non-negative values are shifted. | FAST 1.1, p.23 | **confirmed discrepancy** (test expectation) |
 | 17 | **Test: nullable u32 max value** | `test_decoder_reference_oracle.cpp:554-558`: `0xFFFFFFFE` → `0x0F 0x7F 0x7F 0x7F 0xFF` | FAST 1.1: V=0xFFFFFFFE → stopbit(0xFFFFFFFE+1)=stopbit(0xFFFFFFFF). Correct. | FAST 1.1, p.23 | confirmed correct |
 | 18 | **MOEX preamble: 4-byte SeqNum before FAST body** | Not implemented in WireCursor (WireCursor operates on FAST body only) | MOEX §3.2: 4-byte preamble contains MsgSeqNum before FAST message. | spectra_fastgate_en.pdf §3.2 | No discrepancy (separate concern) |
 | 19 | **MOEX: only `none` and `constant` operators** | Code implements default (none) operator; constant is handled at template level | Exhaustive XML scan: only `none` and `constant` operators are used across all 19 MOEX templates (70 constant fields, 0 copy/delta/increment/default/tail). | templatesT0/templates.xml (full scan, see §7) | confirmed correct |
 | 20 | **SecurityDesc uses charset="unicode"** | Not directly visible in WireCursor (WireCursor handles raw types) | templatesT0/templates.xml line 110: `<string ... charset="unicode"/>` | templates.xml | No discrepancy (handled at template level) |
+| 21 | **Reference encoder: INT32_MIN encoding produces wrong vector** | `fast_reference_encoder.hpp:119-125`: extracts 7-bit groups from `uint32_t` via `memcpy` | FAST 1.1 §10.6.1.1 (p.23): INT32_MIN in 35-bit two's complement has sign bit (bit 34) = 1. Group 0 = `1111000` = `0x78`. The encoder extracts from `uint32_t` (32 bits), losing sign-extension bits [34..32], producing group 0 = `0001000` = `0x08` (sign bit = 0 → positive). | FAST 1.1, p.23 | **confirmed discrepancy** (reference encoder) |
+| 22 | **Production decoder: nullable NULL detection via byte 0x00** | `wire_cursor.cpp:232,268,288`: `if (data_[pos_] == 0x00)` for nullable NULL | FAST 1.1 §10.6.1 (p.23) + Appendix 3.1.2 Ex.1 (p.33): nullable integer NULL wire = `0x80` (entity value 0x00 stop-bit encoded). The code checks for byte `0x00` (not a valid stop-bit entity) instead of reading the stop-bit value and checking for decoded 0 (wire `0x80`). | FAST 1.1, p.23 + p.33 | **confirmed discrepancy** (production decoder) |
 
 ### Summary of Discrepancies
 
-**Confirmed discrepancy (1)**:
-- **#13**: The reference encoder (`fast_reference_encoder.hpp`) uses `0x00` for nullable integer NULL, while the official FAST 1.1 spec (§10.6.1, p.23 + Appendix 3.1.2 Ex.1, p.33) specifies the wire encoding as `0x80` (entity value 0x00, stop-bit encoded). The project decoder correctly handles the spec-compliant `0x80` encoding. This discrepancy is in the test-only reference encoder, not in production code.
+**Confirmed discrepancies (9)**:
+- **#1, #2, #3, #22** (production decoder `wire_cursor.cpp`): Nullable integer NULL detection checks byte `0x00` instead of stop-bit decoded value 0 (wire `0x80`). Nullable signed decode applies `raw - 1` unconditionally instead of only for non-negative decoded values. Nullable unsigned rejects wire `0x80` (the correct NULL encoding) as NonCanonical. INT32_MIN is rejected as overflow due to the unconditional decrement.
+- **#13, #14, #15** (reference encoder `fast_reference_encoder.hpp`): Nullable integer NULL encoded as `0x00` instead of `0x80`. Nullable signed applies `val+1` to all values instead of only non-negative values.
+- **#16** (test `test_decoder_reference_oracle.cpp`): Test expects nullable signed -1 → wire `0x80`, but per the spec rule (only non-negative values incremented), -1 should encode as `0xFF`.
+- **#21** (reference encoder): INT32_MIN encoding produces `[0x08, 0x00, 0x00, 0x00, 0x80]` (sign bit = 0, positive) instead of the correct `[0x78, 0x00, 0x00, 0x00, 0x80]` (sign bit = 1, negative) due to missing sign-extension in the `uint32_t` extraction.
 
 **Unresolved items (2)**:
 - **Preamble endianness**: The MOEX specification does not specify the byte order of the 4-byte preamble (§3.2, spectra_fastgate_en.pdf).
 - **meta.info fetch**: The cause of the HTTP 404 when fetching `meta.info` from the MOEX FTP is unresolved (see §2.2).
 
-**All other items (17 of 20)**: Confirmed correct against the authoritative sources (FAST 1.1 specification and MOEX SPECTRA specification v1.30.2).
+**Confirmed correct (12 of 22)**: Items #4, #5, #6, #7, #8, #9, #10, #11, #12, #17, #19, #20 — confirmed correct against the authoritative sources (FAST 1.1 specification and MOEX SPECTRA specification v1.30.2).
+
+**No discrepancy (1)**: Item #18 — MOEX preamble is a separate concern not handled by WireCursor.
 
 ---
 
@@ -466,9 +473,9 @@ Bit groups (MSB first, 7 bits each) from the 33-bit two's complement value:
 
 6. **T0 and T1 templates are NOT byte-identical**: They have different SHA-256 hashes and differ in template IDs and field definitions. FAST_9.0 templates.xml IS byte-identical to T0 templates.xml.
 
-7. **Nullable integer NULL wire encoding**: The official FAST 1.1 specification (§10.6.1, p.23 + Appendix 3.1.2 Example 1, p.33) defines nullable integer NULL as entity value `0x00` (7 zero bits), which when stop-bit encoded is `0x80` on the wire. The project's reference encoder uses `0x00` (entity value) instead of `0x80` (wire encoding), which is a discrepancy in the test-only encoder. The production decoder correctly handles the spec-compliant `0x80` encoding.
+7. **Nullable integer NULL wire encoding and offset-by-1 rule**: The official FAST 1.1 specification (§10.6.1, p.23 + Appendix 3.1.2 Example 1, p.33) defines nullable integer NULL as entity value `0x00` (7 zero bits), which when stop-bit encoded is `0x80` on the wire. The offset-by-1 rule applies only to **non-negative** values; negative signed values are encoded directly. Therefore NULL (`0x80`) and value -1 (`0xFF`) are distinct on the wire. Both the reference encoder and the production decoder have defects: the encoder pushes `0x00` for NULL and applies `val+1` universally; the decoder checks byte `0x00` for NULL and applies `raw-1` universally (see §5 entries #1–3, #13–16, #22).
 
-8. **INT32_MIN encoding**: The encoding `[0x08, 0x00, 0x00, 0x00, 0x80]` is derived from the normative two's complement rule (FAST 1.1 §10.6.1.1, p.23). INT32_MIN requires 33 bits in two's complement (sign bit = 1 at bit 32), yielding 5 stop-bit encoded bytes. This is confirmed by the spec's sign extension example (§10.6.1.1 NOTE, p.23).
+8. **INT32_MIN encoding**: The correct encoding is `[0x78, 0x00, 0x00, 0x00, 0x80]`, derived from the 35-bit two's complement representation (FAST 1.1 §10.6.1.1, p.23). The 32-bit pattern `0x80000000` sign-extended to 35 bits yields bits [34..31] = `1111`, giving group 0 = `1111000` = `0x78` (sign bit = 1 → negative). The reference encoder produces `[0x08, 0x00, 0x00, 0x00, 0x80]` (sign bit = 0 → positive) due to extracting from `uint32_t` without sign extension — this is a defect (see §5 entry #21).
 
 ---
 
