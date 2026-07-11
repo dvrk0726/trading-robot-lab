@@ -21,7 +21,7 @@ set(PUGIXML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(PUGIXML_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(pugixml)
 
-# --- Library ---
+# --- RT-1 Inspector Library ---
 add_library(moex_inspect STATIC
     src/inspect_types.cpp
     src/xml_parser.cpp
@@ -32,9 +32,24 @@ add_library(moex_inspect STATIC
 target_include_directories(moex_inspect PUBLIC include)
 target_link_libraries(moex_inspect PUBLIC pugixml)
 
-# --- CLI ---
+# --- RT-3 Decoder Library ---
+add_library(moex_decode STATIC
+    src/decoder_types.cpp
+    src/wire_cursor.cpp
+    src/fast_compiler.cpp
+    src/fast_decoder.cpp
+    src/decoder_report.cpp
+)
+target_include_directories(moex_decode PUBLIC include)
+target_link_libraries(moex_decode PUBLIC pugixml)
+
+# --- RT-1 Inspector CLI ---
 add_executable(moex-fast-inspect src/main.cpp)
 target_link_libraries(moex-fast-inspect PRIVATE moex_inspect)
+
+# --- RT-3 Decoder CLI ---
+add_executable(moex-fast-decode src/decode_main.cpp)
+target_link_libraries(moex-fast-decode PRIVATE moex_decode)
 
 # --- Tests ---
 enable_testing()
@@ -68,3 +83,35 @@ target_compile_definitions(test_cli PRIVATE
     MOEX_FAST_INSPECT_PATH="$<TARGET_FILE:moex-fast-inspect>"
 )
 add_test(NAME test_cli COMMAND test_cli WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+
+# --- RT-3 Decoder Tests ---
+add_executable(test_decoder_primitives tests/test_decoder_primitives.cpp)
+target_link_libraries(test_decoder_primitives PRIVATE moex_decode)
+add_test(NAME test_decoder_primitives COMMAND test_decoder_primitives)
+
+add_executable(test_decoder_compiler tests/test_decoder_compiler.cpp)
+target_link_libraries(test_decoder_compiler PRIVATE moex_decode)
+add_test(NAME test_decoder_compiler COMMAND test_decoder_compiler WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+
+add_executable(test_decoder_session tests/test_decoder_session.cpp)
+target_link_libraries(test_decoder_session PRIVATE moex_decode)
+add_test(NAME test_decoder_session COMMAND test_decoder_session WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+
+add_executable(test_decoder_operators tests/test_decoder_operators.cpp)
+target_link_libraries(test_decoder_operators PRIVATE moex_decode)
+add_test(NAME test_decoder_operators COMMAND test_decoder_operators WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+
+add_executable(test_decoder_sequences tests/test_decoder_sequences.cpp)
+target_link_libraries(test_decoder_sequences PRIVATE moex_decode)
+add_test(NAME test_decoder_sequences COMMAND test_decoder_sequences WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+
+add_executable(test_decoder_rollback tests/test_decoder_rollback.cpp)
+target_link_libraries(test_decoder_rollback PRIVATE moex_decode)
+add_test(NAME test_decoder_rollback COMMAND test_decoder_rollback WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+
+add_executable(test_decoder_cli tests/test_decoder_cli.cpp)
+target_link_libraries(test_decoder_cli PRIVATE moex_decode)
+target_compile_definitions(test_decoder_cli PRIVATE
+    MOEX_FAST_DECODE_PATH="$<TARGET_FILE:moex-fast-decode>"
+)
+add_test(NAME test_decoder_cli COMMAND test_decoder_cli WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
