@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-2 Round 10 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
+Текущий gate: RT-3 specification PR #22 — owner review
 
 ## Назначение проекта
 
@@ -108,7 +108,9 @@ Universal MiMo command:
 Возьми следующую задачу READY_FOR_MIMO, выполни её, создай Pull Request и остановись.
 ```
 
-## RT-1 — complete
+The universal command is not authorized for Issue #21 while it remains DRAFT.
+
+## RT-1 — DONE
 
 ```text
 Issue #14: DONE
@@ -134,54 +136,109 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — Round 10 corrections complete
+## RT-2 — DONE
 
 ```text
-Issue #18: READY_FOR_REVIEW
-Implementation PR: #20
-Branch: mimo/issue-18-rt2-raw-capture-replay
-Implementation commit: `088ceef`
-Implementation CI #68 (run 29143755544): ALL GREEN (7/7 jobs)
+Issue #18: DONE
+Specification PR #19: merged
+Implementation PR #20: merged
+Implementation source head: 4afbc9f4ed25974ac62fad13eeb7f6a20daec4e1
+Merge commit: 060371112d921c1c1f4055cfbdb99049bdf8a2af
+Current main control head: 5f1f9c1beaee080fe44eaccda7c7370d9324546d
+Post-merge/current-main CI #74: passed
+Owner Release build and CTest 18/18: passed
+Owner inspect/replay: valid, 4 segments, 10 records, 0 issues
 ```
 
-Round 10 corrections delivered:
+Delivered:
 
 ```text
-replay report segment_indexes/segment_sizes: populate from validated,
-  canonically sorted metas after validate_stream_set; explicit error on
-  file_size failure; indexes [0,1,2,3] and four positive sizes confirmed;
-end-to-end rotated replay report test: synth 10 records --max-records 3,
-  replay text/JSON, assert 4 segments, indexes, sizes, Records=10,
-  Payload Bytes=320, non-empty replay_sha256, overall_status=valid;
-18/18 Release tests (Windows + Linux).
+versioned immutable `.mxraw` v1 segments;
+checked little-endian serialization;
+CRC32C and SHA-256 provenance;
+`.partial` -> finalized lifecycle;
+deterministic rotation;
+bounded validation and stream-set grouping;
+per-stream reports;
+MXREPLAY1 deterministic replay;
+CLI synth/inspect/replay;
+Windows/Linux 18-test gates.
 ```
 
-Round 9 corrections delivered:
+RT-2 payload bytes remain opaque. `capture_index` is not FAST `MsgSeqNum` or exchange sequence.
+
+## RT-3 — specification owner review
 
 ```text
-partial-positive hash EOF tests: keep full backing buffer, inject stage-aware
-  partial-EOF via partial_content_hash_eof and partial_file_hash_eof flags;
-  first read returns positive partial, second read returns 0;
-  assert SegmentStatus::IoError, exact path, stage-specific message/code,
-  and read counter proving both reads at the required stage;
-end-to-end CLI test with directory and JSON paths containing spaces:
-  synth, inspect --json-out, replay all succeed; JSON parsed by strict parser;
-18/18 Release tests (Windows + Linux).
+Issue #21: DRAFT — OWNER_SPEC_REVIEW
+Architecture branch: docs/issue-21-rt3-fast-decoder-spec
+Specification PR: #22
+Specification head before evidence update: 8dd3cfb7e53c85e9bcfbdcdafc2a735dd4dd0708
+Specification CI #75 (run 29148020256): green 7/7
+Task package: tasks/RT-3-specialized-fast-decoder-foundation/
+MiMo implementation: NOT AUTHORIZED
+RT-4: BLOCKED
 ```
 
-Test results:
+Normative RT-3 boundary:
 
 ```text
-RT-2:         18/18 tests passed (Windows + Linux Release)
-RT-1:          6/6  tests passed (no regression)
-QSH/M10X:     20/20 tests passed (no regression)
-Python:         3/3  passed
-Hygiene:        PASS
+input = exactly one bounded FAST message byte span;
+compiled templates = immutable decoder-specific tree;
+session = one ordered logical source stream;
+output = deterministic owned typed DecodedMessage;
+decode state = transactional template-id + dictionaries;
+reset = explicit only;
 ```
+
+Required decoder foundation:
+
+```text
+presence maps and stop-bit primitives;
+nullable uInt32/uInt64/int32/int64;
+ASCII, Unicode, byte vector;
+exact decimal exponent/mantissa;
+template-id state and reuse;
+none/constant/default/copy/increment/delta/tail;
+canonical dictionary keys/scopes;
+groups and sequences with hard limits;
+transactional rollback on every failure;
+decode_one and decode_exact;
+stable issues with offsets and field paths;
+deterministic text/JSON CLI;
+span compatibility with RawPacketRecord.payload;
+hard-coded vectors + independent test-only reference encoder;
+Windows/Linux Release tests.
+```
+
+Explicit RT-3 non-goals:
+
+```text
+no SPECTRA UDP packet framing or message-boundary guessing;
+no socket or multicast;
+no exchange sequence/gap policy;
+no A/B merge/deduplication;
+no Snapshot/Incremental recovery;
+no normalized market events;
+no order-log/book semantics;
+no FIX/TWIME or order sending;
+no strategy, paper or production enablement.
+```
+
+Authoritative RT-3 specification files:
+
+```text
+tasks/RT-3-specialized-fast-decoder-foundation/00_OVERVIEW.md
+tasks/RT-3-specialized-fast-decoder-foundation/01_REQUIREMENTS.md
+tasks/RT-3-specialized-fast-decoder-foundation/02_TEST_PLAN.md
+tasks/RT-3-specialized-fast-decoder-foundation/03_ACCEPTANCE.md
+```
+
+The flattened RT-1 field descriptor is not sufficient for decoding. RT-3 must compile a separate hierarchy preserving operators, dictionaries, references, decimals, groups and sequences while keeping RT-1 behavior compatible.
 
 ## Future FIX architecture
 
-Issue #17 preserves future SPECTRA FIX 4.4 session/order-control/Drop Copy requirements. It remains architecture-only and is not part of RT-2.
+Issue #17 preserves future SPECTRA FIX 4.4 session/order-control/Drop Copy requirements. It remains architecture-only and is not part of RT-3.
 
 ## Canonical statuses
 
@@ -199,8 +256,10 @@ DONE
 ## Immediate actions
 
 ```text
-1. Owner reviews RT-2 Round 10 corrections in PR #20.
-2. If accepted, merge PR #20.
-3. Move Issue #18 to DONE.
-4. Do not start RT-3 until RT-2 is DONE.
+1. Owner reviews RT-3 specification PR #22.
+2. Do not run MiMo implementation while Issue #21 is DRAFT.
+3. After explicit approval, merge PR #22 manually.
+4. Confirm green post-merge main CI.
+5. Move Issue #21 to READY_FOR_MIMO only after that gate.
+6. Do not start RT-4 until RT-3 is DONE.
 ```
