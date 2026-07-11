@@ -766,6 +766,23 @@ static int cmd_replay(int argc, char* argv[]) {
         return 1;
     }
 
+    // Populate segment indexes and sizes from validated, canonically sorted metas/paths.
+    // validate_stream_set sorts metas by segment_index; group_stream_sets sorts paths the same way.
+    std::vector<std::uint64_t> seg_indexes;
+    std::vector<std::uint64_t> seg_sizes;
+    seg_indexes.reserve(metas.size());
+    seg_sizes.reserve(metas.size());
+    for (std::size_t i = 0; i < metas.size(); ++i) {
+        seg_indexes.push_back(metas[i].segment_index);
+        std::error_code ec;
+        auto sz = std::filesystem::file_size(target->segment_paths[i], ec);
+        if (ec) {
+            std::cerr << "Error: cannot get size of " << target->segment_paths[i] << "\n";
+            return 1;
+        }
+        seg_sizes.push_back(sz);
+    }
+
     RawSegmentMetadata replay_meta = metas[0];
 
     // Replay using replay_from_stream_set — computes SHA-256 in single streaming pass
@@ -792,6 +809,8 @@ static int cmd_replay(int argc, char* argv[]) {
     report.endpoint_fingerprint_sha256 = sha256_bytes_to_hex(replay_meta.source.endpoint_fingerprint_sha256);
     report.stream_key = report.session_id_hex + "_src" + source_id_hex(replay_meta.source.source_id) +
                        "_ch" + channel_id_hex(replay_meta.source.channel_id);
+    report.segment_indexes = std::move(seg_indexes);
+    report.segment_sizes = std::move(seg_sizes);
 
     report.record_count = result.summary.record_count;
     report.total_payload_bytes = result.summary.total_payload_bytes;

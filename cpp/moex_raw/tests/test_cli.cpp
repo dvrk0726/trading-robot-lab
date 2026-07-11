@@ -880,6 +880,73 @@ int main() {
         CHECK(rc == 0);
     }
 
+    // ============================================================
+    // Round 10: End-to-end rotated replay report — 10 records, max-records 3
+    // Verifies segment_indexes, segment_sizes, record_count, payload bytes,
+    // replay SHA-256 and overall_status in both text and JSON output.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto out_dir = dir + "/replay_rotated";
+        auto json_path = dir + "/replay_report.json";
+
+        // synth 10 records with max-records 3 → 4 segments
+        int rc = run_cmd_exit(q(exe) + " synth --out " + q(out_dir) +
+                              " --records 10 --max-records 3 --payload-size 32");
+        CHECK(rc == 0);
+        CHECK(fs::exists(out_dir));
+
+        // Verify 4 .mxraw files on disk
+        int mxraw_count = 0;
+        for (const auto& entry : fs::directory_iterator(out_dir)) {
+            if (entry.path().extension() == ".mxraw") mxraw_count++;
+        }
+        CHECK(mxraw_count == 4);
+
+        // Text replay — check Segments: 4 and index lines
+        auto text_out = run_cmd(q(exe) + " replay --input " + q(out_dir));
+        CHECK(text_out.find("Segments: 4") != std::string::npos);
+        CHECK(text_out.find("index=0") != std::string::npos);
+        CHECK(text_out.find("index=1") != std::string::npos);
+        CHECK(text_out.find("index=2") != std::string::npos);
+        CHECK(text_out.find("index=3") != std::string::npos);
+        CHECK(text_out.find("Records: 10") != std::string::npos);
+        CHECK(text_out.find("Payload Bytes: 320") != std::string::npos);
+
+        // JSON replay
+        rc = run_cmd_exit(q(exe) + " replay --input " + q(out_dir) +
+                          " --json-out " + q(json_path));
+        CHECK(rc == 0);
+        CHECK(fs::exists(json_path));
+
+        auto content = read_file(json_path);
+        CHECK(!content.empty());
+        auto root = cli_json::parse(content);
+        CHECK(root.type == cli_json::Value::Object);
+        CHECK(root["overall_status"].string_val == "valid");
+        CHECK(root["record_count"].number_val == 10.0);
+        CHECK(root["total_payload_bytes"].number_val == 320.0);
+
+        // segment_indexes must be [0,1,2,3]
+        CHECK(root["segment_indexes"].type == cli_json::Value::Array);
+        CHECK(root["segment_indexes"].size() == 4);
+        CHECK(root["segment_indexes"][0].number_val == 0.0);
+        CHECK(root["segment_indexes"][1].number_val == 1.0);
+        CHECK(root["segment_indexes"][2].number_val == 2.0);
+        CHECK(root["segment_indexes"][3].number_val == 3.0);
+
+        // segment_sizes must be 4 positive values
+        CHECK(root["segment_sizes"].type == cli_json::Value::Array);
+        CHECK(root["segment_sizes"].size() == 4);
+        for (std::size_t i = 0; i < 4; ++i) {
+            CHECK(root["segment_sizes"][i].number_val > 0.0);
+        }
+
+        // replay_sha256 must be a non-empty 64-char hex string
+        CHECK(root["replay_sha256"].type == cli_json::Value::String);
+        CHECK(root["replay_sha256"].string_val.size() == 64);
+    }
+
     std::cout << "test_cli: ALL PASSED\n";
     return 0;
 }
