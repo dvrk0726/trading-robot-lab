@@ -1,8 +1,8 @@
 # Roadmap
 
-Дата обновления: 2026-07-10  
+Дата обновления: 2026-07-11  
 Статус: gated engineering roadmap  
-Текущий gate: RT-2 specification review — Issue #18 / PR #19
+Текущий gate: RT-2 Round 10 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Главный порядок
 
@@ -110,34 +110,42 @@ RT-1 deliberately excluded network, binary FAST decoding, recovery, books and or
 Current status:
 
 ```text
-Issue #18: DRAFT
-Specification branch: docs/issue-18-rt2-raw-capture-replay-spec
-Specification PR: #19
-Implementation: not started
+Issue #18: READY_FOR_REVIEW (Round 10 corrections complete)
+Implementation PR: #20
+Branch: mimo/issue-18-rt2-raw-capture-replay
+Implementation commit: `088ceef`
+Implementation CI #68 (run 29143755544): ALL GREEN (7/7 jobs)
 ```
 
-Specification package:
+Delivered:
 
 ```text
-tasks/RT-2-raw-capture-replay-contract/00_OVERVIEW.md
-tasks/RT-2-raw-capture-replay-contract/01_REQUIREMENTS.md
-tasks/RT-2-raw-capture-replay-contract/02_TEST_PLAN.md
-tasks/RT-2-raw-capture-replay-contract/03_ACCEPTANCE.md
-```
-
-Planned scope after PR #19 is accepted and merged:
-
-```text
+C++20/CMake module: cpp/moex_raw/
 versioned immutable .mxraw binary segments;
 fixed-width little-endian manual serialization;
 logical source identity and explicit timestamp domains;
 local capture_index distinct from exchange sequence;
 CRC32C record/footer validation and SHA-256 provenance;
+incremental content SHA-256 (no fread on wb-stream);
 .partial -> finalized lifecycle;
-deterministic record/byte rotation;
-bounded streaming reader/validator;
-deterministic synthetic replay callback and digest;
-CLI plus Windows/Linux Release-active tests.
+deterministic record/byte rotation with first-record validation;
+bounded streaming reader/validator (no whole-file loading);
+canonical filename parsing and filename/content identity;
+full (session_id, source_id, channel_id) stream key;
+numeric sorting, duplicate/missing detection;
+full metadata/hash equality validation;
+monotonic timestamp enforcement across segment boundaries;
+per-stream independent summaries in reports;
+expanded report schema with format_version, source metadata, provenance hashes;
+strict ambiguity detection (matches.size() != 1 always fails);
+deterministic replay callback with MXREPLAY1 canonical digest;
+single streaming SHA-256 context in replay_stream();
+status classification: unsupported, partial, truncated, corrupt, I/O error;
+CLI with strict numeric/hex validation (reject negative/signed/whitespace);
+Release-active CHECK macros (active under NDEBUG);
+golden byte-vector and end-to-end SHA-256 tests;
+independent MXREPLAY1 golden digest test;
+Windows/Linux CI jobs (18 tests each);
 ```
 
 RT-2 non-goals:
@@ -242,11 +250,8 @@ Issue #17 preserves future SPECTRA FIX 4.4 session, order-control and Drop Copy 
 ## Immediate sequence
 
 ```text
-1. Complete architecture review of RT-2 specification PR #19.
-2. Owner reviews and approves or requests exact specification changes.
-3. Merge PR #19 only after acceptance.
-4. Move Issue #18 from DRAFT to READY_FOR_MIMO.
-5. Run the universal MiMo command once.
-6. MiMo implements RT-2 in a separate mimo/issue-18-* branch and PR.
-7. Do not start RT-3, network capture or FIX work during RT-2.
+1. Owner reviews RT-2 Round 10 corrections in PR #20.
+2. If accepted, merge PR #20.
+3. Move Issue #18 to DONE.
+4. Do not start RT-3 until RT-2 is DONE.
 ```

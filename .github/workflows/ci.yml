@@ -181,3 +181,69 @@ jobs:
 
       - name: Run all MOEX FAST inspector tests
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
+
+  cpp-moex-raw-windows:
+    name: C++ MOEX RAW Windows/MSVC (18 tests)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure moex_raw with MSVC
+        run: cmake -S cpp/moex_raw -B build/moex_raw -A x64
+
+      - name: Build moex_raw and tests
+        run: cmake --build build/moex_raw --config Release --parallel 2
+
+      - name: Verify expected test inventory
+        run: |
+          $output = ctest --test-dir build/moex_raw -C Release -N
+          if ($LASTEXITCODE -ne 0) {
+            throw "ctest inventory failed with exit code $LASTEXITCODE"
+          }
+          $line = $output | Select-String '^Total Tests:'
+          if (-not $line) {
+            throw 'CTest did not report Total Tests.'
+          }
+          $count = [int](($line.Line -split ':', 2)[1].Trim())
+          Write-Host "CTest inventory: $count"
+          if ($count -ne 18) {
+            throw "Expected 18 RT-2 tests, found $count"
+          }
+
+      - name: Run all RT-2 tests
+        run: ctest --test-dir build/moex_raw -C Release --output-on-failure
+
+  cpp-moex-raw-linux:
+    name: C++ MOEX RAW Linux/GCC (18 tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure moex_raw with GCC
+        run: cmake -S cpp/moex_raw -B build/moex_raw -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build moex_raw and tests
+        run: cmake --build build/moex_raw --config Release --parallel 2
+
+      - name: Verify expected test inventory
+        run: |
+          count=$(ctest --test-dir build/moex_raw -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
+          echo "CTest inventory: $count"
+          if [ "$count" -ne 18 ]; then
+            echo "Expected 18 RT-2 tests, found $count"
+            exit 1
+          fi
+
+      - name: Run all RT-2 tests
+        run: ctest --test-dir build/moex_raw -C Release --output-on-failure

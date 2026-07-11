@@ -59,6 +59,8 @@ data/orderbook/
 *.h5
 *.hdf5
 *.csv
+*.mxraw
+*.mxraw.partial
 
 # Safe sample data exceptions
 !data/README.md

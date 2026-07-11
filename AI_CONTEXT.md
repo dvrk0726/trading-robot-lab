@@ -1,8 +1,8 @@
 # AI Context
 
-Дата обновления: 2026-07-10  
+Дата обновления: 2026-07-11  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-2 specification review — Issue #18 / PR #19
+Текущий gate: RT-2 Round 10 corrections complete — Issue #18 / PR #20 READY_FOR_REVIEW
 
 ## Назначение проекта
 
@@ -134,39 +134,50 @@ Windows/Linux Release-active tests.
 
 RT-1 does not connect to MOEX or decode wire packets.
 
-## RT-2 — specification gate
+## RT-2 — Round 10 corrections complete
 
 ```text
-Issue #18: [MIMO][C++] RT-2 raw segment format and synthetic capture/replay
-Status: DRAFT
-Specification branch: docs/issue-18-rt2-raw-capture-replay-spec
-Specification PR: #19
-Implementation: not started
+Issue #18: READY_FOR_REVIEW
+Implementation PR: #20
+Branch: mimo/issue-18-rt2-raw-capture-replay
+Implementation commit: `088ceef`
+Implementation CI #68 (run 29143755544): ALL GREEN (7/7 jobs)
 ```
 
-Task package:
+Round 10 corrections delivered:
 
 ```text
-tasks/RT-2-raw-capture-replay-contract/00_OVERVIEW.md
-tasks/RT-2-raw-capture-replay-contract/01_REQUIREMENTS.md
-tasks/RT-2-raw-capture-replay-contract/02_TEST_PLAN.md
-tasks/RT-2-raw-capture-replay-contract/03_ACCEPTANCE.md
+replay report segment_indexes/segment_sizes: populate from validated,
+  canonically sorted metas after validate_stream_set; explicit error on
+  file_size failure; indexes [0,1,2,3] and four positive sizes confirmed;
+end-to-end rotated replay report test: synth 10 records --max-records 3,
+  replay text/JSON, assert 4 segments, indexes, sizes, Records=10,
+  Payload Bytes=320, non-empty replay_sha256, overall_status=valid;
+18/18 Release tests (Windows + Linux).
 ```
 
-RT-2 planned scope:
+Round 9 corrections delivered:
 
 ```text
-versioned immutable .mxraw binary segments;
-explicit little-endian manual serialization;
-logical source/timestamp/local capture-order contracts;
-.partial -> finalized lifecycle;
-deterministic record/byte rotation;
-bounded reader/validator;
-deterministic synthetic replay digest;
-no network and no FAST decode.
+partial-positive hash EOF tests: keep full backing buffer, inject stage-aware
+  partial-EOF via partial_content_hash_eof and partial_file_hash_eof flags;
+  first read returns positive partial, second read returns 0;
+  assert SegmentStatus::IoError, exact path, stage-specific message/code,
+  and read counter proving both reads at the required stage;
+end-to-end CLI test with directory and JSON paths containing spaces:
+  synth, inspect --json-out, replay all succeed; JSON parsed by strict parser;
+18/18 Release tests (Windows + Linux).
 ```
 
-RT-2 implementation must not begin until PR #19 is reviewed, owner-approved and merged, then Issue #18 moves to READY_FOR_MIMO.
+Test results:
+
+```text
+RT-2:         18/18 tests passed (Windows + Linux Release)
+RT-1:          6/6  tests passed (no regression)
+QSH/M10X:     20/20 tests passed (no regression)
+Python:         3/3  passed
+Hygiene:        PASS
+```
 
 ## Future FIX architecture
 
@@ -188,11 +199,8 @@ DONE
 ## Immediate actions
 
 ```text
-1. Review RT-2 specification PR #19.
-2. Correct specification only if architecture/safety gaps are found.
-3. Owner approves and merges PR #19.
-4. Move Issue #18 from DRAFT to READY_FOR_MIMO.
-5. Run the universal MiMo command once.
-6. MiMo implements in a new mimo/issue-18-* branch and stops at a separate PR.
-7. Do not start RT-3, network capture, FAST decoding or FIX work during RT-2.
+1. Owner reviews RT-2 Round 10 corrections in PR #20.
+2. If accepted, merge PR #20.
+3. Move Issue #18 to DONE.
+4. Do not start RT-3 until RT-2 is DONE.
 ```
