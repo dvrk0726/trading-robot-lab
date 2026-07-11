@@ -445,10 +445,15 @@ bool RawSegmentWriter::should_rotate(const RawPacketRecord& rec) const {
         return true;
     }
 
-    // Check byte limit
-    if (policy_.max_segment_bytes > 0 &&
-        new_file_bytes + kFooterSize > policy_.max_segment_bytes) {
-        return true;
+    // Check byte limit — use checked addition for footer-inclusive size
+    if (policy_.max_segment_bytes > 0) {
+        std::uint64_t total_with_footer = 0;
+        if (!checked_add_u64(new_file_bytes, kFooterSize, total_with_footer)) {
+            return true;  // overflow → force rotation
+        }
+        if (total_with_footer > policy_.max_segment_bytes) {
+            return true;
+        }
     }
 
     return false;
@@ -526,41 +531,66 @@ std::string RawSegmentWriter::finalize_current() {
 }
 
 std::string RawSegmentWriter::start_new_segment() {
+    // Construct candidate metadata/paths LOCALLY — do not commit to member state
+    // until open_write and header write both succeed.
     std::uint64_t next_seg;
     if (!checked_add_u64(current_segment_index_, 1, next_seg)) {
+        state_ = WriterState::Failed;
         return "segment_index overflow";
     }
-    current_segment_index_ = next_seg;
-    metadata_.segment_index = current_segment_index_;
-    metadata_.start_capture_index = next_capture_index_;
 
-    auto partial = current_partial_path();
-    auto final_path = current_final_path();
+    // Build candidate metadata (local copy, not yet committed)
+    RawSegmentMetadata candidate_meta = metadata_;
+    candidate_meta.segment_index = next_seg;
+    candidate_meta.start_capture_index = next_capture_index_;
 
-    if (fs_->exists(partial)) {
-        return "Partial file already exists for new segment: " + partial;
+    // Build candidate paths (local)
+    std::string candidate_partial = output_dir_ + "/" + canonical_filename(
+        candidate_meta.session.session_id,
+        candidate_meta.source.source_id,
+        candidate_meta.source.channel_id,
+        next_seg) + ".partial";
+    std::string candidate_final = output_dir_ + "/" + canonical_filename(
+        candidate_meta.session.session_id,
+        candidate_meta.source.source_id,
+        candidate_meta.source.channel_id,
+        next_seg);
+
+    if (fs_->exists(candidate_partial)) {
+        state_ = WriterState::Failed;
+        return "Partial file already exists for new segment: " + candidate_partial;
     }
-    if (fs_->exists(final_path)) {
-        return "Final file already exists for new segment: " + final_path;
+    if (fs_->exists(candidate_final)) {
+        state_ = WriterState::Failed;
+        return "Final file already exists for new segment: " + candidate_final;
     }
 
-    file_ = fs_->open_write(partial);
-    if (!file_) {
+    auto new_handle = fs_->open_write(candidate_partial);
+    if (!new_handle) {
+        state_ = WriterState::Failed;
         return "Cannot open new segment partial file";
     }
 
     // Initialize incremental content SHA-256 for new segment
-    sha256_init(content_sha_ctx_);
-    content_sha_initialized_ = true;
+    SHA256Ctx new_sha_ctx;
+    sha256_init(new_sha_ctx);
 
     // Write header for new segment and feed into SHA-256
-    content_buffer_.clear();
-    serialize_header(content_buffer_, metadata_);
+    std::vector<std::uint8_t> new_header_buf;
+    serialize_header(new_header_buf, candidate_meta);
 
-    if (file_->write(content_buffer_.data(), content_buffer_.size()) != content_buffer_.size()) {
+    if (new_handle->write(new_header_buf.data(), new_header_buf.size()) != new_header_buf.size()) {
         state_ = WriterState::Failed;
         return "Failed to write header for new segment";
     }
+
+    // --- All operations succeeded. Now commit state. ---
+    current_segment_index_ = next_seg;
+    metadata_ = candidate_meta;
+    file_ = std::move(new_handle);
+    content_sha_ctx_ = new_sha_ctx;
+    content_sha_initialized_ = true;
+    content_buffer_ = std::move(new_header_buf);
     sha256_update(content_sha_ctx_, content_buffer_.data(), content_buffer_.size());
     current_file_bytes_ = content_buffer_.size();
 

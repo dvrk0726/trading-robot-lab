@@ -2170,6 +2170,338 @@ int main() {
         CHECK(w.finalized_paths().empty());
     }
 
+    // ============================================================
+    // Round 8: Zero-byte failed header write (fail_write_at=1)
+    // Distinct from the short header write test above — this is a
+    // complete failure (0 bytes returned), not a short write.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        ScriptedFileSystem fs;
+
+        // Preconfigure: the header write (write #1 inside open()) returns 0 bytes
+        auto h = std::make_unique<ScriptedFileHandle>();
+        h->fail_write_at = 1;
+        fs.preconfigured_handle = std::move(h);
+
+        RawSegmentWriter w(meta, dir, {}, &fs);
+        auto err = w.open();
+        CHECK(!err.empty());
+        CHECK(w.state() == WriterState::Failed);
+        CHECK(w.finalized_paths().empty());
+    }
+
+    // ============================================================
+    // Round 8: Partial positive read followed by premature EOF
+    // for content SHA-256. The reader reads some bytes successfully
+    // in the content-hash stage, then the next read returns 0 (EOF).
+    // Strategy: load real data, but truncate it at a position that
+    // leaves remaining > 0 for the content hash read loop.
+    // The header+footer read stages use positions within the real data,
+    // but the content hash stage re-reads from position 0 to footer_offset.
+    // We truncate the data buffer to just past the header so the first
+    // content-hash chunk read succeeds but the second returns 0.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto path = create_valid_segment(dir);
+        bool ok = false;
+        auto real_size = DefaultFileSystem().file_size(path, ok);
+        CHECK(ok);
+
+        // Read real file to find header_size
+        std::vector<std::uint8_t> real_data(real_size);
+        {
+            std::ifstream ifs(path, std::ios::binary);
+            ifs.read(reinterpret_cast<char*>(real_data.data()), real_size);
+        }
+        std::uint32_t header_size = read_u32_le(real_data.data() + 10);
+
+        struct PartialContentHashFS : IFileSystem {
+            std::uint64_t sz;
+            std::string real_path;
+            std::uint32_t hdr_size;
+            bool exists(const std::string&) override { return true; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return sz; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override {
+                auto h = std::make_unique<ScriptedFileHandle>();
+                std::ifstream ifs(real_path, std::ios::binary);
+                h->data.resize(sz);
+                ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
+                // Truncate data: keep only header + footer, but leave content area
+                // shorter than footer_offset so the content hash loop hits EOF.
+                // The content hash reads from 0 to footer_offset (= sz - kFooterSize).
+                // We keep header_size + 16 bytes of content, then the footer.
+                // So the first content-hash read returns 16 bytes, second returns 0.
+                std::uint64_t footer_offset = sz - kFooterSize;
+                std::uint64_t keep_content = 16;  // partial content
+                std::uint64_t new_data_size = hdr_size + keep_content;
+                // Append the footer at the end (so footer seek/read works)
+                std::vector<std::uint8_t> footer_data(h->data.begin() + footer_offset,
+                                                       h->data.end());
+                h->data.resize(new_data_size);
+                h->data.insert(h->data.end(), footer_data.begin(), footer_data.end());
+                return h;
+            }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
+        };
+
+        PartialContentHashFS pfs;
+        pfs.sz = real_size;
+        pfs.real_path = path;
+        pfs.hdr_size = header_size;
+
+        RawSegmentMetadata vmeta;
+        RawFooter vfooter;
+        std::vector<RawValidationIssue> issues;
+        std::string ch, fh;
+        auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
+                                    nullptr, nullptr, nullptr, nullptr, &pfs);
+        // The reader uses file_size from the mock (real_size) to compute footer_offset,
+        // but the data buffer is shorter. When seeking to footer_offset, the seek
+        // succeeds (ScriptedFileHandle allows seeking past data.size()),
+        // but the content hash read from 0 will read hdr_size+16 bytes then return 0.
+        // This triggers the n==0 check → IoError.
+        CHECK(st == SegmentStatus::IoError);
+    }
+
+    // ============================================================
+    // Round 8: Partial positive read followed by premature EOF
+    // for whole-file SHA-256. Same pattern: load real data, truncate
+    // so the file hash loop hits EOF after partial read.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto path = create_valid_segment(dir);
+        bool ok = false;
+        auto real_size = DefaultFileSystem().file_size(path, ok);
+        CHECK(ok);
+
+        struct PartialFileHashFS : IFileSystem {
+            std::uint64_t sz;
+            std::string real_path;
+            bool exists(const std::string&) override { return true; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return sz; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override {
+                auto h = std::make_unique<ScriptedFileHandle>();
+                std::ifstream ifs(real_path, std::ios::binary);
+                h->data.resize(sz);
+                ifs.read(reinterpret_cast<char*>(h->data.data()), sz);
+                // Truncate data: keep only first 64 bytes. The file hash stage
+                // reads from 0 to file_size (= sz from mock). First read returns
+                // 64 bytes, second returns 0 → IoError.
+                h->data.resize(64);
+                return h;
+            }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override { return nullptr; }
+        };
+
+        PartialFileHashFS ffs;
+        ffs.sz = real_size;
+        ffs.real_path = path;
+
+        RawSegmentMetadata vmeta;
+        RawFooter vfooter;
+        std::vector<RawValidationIssue> issues;
+        std::string ch, fh;
+        auto st = validate_segment(path, vmeta, vfooter, issues, ch, fh,
+                                    nullptr, nullptr, nullptr, nullptr, &ffs);
+        // The content hash stage reads from 0 to footer_offset using the truncated
+        // data, which may or may not trigger IoError depending on sizes.
+        // But the file hash stage reads from 0 to file_size (real_size) and the
+        // data is only 64 bytes, so it will hit EOF → IoError.
+        CHECK(st == SegmentStatus::IoError);
+    }
+
+    // ============================================================
+    // Round 8: Rotation failure — target appears after preflight
+    // (race condition simulation). The writer preflight checks that
+    // the target doesn't exist, then exists() returns true during
+    // start_new_segment. Writer must end in Failed state.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentRotationPolicy pol;
+        pol.max_records_per_segment = 1;
+
+        // Custom filesystem: exists() returns false during preflight (append)
+        // but true during start_new_segment (different call context)
+        struct RaceFS : IFileSystem {
+            int exists_call_count = 0;
+            bool exists(const std::string&) override {
+                exists_call_count++;
+                // Call pattern: open() checks partial+final (calls 1,2).
+                // append() preflight checks new_partial+new_final (calls 3,4).
+                // start_new_segment checks candidate_partial+candidate_final (calls 5,6).
+                // Return true on calls 5,6 to simulate target appearing.
+                return exists_call_count >= 5;
+            }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return 0; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override { return nullptr; }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override {
+                return std::make_unique<ScriptedFileHandle>();
+            }
+        };
+
+        RaceFS rfs;
+        RawSegmentWriter w(meta, dir, pol, &rfs);
+        CHECK(w.open().empty());
+
+        // First record OK
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        rec.payload = {0x01};
+        CHECK(w.append(rec).empty());
+
+        // Second record triggers rotation — preflight passes but
+        // start_new_segment finds target exists (race)
+        rec.capture_index = 1;
+        rec.capture_monotonic_ns = 1000;
+        rec.payload = {0x02};
+        auto err = w.append(rec);
+        CHECK(!err.empty());
+        CHECK(w.state() == WriterState::Failed);
+    }
+
+    // ============================================================
+    // Round 8: Rotation failure — open_write fails for next segment.
+    // After finalize_current succeeds, open_write for new segment
+    // returns nullptr. Writer must be in Failed state.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentRotationPolicy pol;
+        pol.max_records_per_segment = 1;
+
+        // Custom filesystem: open_write fails on second call
+        struct FailOpenFS : IFileSystem {
+            int open_write_count = 0;
+            bool exists(const std::string&) override { return false; }
+            bool rename(const std::string&, const std::string&) override { return true; }
+            bool remove(const std::string&) override { return true; }
+            std::uint64_t file_size(const std::string&, bool& ok) override { ok = true; return 0; }
+            std::unique_ptr<IFileHandle> open_read(const std::string&) override { return nullptr; }
+            std::unique_ptr<IFileHandle> open_write(const std::string&) override {
+                open_write_count++;
+                if (open_write_count > 1) return nullptr;  // fail on second open
+                return std::make_unique<ScriptedFileHandle>();
+            }
+        };
+
+        FailOpenFS fofs;
+        RawSegmentWriter w(meta, dir, pol, &fofs);
+        CHECK(w.open().empty());
+
+        // First record OK
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        rec.payload = {0x01};
+        CHECK(w.append(rec).empty());
+
+        // Second record triggers rotation — finalize succeeds, open_write fails
+        rec.capture_index = 1;
+        rec.capture_monotonic_ns = 1000;
+        rec.payload = {0x02};
+        auto err = w.append(rec);
+        CHECK(!err.empty());
+        CHECK(w.state() == WriterState::Failed);
+        // The first segment was finalized before the failure
+        CHECK(w.finalized_paths().size() == 1);
+    }
+
+    // ============================================================
+    // Round 8: should_rotate() focused boundary test
+    // Verifies checked_add_u64 for footer-inclusive size.
+    // Set max_segment_bytes to exactly current_file_bytes + record + kFooterSize - 1
+    // so the footer-inclusive check triggers rotation.
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentRotationPolicy pol;
+        pol.max_records_per_segment = 0;  // no record limit
+
+        // Compute header + first record + footer = exact segment size
+        std::vector<std::uint8_t> hdr;
+        serialize_header(hdr, meta);
+        // Record: kRecordHeaderSize + 1 byte payload + 4 bytes CRC = kRecordHeaderSize + 5
+        std::uint64_t first_record_size = kRecordHeaderSize + 1 + 4;
+        // Exact fit: header + first_record + footer
+        pol.max_segment_bytes = hdr.size() + first_record_size + kFooterSize;
+
+        RawSegmentWriter w(meta, dir, pol);
+        CHECK(w.open().empty());
+
+        // First record fits exactly
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        rec.payload = {0x01};
+        CHECK(w.append(rec).empty());
+
+        // Second record: current_file_bytes + record + footer > max_segment_bytes
+        // should_rotate returns true, triggering rotation
+        rec.capture_index = 1;
+        rec.capture_monotonic_ns = 1000;
+        rec.payload = {0x02};
+        CHECK(w.append(rec).empty());
+        CHECK(w.finalized_paths().size() == 1);
+
+        // Third record also triggers rotation (same byte limit applies)
+        rec.capture_index = 2;
+        rec.capture_monotonic_ns = 2000;
+        rec.payload = {0x03};
+        CHECK(w.append(rec).empty());
+        CHECK(w.finalized_paths().size() == 2);
+
+        w.finalize();
+        CHECK(w.finalized_paths().size() == 3);
+    }
+
+    // ============================================================
+    // Round 8: should_rotate() boundary — exact fit does NOT rotate
+    // max_segment_bytes = header + record + footer (exact) → no rotation
+    // ============================================================
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentRotationPolicy pol;
+        pol.max_records_per_segment = 0;
+
+        std::vector<std::uint8_t> hdr;
+        serialize_header(hdr, meta);
+        std::uint64_t one_record_size = kRecordHeaderSize + 1 + 4;
+        // header + 2 records + footer = exact fit for 2 records
+        pol.max_segment_bytes = hdr.size() + 2 * one_record_size + kFooterSize;
+
+        RawSegmentWriter w(meta, dir, pol);
+        CHECK(w.open().empty());
+
+        // Both records fit without rotation
+        for (std::uint64_t i = 0; i < 2; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i * 1000;
+            rec.payload = {0x01};
+            CHECK(w.append(rec).empty());
+        }
+        CHECK(w.finalized_paths().empty());  // no rotation
+
+        w.finalize();
+        CHECK(w.finalized_paths().size() == 1);
+    }
+
     std::cout << "test_round6: ALL PASSED\n";
     return 0;
 }
