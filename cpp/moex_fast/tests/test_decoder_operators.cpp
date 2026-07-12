@@ -158,11 +158,45 @@ static void test_constant_operator() {
     TEST_PASS("constant_operator");
 }
 
+// Test: optional decimal field - proves Decimal call site uses ordinary i64 mantissa
+static void test_optional_decimal_regression() {
+    // Template id 10, one optional decimal field (exponent + mantissa).
+    // Message: E0 8A 81 81
+    // pmap E0 = 11100000: tmpl-id present, decimal field present
+    // tmpl-id = 10 = 0x8A
+    // decimal: nullable exponent [81] = non-null 0, ordinary mantissa [81] = 1
+    // Before the fix, mantissa was decoded as nullable i64, so [81] -> value 0 (not 1).
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="DecimalMsg">
+    <decimal name="Price" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+    auto msg = hex("E0" "8A" "81" "81");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(msg.data(), msg.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.template_id, 10u);
+    CHECK_EQ(r.message.fields.size(), 1u);
+
+    auto& field = r.message.fields[0];
+    CHECK(!field.is_null);
+    auto& dd = std::get<DecodedDecimal>(field.value);
+    CHECK_EQ(dd.exponent, 0);
+    CHECK_EQ(dd.mantissa, 1);
+
+    TEST_PASS("optional_decimal_regression");
+}
+
 int main() {
     test_default_operator();
     test_copy_operator();
     test_increment_operator();
     test_constant_operator();
+    test_optional_decimal_regression();
     std::cout << "All decoder operator tests passed.\n";
     return 0;
 }

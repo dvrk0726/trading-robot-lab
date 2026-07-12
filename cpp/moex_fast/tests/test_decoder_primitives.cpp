@@ -1261,12 +1261,21 @@ static void test_nullable_ascii() {
 
 // --- Decimal tests ---
 static void test_decimal() {
-    // Decimal: exponent=2, mantissa=5000
-    // Exponent 2 as non-nullable stopbit: 0x82
-    // Mantissa 5000 stopbit: 5000 = 0x1388
-    // 5000 >> 7 = 39, 5000 & 0x7F = 8
-    // 39 >> 7 = 0, 39 & 0x7F = 39
-    // Bytes: 0x27 (39, no stop), 0x88 (8, stop)
+    // ========== Success: mandatory ==========
+    // mandatory [80 80] -> exponent 0, mantissa 0
+    {
+        auto bytes = make_bytes({0x80, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 99;
+        std::int64_t man = 99;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(exp, 0);
+        CHECK_EQ(man, 0);
+        CHECK_EQ(c.position(), 2u);
+    }
+    // mandatory [82 27 88] -> exponent 2, mantissa 5000
     {
         auto bytes = make_bytes({0x82, 0x27, 0x88});
         WireCursor c(bytes.data(), bytes.size());
@@ -1277,18 +1286,229 @@ static void test_decimal() {
         CHECK(!is_null);
         CHECK_EQ(exp, 2);
         CHECK_EQ(man, 5000);
+        CHECK_EQ(c.position(), 3u);
     }
-    // Null decimal: exponent starts with wire [80] (nullable i32 null)
+    // mandatory [FE 00 60 B9] -> exponent -2, mantissa 12345
     {
-        auto bytes = make_bytes({0x80});
+        auto bytes = make_bytes({0xFE, 0x00, 0x60, 0xB9});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0;
+        std::int64_t man = 0;
+        bool is_null = false;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(exp, -2);
+        CHECK_EQ(man, 12345);
+        CHECK_EQ(c.position(), 4u);
+    }
+    // mandatory [80 FF] -> exponent 0, mantissa -1
+    {
+        auto bytes = make_bytes({0x80, 0xFF});
         WireCursor c(bytes.data(), bytes.size());
         std::int32_t exp = 99;
         std::int64_t man = 99;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(exp, 0);
+        CHECK_EQ(man, -1);
+        CHECK_EQ(c.position(), 2u);
+    }
+
+    // ========== Success: nullable non-NULL ==========
+    // nullable non-NULL [81 81] -> exponent 0, mantissa 1
+    {
+        auto bytes = make_bytes({0x81, 0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 99;
+        std::int64_t man = 99;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, true, false) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(exp, 0);
+        CHECK_EQ(man, 1);
+        CHECK_EQ(c.position(), 2u);
+    }
+    // nullable non-NULL [83 27 88] -> exponent 2, mantissa 5000
+    {
+        auto bytes = make_bytes({0x83, 0x27, 0x88});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0;
+        std::int64_t man = 0;
+        bool is_null = false;
+        CHECK(c.read_decimal(exp, man, is_null, true, false) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(exp, 2);
+        CHECK_EQ(man, 5000);
+        CHECK_EQ(c.position(), 3u);
+    }
+
+    // ========== Success: nullable NULL cursor ==========
+    // nullable NULL [80 AA]: Ok, is_null=true, caller exponent/mantissa unchanged, position=1, next=AA
+    {
+        auto bytes = make_bytes({0x80, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
         bool is_null = false;
         CHECK(c.read_decimal(exp, man, is_null, true, false) == DecodeStatus::Ok);
         CHECK(is_null);
-        // Mantissa NOT consumed
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
         CHECK_EQ(c.position(), 1u);
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xAAu);
+    }
+
+    // ========== Success: exact consumption ==========
+    // mandatory [82 81 AA]: exponent=2, mantissa=1, position=2, next=AA
+    {
+        auto bytes = make_bytes({0x82, 0x81, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0;
+        std::int64_t man = 0;
+        bool is_null = false;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(exp, 2);
+        CHECK_EQ(man, 1);
+        CHECK_EQ(c.position(), 2u);
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xAAu);
+    }
+
+    // ========== Error/atomicity: sentinels prefilled, position=0, all outputs unchanged ==========
+    // empty input -> NeedMoreData
+    {
+        WireCursor c(nullptr, 0);
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+    // truncated exponent [01] -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x01});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+    // non-canonical exponent [00 80] -> NonCanonicalEncoding
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+    // overflowing ordinary exponent [08 00 00 00 80] -> IntegerOverflow
+    {
+        auto bytes = make_bytes({0x08, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+    // valid exponent with missing mantissa [82] -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x82});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+    // valid exponent with truncated mantissa [82 27] -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x82, 0x27});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+    // valid exponent with non-canonical mantissa [82 00 80] -> NonCanonicalEncoding
+    {
+        auto bytes = make_bytes({0x82, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+    // valid exponent with overflowing positive i64 mantissa [82 01 00 00 00 00 00 00 00 00 80] -> IntegerOverflow
+    {
+        auto bytes = make_bytes({0x82, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, false) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+    // nullable non-NULL exponent with missing mantissa [81] -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, true, false) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
+    }
+
+    // ========== mantissa_nullable=true -> UnsupportedTemplateFeature ==========
+    {
+        auto bytes = make_bytes({0x82, 0x88});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t exp = 0x7FFFFFFF;
+        std::int64_t man = 0x7FFFFFFFFFFFFFFF;
+        bool is_null = true;
+        CHECK(c.read_decimal(exp, man, is_null, false, true) == DecodeStatus::UnsupportedTemplateFeature);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(exp, 0x7FFFFFFF);
+        CHECK_EQ(man, 0x7FFFFFFFFFFFFFFF);
+        CHECK(is_null);
     }
     TEST_PASS("decimal");
 }

@@ -918,35 +918,45 @@ DecodeStatus WireCursor::read_nullable_byte_vector(std::vector<std::uint8_t>& ou
 // --- Decimal (FIX FAST 1.1, section 6.3.7) ---
 // Exponent (i32) then mantissa (i64), each with own operator.
 // If exponent nullable and null => whole decimal null, mantissa NOT consumed.
+// mantissa_nullable=true is non-normative: UnsupportedTemplateFeature before reading input.
+// All decoding uses local temporaries; caller outputs published only after full success.
+// On any error, cursor restored and caller exponent/mantissa/is_null unchanged.
 DecodeStatus WireCursor::read_decimal(std::int32_t& exponent, std::int64_t& mantissa, bool& is_null,
                                        bool exponent_nullable, bool mantissa_nullable) {
+    // Non-normative: reject mantissa_nullable before consuming any input
+    if (mantissa_nullable) {
+        return DecodeStatus::UnsupportedTemplateFeature;
+    }
+
     std::size_t start = pos_;
 
-    // Read exponent
+    // Decode exponent into local temporaries
+    std::int32_t tmp_exp = 0;
+    bool tmp_null = false;
+
     if (exponent_nullable) {
-        DecodeStatus st = read_nullable_i32(exponent, is_null);
+        DecodeStatus st = read_nullable_i32(tmp_exp, tmp_null);
         if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-        if (is_null) {
-            // Null exponent => null decimal, mantissa NOT consumed
+        if (tmp_null) {
+            // Null exponent => null decimal, mantissa NOT consumed.
+            // Publish only is_null; leave caller exponent/mantissa unchanged.
+            is_null = true;
             return DecodeStatus::Ok;
         }
     } else {
-        is_null = false;
-        DecodeStatus st = read_stopbit_i32(exponent);
+        DecodeStatus st = read_stopbit_i32(tmp_exp);
         if (st != DecodeStatus::Ok) { pos_ = start; return st; }
     }
 
-    // Read mantissa
-    if (mantissa_nullable) {
-        bool man_null = false;
-        DecodeStatus st = read_nullable_i64(mantissa, man_null);
-        if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-        if (man_null) mantissa = 0;
-    } else {
-        DecodeStatus st = read_stopbit_i64(mantissa);
-        if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-    }
+    // Decode mantissa into local temporary (always ordinary non-nullable i64)
+    std::int64_t tmp_man = 0;
+    DecodeStatus st = read_stopbit_i64(tmp_man);
+    if (st != DecodeStatus::Ok) { pos_ = start; return st; }
 
+    // Full success: publish all outputs
+    exponent = tmp_exp;
+    mantissa = tmp_man;
+    is_null = false;
     return DecodeStatus::Ok;
 }
 

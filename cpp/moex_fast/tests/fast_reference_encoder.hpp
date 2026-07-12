@@ -3,7 +3,9 @@
 // This file must NOT be included by any production code.
 // It does NOT use WireCursor, fast_decoder, or any production encoding helpers.
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -304,21 +306,21 @@ inline void encode_nullable_byte_vector(std::vector<std::uint8_t>& buf,
 // ---------- Decimal ----------
 // Non-nullable decimal: exponent as non-nullable stopbit i32, mantissa as non-nullable stopbit i64.
 // Nullable decimal: exponent as nullable i32 (null = whole decimal is null, no mantissa consumed).
+// mantissa_nullable=true is non-normative and must not be used; the test encoder hard-rejects it.
 inline void encode_decimal(std::vector<std::uint8_t>& buf,
                            std::int32_t exponent, std::int64_t mantissa,
                            bool exponent_nullable, bool mantissa_nullable) {
+    // mantissa_nullable is non-normative: must never be true in test wire generation
+    if (mantissa_nullable) {
+        std::cerr << "FATAL: encode_decimal called with mantissa_nullable=true (non-normative)\n";
+        std::abort();
+    }
     if (exponent_nullable) {
-        // If the whole decimal is null, exponent is null.
-        // For this oracle, we assume non-null unless caller passes is_null.
         encode_nullable_i32(buf, exponent, false);
     } else {
         encode_stopbit_i32(buf, exponent);
     }
-    if (mantissa_nullable) {
-        encode_nullable_i64(buf, mantissa, false);
-    } else {
-        encode_stopbit_i64(buf, mantissa);
-    }
+    encode_stopbit_i64(buf, mantissa);
 }
 
 // Null decimal (nullable exponent). Exponent NULL [80], no mantissa consumed.

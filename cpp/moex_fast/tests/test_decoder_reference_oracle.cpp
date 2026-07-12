@@ -684,39 +684,52 @@ static void test_byte_vector() {
 
 // --- Decimal ---
 static void test_decimal() {
-    // exponent=2, mantissa=5000 (non-nullable exponent, non-nullable mantissa)
-    // exponent stopbit(2)=0x82, mantissa stopbit(5000)
-    // 5000 = 0x1388, encoded: 0x27 0x88
-    {
-        byte_vec expected{0x82, 0x27, 0x88};
-        byte_vec actual; encode_decimal(actual, 2, 5000, false, false);
-        CHECK_BYTES(actual, expected);
-    }
-    // exponent=0, mantissa=0
-    // exponent stopbit(0)=0x80, mantissa stopbit(0)=0x80
+    // --- Mandatory success vectors ---
+    // exponent=0, mantissa=0 -> [80 80]
     {
         byte_vec expected{0x80, 0x80};
         byte_vec actual; encode_decimal(actual, 0, 0, false, false);
         CHECK_BYTES(actual, expected);
     }
-    // exponent=-2, mantissa=12345
-    // exponent stopbit(-2) -> 0xFE (1 byte, raw i32 bottom 7 bits)
-    // mantissa stopbit(12345): 12345 = 0x3039, 3 bytes -> groups MSB first: 0x00, 0x60, 0xB9
+    // exponent=2, mantissa=5000 -> [82 27 88]
+    {
+        byte_vec expected{0x82, 0x27, 0x88};
+        byte_vec actual; encode_decimal(actual, 2, 5000, false, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // exponent=-2, mantissa=12345 -> [FE 00 60 B9]
     {
         byte_vec expected{0xFE, 0x00, 0x60, 0xB9};
         byte_vec actual; encode_decimal(actual, -2, 12345, false, false);
         CHECK_BYTES(actual, expected);
     }
+    // exponent=0, mantissa=-1 -> [80 FF]
+    {
+        byte_vec expected{0x80, 0xFF};
+        byte_vec actual; encode_decimal(actual, 0, -1, false, false);
+        CHECK_BYTES(actual, expected);
+    }
+
+    // --- Nullable non-NULL success vectors ---
+    // nullable exponent=0, mantissa=1 -> [81 81]
+    // nullable stopbit(0+1)=stopbit(1)=0x81, ordinary stopbit(1)=0x81
+    {
+        byte_vec expected{0x81, 0x81};
+        byte_vec actual; encode_decimal(actual, 0, 1, true, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // nullable exponent=2, mantissa=5000 -> [83 27 88]
+    {
+        byte_vec expected{0x83, 0x27, 0x88};
+        byte_vec actual; encode_decimal(actual, 2, 5000, true, false);
+        CHECK_BYTES(actual, expected);
+    }
+
+    // --- Nullable NULL ---
     // Null decimal (nullable exponent) -> [80] (nullable i32 null, no mantissa)
     {
         byte_vec expected{0x80};
         byte_vec actual; encode_null_decimal(actual);
-        CHECK_BYTES(actual, expected);
-    }
-    // Nullable exponent, non-null: exponent=2 -> nullable stopbit(2+1)=stopbit(3)=0x83
-    {
-        byte_vec expected{0x83, 0x27, 0x88};
-        byte_vec actual; encode_decimal(actual, 2, 5000, true, false);
         CHECK_BYTES(actual, expected);
     }
     TEST_PASS("decimal");

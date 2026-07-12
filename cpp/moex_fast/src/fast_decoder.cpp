@@ -317,7 +317,7 @@ struct DecoderSession::Impl {
                 std::int64_t man = 0;
                 bool is_null = false;
                 DecodeStatus st = ctx.cursor.read_decimal(exp, man, is_null,
-                                                          !is_mandatory, !is_mandatory);
+                                                          !is_mandatory, false);
                 if (st != DecodeStatus::Ok) return st;
                 if (is_null) {
                     out.is_null = true;
@@ -935,6 +935,8 @@ struct DecoderSession::Impl {
         }
 
         // Decode mantissa using its own operator
+        // FIX FAST 1.1: mantissa is always an ordinary non-nullable i64.
+        // Nullable exponent indicates null decimal; mantissa is present iff exponent non-NULL.
         switch (field.mantissa_op.kind) {
             case OpKind::None:
             case OpKind::Copy:
@@ -943,17 +945,9 @@ struct DecoderSession::Impl {
             case OpKind::Delta:
             case OpKind::Tail:
             default: {
-                if (field.is_mandatory) {
-                    DecodeStatus st = ctx.cursor.read_stopbit_i64(mantissa);
-                    if (st != DecodeStatus::Ok) return st;
-                } else {
-                    bool is_null = false;
-                    DecodeStatus st = ctx.cursor.read_nullable_i64(mantissa, is_null);
-                    if (st != DecodeStatus::Ok) return st;
-                    if (is_null) {
-                        mantissa = 0;
-                    }
-                }
+                DecodeStatus st = ctx.cursor.read_stopbit_i64(mantissa);
+                if (st != DecodeStatus::Ok) return st;
+
                 DictValue dv;
                 dv.defined = true;
                 dv.int_val = mantissa;
