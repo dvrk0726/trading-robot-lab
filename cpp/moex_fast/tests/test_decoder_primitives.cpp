@@ -979,12 +979,12 @@ static void test_presence_map() {
         CHECK_EQ(sentinel, 0xAAu);
     }
     // Default limit exhaustion: exactly 64 continuation bytes without stop bit
-    // -> LimitExceeded, cursor rollback, output unchanged
+    // -> LimitExceeded at default max_pmap_bytes=64, cursor rollback, output unchanged
     {
         std::vector<std::uint8_t> bytes(64, 0x00);
         WireCursor c(bytes.data(), bytes.size());
         std::vector<bool> out{true};
-        CHECK(c.read_presence_map(1, out, 63) == DecodeStatus::LimitExceeded);
+        CHECK(c.read_presence_map(1, out) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
         CHECK_EQ(out.size(), 1u);
         CHECK_EQ(out[0], true);
