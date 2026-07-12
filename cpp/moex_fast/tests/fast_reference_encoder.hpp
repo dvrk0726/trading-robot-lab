@@ -18,19 +18,31 @@ inline void push_byte(std::vector<std::uint8_t>& buf, std::uint8_t b) {
 // ---------- Presence map ----------
 // Encodes `bit_count` bits (MSB first) into stop-bit-terminated bytes.
 // bits[i] = true means the bit is SET (1).
+// Minimal encoding: trailing all-zero 7-bit groups are stripped.
+// Always emits at least one byte (stop bit only for empty/all-zero maps).
 inline void encode_presence_map(std::vector<std::uint8_t>& buf,
                                 const bool* bits, std::size_t bit_count) {
-    std::size_t byte_count = (bit_count + 6) / 7;  // ceil(bit_count/7)
-    for (std::size_t b = 0; b < byte_count; ++b) {
+    // Find the last set bit to determine the effective group count.
+    std::size_t last_true = 0;
+    bool has_true = false;
+    for (std::size_t i = bit_count; i > 0; --i) {
+        if (bits[i - 1]) { last_true = i - 1; has_true = true; break; }
+    }
+    // Groups of 7 bits; strip trailing all-zero groups.
+    std::size_t eff = has_true ? (last_true / 7 + 1) : 0;
+    if (eff == 0) {
+        buf.push_back(0x80);  // stop bit only
+        return;
+    }
+    for (std::size_t g = 0; g < eff; ++g) {
         std::uint8_t byte_val = 0;
-        bool is_last = (b == byte_count - 1);
         for (int bit = 0; bit < 7; ++bit) {
-            std::size_t idx = b * 7 + bit;
+            std::size_t idx = g * 7 + bit;
             if (idx < bit_count && bits[idx]) {
                 byte_val |= static_cast<std::uint8_t>(1u << (6 - bit));
             }
         }
-        if (is_last) byte_val |= 0x80;  // stop bit
+        if (g == eff - 1) byte_val |= 0x80;  // stop bit on last group
         buf.push_back(byte_val);
     }
 }
@@ -38,21 +50,30 @@ inline void encode_presence_map(std::vector<std::uint8_t>& buf,
 inline void encode_presence_map(std::vector<std::uint8_t>& buf,
                                 const std::vector<bool>& bits) {
     if (bits.empty()) {
-        buf.push_back(0x80);  // stop bit only, zero data bits
+        buf.push_back(0x80);  // stop bit only
+        return;
+    }
+    // Find the last set bit to determine the effective group count.
+    std::size_t last_true = 0;
+    bool has_true = false;
+    for (std::size_t i = bits.size(); i > 0; --i) {
+        if (bits[i - 1]) { last_true = i - 1; has_true = true; break; }
+    }
+    std::size_t eff = has_true ? (last_true / 7 + 1) : 0;
+    if (eff == 0) {
+        buf.push_back(0x80);  // stop bit only
         return;
     }
     std::size_t bit_count = bits.size();
-    std::size_t byte_count = (bit_count + 6) / 7;
-    for (std::size_t b = 0; b < byte_count; ++b) {
+    for (std::size_t g = 0; g < eff; ++g) {
         std::uint8_t byte_val = 0;
-        bool is_last = (b == byte_count - 1);
         for (int bit = 0; bit < 7; ++bit) {
-            std::size_t idx = b * 7 + bit;
+            std::size_t idx = g * 7 + bit;
             if (idx < bit_count && bits[idx]) {
                 byte_val |= static_cast<std::uint8_t>(1u << (6 - bit));
             }
         }
-        if (is_last) byte_val |= 0x80;
+        if (g == eff - 1) byte_val |= 0x80;  // stop bit on last group
         buf.push_back(byte_val);
     }
 }

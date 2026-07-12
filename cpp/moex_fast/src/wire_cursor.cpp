@@ -602,28 +602,37 @@ DecodeStatus WireCursor::read_nullable_i64(std::int64_t& out, bool& is_null) {
 
 // --- Presence map (FIX FAST 1.1, section 6.3.1) ---
 // Stop-bit terminated. MUST find stop bit even if requested bits already filled.
-// Implicit zero bits after transmitted bits where FAST permits.
+// Minimal encoding: trailing all-zero 7-bit groups are implicit.
+// max_pmap_bytes limits transmitted wire bytes, not logical pmap_bits.
+// Cursor and output are atomic: on any failure both remain unchanged.
+// FAST 1.1 ERR R7: multi-byte map whose terminating 7-bit group data bits
+// are zero is overlong (non-canonical). Canonical all-zero is [80].
 DecodeStatus WireCursor::read_presence_map(std::size_t pmap_bits, std::vector<bool>& out_bits,
                                             std::size_t max_pmap_bytes) {
     std::size_t start = pos_;
-    if (pmap_bits > max_pmap_bytes * 7) return DecodeStatus::LimitExceeded;
 
-    out_bits.clear();
-    out_bits.reserve(pmap_bits);
+    // Zero-byte limit: cannot read any wire bytes.
+    if (max_pmap_bytes == 0) return DecodeStatus::LimitExceeded;
+
+    std::vector<bool> tmp;
+    tmp.reserve(pmap_bits);
     std::size_t bytes_read = 0;
     bool terminated = false;
 
     while (!terminated) {
+        // Check limit before reading: if we already consumed max_pmap_bytes
+        // continuation bytes without a stop bit, completing the map would
+        // require exceeding the limit.
+        if (bytes_read >= max_pmap_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
         if (pos_ >= size_) { pos_ = start; return DecodeStatus::NeedMoreData; }
+
         std::uint8_t b = data_[pos_++];
         ++bytes_read;
 
-        if (bytes_read > max_pmap_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
-
         // Extract 7 data bits, MSB first (bit 6 down to bit 0)
         for (int i = 6; i >= 0; --i) {
-            if (out_bits.size() < pmap_bits) {
-                out_bits.push_back((b >> i) & 1);
+            if (tmp.size() < pmap_bits) {
+                tmp.push_back((b >> i) & 1);
             }
         }
 
@@ -633,10 +642,24 @@ DecodeStatus WireCursor::read_presence_map(std::size_t pmap_bits, std::vector<bo
     }
 
     // Pad with implicit zeros if terminated before all bits consumed
-    while (out_bits.size() < pmap_bits) {
-        out_bits.push_back(false);
+    while (tmp.size() < pmap_bits) {
+        tmp.push_back(false);
     }
 
+    // FAST 1.1 ERR R7: multi-byte map with zero terminating group is overlong.
+    // The canonical all-zero map is single byte [80].
+    if (bytes_read > 1) {
+        bool all_zero = true;
+        // Check the last 7 transmitted data bits (the terminating group).
+        std::size_t group_start = (bytes_read - 1) * 7;
+        for (std::size_t i = group_start; i < group_start + 7 && i < tmp.size(); ++i) {
+            if (tmp[i]) { all_zero = false; break; }
+        }
+        if (all_zero) { pos_ = start; return DecodeStatus::NonCanonicalEncoding; }
+    }
+
+    // Success: commit result.
+    out_bits = std::move(tmp);
     return DecodeStatus::Ok;
 }
 

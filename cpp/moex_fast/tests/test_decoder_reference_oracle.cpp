@@ -42,61 +42,73 @@ static void check_bytes(const byte_vec& actual, const byte_vec& expected,
 
 // --- Presence map ---
 static void test_presence_map() {
-    // Single byte, 7 bits: 0110000 with stop -> 0xB0
+    // Empty map -> [80] (stop bit only)
     {
-        byte_vec expected{0xB0};
-        bool bits[] = {false, true, true, false, false, false, false};
+        byte_vec expected{0x80};
         byte_vec actual;
-        encode_presence_map(actual, bits, 7);
-        CHECK_EQ(actual.size(), expected.size());
-        CHECK_EQ(actual[0], expected[0]);
-        TEST_PASS("pmap 7 bits single byte");
+        encode_presence_map(actual, (const bool*)nullptr, 0);
+        CHECK_BYTES(actual, expected);
     }
-    // Two bytes: 7 ones + 5 zeros, 12 bits
-    // byte0=0x7F (no stop), byte1=0x80 (stop, 5 data zeros)
-    {
-        byte_vec expected{0x7F, 0x80};
-        bool bits[12];
-        for (int i = 0; i < 7; ++i) bits[i] = true;
-        for (int i = 7; i < 12; ++i) bits[i] = false;
-        byte_vec actual;
-        encode_presence_map(actual, bits, 12);
-        CHECK_EQ(actual.size(), 2u);
-        CHECK_EQ(actual[0], expected[0]);
-        CHECK_EQ(actual[1], expected[1]);
-        TEST_PASS("pmap 12 bits two bytes");
-    }
-    // All zeros, 3 bits: first byte stop, data=0000000 -> 0x80
+    // All zeros, 3 bits -> [80] (stop bit only, trailing groups stripped)
     {
         byte_vec expected{0x80};
         bool bits[] = {false, false, false};
         byte_vec actual;
         encode_presence_map(actual, bits, 3);
-        CHECK_EQ(actual.size(), 1u);
-        CHECK_EQ(actual[0], expected[0]);
-        TEST_PASS("pmap 3 bits all zero");
+        CHECK_BYTES(actual, expected);
     }
-    // 14 bits all zero: needs 2 bytes (ceil(14/7)=2)
-    // byte0=0x00 (no stop), byte1=0x80 (stop)
+    // 14 bits all zero -> [80] (stop bit only)
     {
-        byte_vec expected{0x00, 0x80};
+        byte_vec expected{0x80};
         bool bits[14] = {};
         byte_vec actual;
         encode_presence_map(actual, bits, 14);
-        CHECK_EQ(actual.size(), 2u);
-        CHECK_EQ(actual[0], expected[0]);
-        CHECK_EQ(actual[1], expected[1]);
-        TEST_PASS("pmap 14 bits all zero");
+        CHECK_BYTES(actual, expected);
     }
-    // All ones, 7 bits: 0xFF
+    // Pattern 0110000, 7 bits -> [B0]
+    {
+        byte_vec expected{0xB0};
+        bool bits[] = {false, true, true, false, false, false, false};
+        byte_vec actual;
+        encode_presence_map(actual, bits, 7);
+        CHECK_BYTES(actual, expected);
+    }
+    // Seven ones + zero suffix, 12 bits -> [FF]
+    {
+        byte_vec expected{0xFF};
+        bool bits[12];
+        for (int i = 0; i < 7; ++i) bits[i] = true;
+        for (int i = 7; i < 12; ++i) bits[i] = false;
+        byte_vec actual;
+        encode_presence_map(actual, bits, 12);
+        CHECK_BYTES(actual, expected);
+    }
+    // Seven ones, 7 bits -> [FF]
     {
         byte_vec expected{0xFF};
         bool bits[] = {true, true, true, true, true, true, true};
         byte_vec actual;
         encode_presence_map(actual, bits, 7);
-        CHECK_EQ(actual.size(), 1u);
-        CHECK_EQ(actual[0], expected[0]);
-        TEST_PASS("pmap 7 bits all one");
+        CHECK_BYTES(actual, expected);
+    }
+    // Cross-byte eighth bit, 8 bits -> [00 C0]
+    {
+        byte_vec expected{0x00, 0xC0};
+        bool bits[8] = {};
+        bits[7] = true;
+        byte_vec actual;
+        encode_presence_map(actual, bits, 8);
+        CHECK_BYTES(actual, expected);
+    }
+    // Two-byte with non-zero second group, 10 bits -> [7F C0]
+    {
+        byte_vec expected{0x7F, 0xC0};
+        bool bits[10];
+        for (int i = 0; i < 7; ++i) bits[i] = true;
+        bits[7] = true; bits[8] = false; bits[9] = false;
+        byte_vec actual;
+        encode_presence_map(actual, bits, 10);
+        CHECK_BYTES(actual, expected);
     }
 }
 

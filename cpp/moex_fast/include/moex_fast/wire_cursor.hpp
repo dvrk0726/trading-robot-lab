@@ -52,9 +52,13 @@ public:
 
     // Presence map: stop-bit terminated byte sequence (FIX FAST 1.1, section 6.3.1).
     // Each byte: bit 7 = stop bit (1 = last), bits 6..0 = data (MSB first).
-    // Map MUST be terminated by a stop bit; unterminated => error.
-    // Implicit zero bits after transmitted bits where FAST permits.
-    // On failure cursor is unchanged (position restored).
+    // Map MUST contain a stop bit; unterminated => NeedMoreData.
+    // Minimal encoding: trailing all-zero 7-bit groups are implicit.
+    // Implicit zero suffix: missing bits after stop bit filled with false.
+    // max_pmap_bytes limits transmitted wire bytes, not logical pmap_bits.
+    // Cursor and output are atomic: on any failure both remain unchanged.
+    // FAST 1.1 ERR R7: multi-byte map whose terminating 7-bit group data
+    // bits are all zero is overlong (NonCanonicalEncoding).
     DecodeStatus read_presence_map(std::size_t pmap_bits, std::vector<bool>& out_bits,
                                    std::size_t max_pmap_bytes = 64);
 

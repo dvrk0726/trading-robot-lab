@@ -820,69 +820,157 @@ static void test_nullable_i64() {
     TEST_PASS("nullable_i64");
 }
 
-// --- Presence map tests (stop-bit termination required) ---
+// --- Presence map tests (stop-bit termination, minimal encoding, atomicity) ---
 static void test_presence_map() {
-    // Single byte: 0xB0 = stop bit set, data bits: 0110000
-    // Bits MSB first: bit6=0, bit5=1, bit4=1, bit3=0, bit2=0, bit1=0, bit0=0
+    // [B0] with pmap_bits=7: pattern 0110000
     {
         auto bytes = make_bytes({0xB0});
         WireCursor c(bytes.data(), bytes.size());
-        std::vector<bool> bits;
-        CHECK(c.read_presence_map(7, bits) == DecodeStatus::Ok);
-        CHECK_EQ(bits.size(), 7u);
-        CHECK_EQ(bits[0], false);
-        CHECK_EQ(bits[1], true);
-        CHECK_EQ(bits[2], true);
-        CHECK_EQ(bits[3], false);
-        CHECK_EQ(bits[4], false);
-        CHECK_EQ(bits[5], false);
-        CHECK_EQ(bits[6], false);
+        std::vector<bool> out{true, true, true};
+        CHECK(c.read_presence_map(7, out) == DecodeStatus::Ok);
+        CHECK_EQ(out.size(), 7u);
+        CHECK_EQ(out[0], false);
+        CHECK_EQ(out[1], true);
+        CHECK_EQ(out[2], true);
+        CHECK_EQ(out[3], false);
+        CHECK_EQ(out[4], false);
+        CHECK_EQ(out[5], false);
+        CHECK_EQ(out[6], false);
         CHECK(c.at_end());
     }
-    // Two bytes: 0x7F 0x80 (first no stop, second has stop)
-    // Byte 0: 0x7F = 01111111, data=1111111 (7 bits all 1)
-    // Byte 1: 0x80 = 10000000, data=0000000 (7 bits all 0)
+    // Canonical cross-byte [00 C0]: 8 bits, first 7 zero, eighth true
     {
-        auto bytes = make_bytes({0x7F, 0x80});
+        auto bytes = make_bytes({0x00, 0xC0});
         WireCursor c(bytes.data(), bytes.size());
-        std::vector<bool> bits;
-        CHECK(c.read_presence_map(12, bits) == DecodeStatus::Ok);
-        CHECK_EQ(bits.size(), 12u);
-        for (int i = 0; i < 7; ++i) CHECK_EQ(bits[i], true);
-        for (int i = 7; i < 12; ++i) CHECK_EQ(bits[i], false);
+        std::vector<bool> out;
+        CHECK(c.read_presence_map(8, out) == DecodeStatus::Ok);
+        CHECK_EQ(out.size(), 8u);
+        for (int i = 0; i < 7; ++i) CHECK_EQ(out[i], false);
+        CHECK_EQ(out[7], true);
+        CHECK(c.at_end());
     }
-    // Unterminated: two bytes, neither has stop bit
+    // [FF] requesting 12 bits: 7 true bits + 5 implicit false
     {
-        auto bytes = make_bytes({0x7F, 0x7F});
+        auto bytes = make_bytes({0xFF});
         WireCursor c(bytes.data(), bytes.size());
-        std::vector<bool> bits;
-        CHECK(c.read_presence_map(7, bits) == DecodeStatus::NeedMoreData);
-        CHECK_EQ(c.position(), 0u); // cursor restored
+        std::vector<bool> out;
+        CHECK(c.read_presence_map(12, out) == DecodeStatus::Ok);
+        CHECK_EQ(out.size(), 12u);
+        for (int i = 0; i < 7; ++i) CHECK_EQ(out[i], true);
+        for (int i = 7; i < 12; ++i) CHECK_EQ(out[i], false);
+        CHECK(c.at_end());
     }
-    // Stop bit even when requested bits already filled:
-    // Request 3 bits from first byte 0x00 (data=0000000, stop=0) - no stop
-    // Must keep reading until second byte 0x80 (stop=1)
-    {
-        auto bytes = make_bytes({0x00, 0x80}); // first no stop, second stop
-        WireCursor c(bytes.data(), bytes.size());
-        std::vector<bool> bits;
-        CHECK(c.read_presence_map(3, bits) == DecodeStatus::Ok);
-        CHECK_EQ(bits.size(), 3u);
-        // First byte 0x00: data bits 0000000 → bits[0]=0, bits[1]=0, bits[2]=0
-        CHECK_EQ(bits[0], false);
-        CHECK_EQ(bits[1], false);
-        CHECK_EQ(bits[2], false);
-        // Second byte 0x80 has stop bit - ok
-    }
-    // Implicit zeros: request 14 bits, first byte 0x80 (stop, 7 data bits)
-    // => 7 transmitted bits, 7 implicit zeros
+    // [80] with pmap_bits=14 and max_pmap_bytes=1: implicit zero suffix
     {
         auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
-        std::vector<bool> bits;
-        CHECK(c.read_presence_map(14, bits) == DecodeStatus::Ok);
-        CHECK_EQ(bits.size(), 14u);
-        for (int i = 0; i < 14; ++i) CHECK_EQ(bits[i], false);
+        std::vector<bool> out;
+        CHECK(c.read_presence_map(14, out, 1) == DecodeStatus::Ok);
+        CHECK_EQ(out.size(), 14u);
+        for (int i = 0; i < 14; ++i) CHECK_EQ(out[i], false);
+        CHECK(c.at_end());
+    }
+    // pmap_bits=0 with [80]: stop bit only, empty output
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out;
+        CHECK(c.read_presence_map(0, out) == DecodeStatus::Ok);
+        CHECK_EQ(out.size(), 0u);
+        CHECK_EQ(c.position(), 1u);
+    }
+    // Exact cursor consumption: [B0] then sentinel byte 0xAA
+    {
+        auto bytes = make_bytes({0xB0, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out;
+        CHECK(c.read_presence_map(7, out) == DecodeStatus::Ok);
+        CHECK_EQ(out.size(), 7u);
+        CHECK_EQ(c.position(), 1u);
+        // Sentinel byte still readable
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xAAu);
+    }
+    // Overlong [00 80]: multi-byte, terminating group zero -> NonCanonicalEncoding
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out{true, true, true};
+        CHECK(c.read_presence_map(7, out) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(out.size(), 3u); // unchanged
+        CHECK_EQ(out[0], true);
+    }
+    // Overlong [7F 80]: multi-byte, terminating group zero -> NonCanonicalEncoding
+    {
+        auto bytes = make_bytes({0x7F, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out{true, true, true};
+        CHECK(c.read_presence_map(14, out) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(out.size(), 3u); // unchanged
+        CHECK_EQ(out[0], true);
+    }
+    // Overlong [01 00 80]: 3-byte, terminating group zero -> NonCanonicalEncoding
+    {
+        auto bytes = make_bytes({0x01, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out{true};
+        CHECK(c.read_presence_map(14, out) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(out.size(), 1u); // unchanged
+        CHECK_EQ(out[0], true);
+    }
+    // Truncated [00] at max_pmap_bytes=2: no stop bit, input exhausted -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out{true, true, true};
+        CHECK(c.read_presence_map(7, out, 2) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(out.size(), 3u); // unchanged
+        CHECK_EQ(out[0], true);
+    }
+    // [00] at max_pmap_bytes=1: continuation byte at limit -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out{true, true, true};
+        CHECK(c.read_presence_map(7, out, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(out.size(), 3u); // unchanged
+        CHECK_EQ(out[0], true);
+    }
+    // [00 80] at max_pmap_bytes=1: second byte exceeds limit -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out{true, true, true};
+        CHECK(c.read_presence_map(7, out, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(out.size(), 3u); // unchanged
+        CHECK_EQ(out[0], true);
+    }
+    // [80] at max_pmap_bytes=0: immediate LimitExceeded, no read
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out{true, true, true};
+        CHECK(c.read_presence_map(7, out, 0) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u); // cursor unchanged (no read)
+        CHECK_EQ(out.size(), 3u); // unchanged
+        CHECK_EQ(out[0], true);
+    }
+    // Default limit exhaustion: 65 continuation bytes (no stop) -> LimitExceeded
+    {
+        std::vector<std::uint8_t> bytes(65, 0x00);
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out{true};
+        CHECK(c.read_presence_map(1, out) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(out.size(), 1u); // unchanged
+        CHECK_EQ(out[0], true);
     }
     TEST_PASS("presence_map");
 }
