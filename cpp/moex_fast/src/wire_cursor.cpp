@@ -79,6 +79,11 @@ DecodeStatus WireCursor::read_stopbit_u64(std::uint64_t& out) {
         std::uint8_t b = data_[pos_++];
         ++bytes_read;
 
+        // 10th byte without stop bit: InvalidEncoding before overflow
+        if (bytes_read == 10 && !(b & 0x80u)) {
+            pos_ = start; return DecodeStatus::InvalidEncoding;
+        }
+
         std::uint64_t data_bits = static_cast<std::uint64_t>(b & 0x7Fu);
 
         if (result > (std::numeric_limits<std::uint64_t>::max() >> 7)) {
@@ -176,6 +181,11 @@ DecodeStatus WireCursor::read_stopbit_i64(std::int64_t& out) {
 
         std::uint64_t data_bits = static_cast<std::uint64_t>(b & 0x7Fu);
 
+        // 10th byte without stop bit: InvalidEncoding before representability checks
+        if (bytes_read == 10 && !(b & 0x80u)) {
+            pos_ = start; return DecodeStatus::InvalidEncoding;
+        }
+
         // Before processing the 10th byte, validate that entity bits 69:64
         // (= raw bits 62:57) are sign extension of entity bit 63 (= raw bit 56).
         if (bytes_read > 9) {
@@ -203,20 +213,28 @@ DecodeStatus WireCursor::read_stopbit_i64(std::int64_t& out) {
             // For sig_bits >= 64 (10 bytes): the value is already correct in
             // the low 64 bits thanks to the pre-shift sign-extension check.
 
-            // Canonical encoding: value must not fit in fewer bytes
+            // Canonical encoding: value must not fit in fewer bytes (unsigned logic)
             if (bytes_read > 1) {
                 int prev_bits = (bytes_read - 1) * 7;
-                if (prev_bits >= 1) {
-                    std::int64_t decoded = static_cast<std::int64_t>(raw);
-                    std::int64_t lo = -(static_cast<std::int64_t>(1) << (prev_bits - 1));
-                    std::int64_t hi = (static_cast<std::int64_t>(1) << (prev_bits - 1)) - 1;
-                    if (decoded >= lo && decoded <= hi) {
+                if (prev_bits >= 1 && prev_bits < 64) {
+                    std::uint64_t mask = (1ULL << prev_bits) - 1;
+                    std::uint64_t truncated = raw & mask;
+                    std::uint64_t trunc_sign = 1ULL << (prev_bits - 1);
+                    if (truncated & trunc_sign) {
+                        truncated |= ~mask;
+                    }
+                    if (truncated == raw) {
                         pos_ = start; return DecodeStatus::NonCanonicalEncoding;
                     }
                 }
             }
 
-            out = static_cast<std::int64_t>(raw);
+            // Safe conversion: avoid implementation-defined unsigned-to-signed cast
+            if (raw <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+                out = static_cast<std::int64_t>(raw);
+            } else {
+                out = -static_cast<std::int64_t>(~raw) - 1;
+            }
             return DecodeStatus::Ok;
         }
     }
@@ -479,34 +497,35 @@ DecodeStatus WireCursor::read_nullable_i64(std::int64_t& out, bool& is_null) {
                     }
                 }
 
-                std::int64_t signed_raw = static_cast<std::int64_t>(raw);
-
-                // Canonical: value must not fit in fewer bytes
+                // Canonical: value must not fit in fewer bytes (unsigned logic)
                 if (bytes_read > 1) {
                     int prev_bits = (bytes_read - 1) * 7;
-                    if (prev_bits >= 1) {
-                        std::int64_t lo = -(static_cast<std::int64_t>(1) << (prev_bits - 1));
-                        std::int64_t hi = (static_cast<std::int64_t>(1) << (prev_bits - 1)) - 1;
-                        if (signed_raw >= lo && signed_raw <= hi) {
+                    if (prev_bits >= 1 && prev_bits < 64) {
+                        std::uint64_t mask = (1ULL << prev_bits) - 1;
+                        std::uint64_t truncated = raw & mask;
+                        std::uint64_t trunc_sign = 1ULL << (prev_bits - 1);
+                        if (truncated & trunc_sign) {
+                            truncated |= ~mask;
+                        }
+                        if (truncated == raw) {
                             pos_ = start; return DecodeStatus::NonCanonicalEncoding;
                         }
                     }
                 }
 
-                // Domain check: for <= 9 bytes, max positive = 2^62-1, max negative = -2^62
-                // Both are within [-2^63, 2^63], so no overflow possible.
-
                 // NULL: raw == 0
-                if (signed_raw == 0) {
+                if (raw == 0) {
                     is_null = true;
                     return DecodeStatus::Ok;
                 }
 
-                // Nullable mapping
-                if (signed_raw < 0) {
-                    out = signed_raw;  // negative values unchanged
+                // Nullable mapping using sign bit of sign-extended raw
+                if (raw >> 63) {
+                    // Negative: safe conversion without implementation-defined cast
+                    out = -static_cast<std::int64_t>(~raw) - 1;
                 } else {
-                    out = signed_raw - 1;  // non-negative shifted by -1
+                    // Non-negative: raw-1, safe since raw fits in int64_t
+                    out = static_cast<std::int64_t>(raw - 1);
                 }
                 is_null = false;
                 return DecodeStatus::Ok;
@@ -516,12 +535,6 @@ DecodeStatus WireCursor::read_nullable_i64(std::int64_t& out, bool& is_null) {
                 std::uint64_t low63 = 0;
                 for (int g = 1; g < 10; ++g) {
                     low63 = (low63 << 7) | groups[g];
-                }
-
-                // NULL: raw = 0 (top=0, low63=0)
-                if (top == 0 && low63 == 0) {
-                    is_null = true;
-                    return DecodeStatus::Ok;
                 }
 
                 bool is_negative = (top >= 64);
@@ -534,7 +547,7 @@ DecodeStatus WireCursor::read_nullable_i64(std::int64_t& out, bool& is_null) {
                     }
                     // Canonical: top == 0 means raw = low63 < 2^63
                     // If low63 < 2^62, value fits in 9 signed bytes -> non-canonical
-                    // If low63 >= 2^62, value > 2^62-1, needs 10 bytes -> canonical
+                    // This also catches raw == 0 (NULL), which is overlong in 10 bytes
                     if (top == 0 && low63 < (1ULL << 62)) {
                         pos_ = start; return DecodeStatus::NonCanonicalEncoding;
                     }
@@ -563,7 +576,7 @@ DecodeStatus WireCursor::read_nullable_i64(std::int64_t& out, bool& is_null) {
                     // raw = low63 - 2^63 < -2^62 -> canonical, needs 10 bytes
                     // As uint64_t two's complement: 2^63 + low63
                     std::uint64_t raw64 = (1ULL << 63) + low63;
-                    out = static_cast<std::int64_t>(raw64);
+                    out = -static_cast<std::int64_t>(~raw64) - 1;
                     is_null = false;
                     return DecodeStatus::Ok;
                 }

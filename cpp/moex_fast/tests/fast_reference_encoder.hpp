@@ -125,19 +125,22 @@ inline void encode_stopbit_i32(std::vector<std::uint8_t>& buf, std::int32_t val)
 }
 
 inline void encode_stopbit_i64(std::vector<std::uint8_t>& buf, std::int64_t val) {
+    std::uint64_t uval;
+    std::memcpy(&uval, &val, 8);
+
     int nbits;
     if (val >= 0) {
         nbits = 1;
-        std::uint64_t u = static_cast<std::uint64_t>(val);
+        std::uint64_t u = uval;
         while (u > 0) { nbits++; u >>= 1; }
     } else {
-        nbits = 1;
-        std::int64_t v = val;
-        while (v < -1) { nbits++; v >>= 1; }
+        // Count leading 1 bits in unsigned representation
+        int leading_ones = 0;
+        std::uint64_t tmp = uval;
+        while (tmp & (1ULL << 63)) { leading_ones++; tmp <<= 1; }
+        nbits = 65 - leading_ones;
     }
     int ngroups = (nbits + 6) / 7;
-    std::uint64_t uval;
-    std::memcpy(&uval, &val, 8);
     std::uint8_t sign_bit = static_cast<std::uint8_t>((uval >> 63) & 1);
     for (int g = ngroups - 1; g >= 0; --g) {
         std::uint8_t byte;

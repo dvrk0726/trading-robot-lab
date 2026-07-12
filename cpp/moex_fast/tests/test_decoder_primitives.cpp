@@ -112,6 +112,26 @@ static void test_stopbit_u64() {
         CHECK(c.read_stopbit_u64(val) == DecodeStatus::Ok);
         CHECK_EQ(val, 0xFFFFFFFFFFFFFFFFull);
     }
+    // Prefix loop: UINT64_MAX [01 7F 7F 7F 7F 7F 7F 7F 7F FF] lengths 1..9
+    {
+        std::uint8_t full[] = {0x01, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0xFF};
+        for (int len = 1; len <= 9; ++len) {
+            WireCursor c(full, static_cast<std::size_t>(len));
+            std::uint64_t val = 0xDEAD;
+            CHECK(c.read_stopbit_u64(val) == DecodeStatus::NeedMoreData);
+            CHECK_EQ(c.position(), 0u);
+            CHECK_EQ(val, 0xDEADull);
+        }
+    }
+    // 10-byte no stop bit: overflow-shaped [02 00 00 00 00 00 00 00 00 00]
+    {
+        auto bytes = make_bytes({0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint64_t val = 0xDEAD;
+        CHECK(c.read_stopbit_u64(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0xDEADull);
+    }
     TEST_PASS("stopbit_u64");
 }
 
@@ -258,6 +278,26 @@ static void test_stopbit_i64() {
         std::int64_t val = 0;
         CHECK(c.read_stopbit_i64(val) == DecodeStatus::NonCanonicalEncoding);
         CHECK_EQ(c.position(), 0u);
+    }
+    // Prefix loop: INT64_MIN [7F 00 00 00 00 00 00 00 00 80] lengths 1..9
+    {
+        std::uint8_t full[] = {0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80};
+        for (int len = 1; len <= 9; ++len) {
+            WireCursor c(full, static_cast<std::size_t>(len));
+            std::int64_t val = 12345;
+            CHECK(c.read_stopbit_i64(val) == DecodeStatus::NeedMoreData);
+            CHECK_EQ(c.position(), 0u);
+            CHECK_EQ(val, 12345ll);
+        }
+    }
+    // 10-byte no stop bit: overflow-shaped [01 00 00 00 00 00 00 00 00 00]
+    {
+        auto bytes = make_bytes({0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 12345;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 12345ll);
     }
     TEST_PASS("stopbit_i64");
 }
@@ -622,6 +662,17 @@ static void test_nullable_i64() {
         bool is_null = false;
         CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::NonCanonicalEncoding);
         CHECK_EQ(c.position(), 0u);
+    }
+    // 10-byte overlong NULL: [00 00 00 00 00 00 00 00 00 80]
+    {
+        auto bytes = make_bytes({0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0ll);
+        CHECK(!is_null);
     }
     // Signed overlong -1: [7F FF]
     {
