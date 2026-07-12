@@ -54,6 +54,8 @@ Post-merge CI #126: success
 
 PR #23 was implemented against a superseded near-general FAST scope. It must be corrected in the existing branch and PR to the merged MOEX T0/T1 profile.
 
+Issue #21 body, PR #23 title/body and canonical PR scope comment have been synchronized to the corrected specification. Historical conflicting review instructions are non-executable.
+
 ## Authoritative RT-3 profile
 
 ```text
@@ -99,17 +101,17 @@ Unsupported XML must fail compilation explicitly.
 ## Current blockers
 
 ```text
-PR #23 branch has not yet been synchronized with main after PR #27.
-PR #23 code and tests still contain generic FAST scope that must be removed.
-PR #23 description and Issue #21 body previously described the superseded scope.
-No implementation correction is owner-authorized yet.
+state/workflow synchronization PR #28 is not merged yet;
+PR #23 branch has not yet been synchronized with main after PR #27;
+PR #23 code and tests still contain generic FAST scope that must be removed;
+no implementation correction is owner-authorized yet.
 ```
 
 ## Next verified sequence
 
 ```text
-state/workflow synchronization PR
--> owner-approved merge
+PR #28 owner review and merge
+-> post-merge main CI
 -> merge current main into PR #23 branch without force push
 -> re-audit actual diff
 -> freeze one small correction task
