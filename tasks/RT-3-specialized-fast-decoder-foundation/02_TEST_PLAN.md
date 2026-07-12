@@ -307,7 +307,7 @@ Malformed input must not cause out-of-bounds access, unchecked recursion, unboun
 
 ## 13. Diagnostic CLI tests
 
-If the existing minimal `moex-fast-decode` CLI remains, test only:
+Test the retained minimal `moex-fast-decode` CLI only for:
 
 ```text
 valid exact message from hex
