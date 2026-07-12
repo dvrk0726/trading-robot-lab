@@ -462,7 +462,7 @@ Bit groups (MSB first, 7 bits each) from the 70-bit two's complement entity valu
 ### 4.31. Nullable Unsigned — UINT32_MAX (4294967295)
 
 **Source**: FAST 1.1 §10.6.1 (p.23) + §6.2.1 (p.10)
-**Calculation**: Per §10.6.1: "every non-negative integer is incremented by 1 before it is encoded." UINT32_MAX = 4294967295 → encode (4294967295 + 1) = 4294967296 = 2^32. Stop-bit encoding: 33 significant bits (32 value bits + 1 leading zero sign bit) → ceil(33/7) = 5 groups (35 entity bits). Binary of 2^32 in 35-bit unsigned: `001_00000000_00000000_00000000_00000000`.
+**Calculation**: Per §10.6.1: "every non-negative integer is incremented by 1 before it is encoded." UINT32_MAX = 4294967295 → encode (4294967295 + 1) = 4294967296 = 2^32. Stop-bit encoding: 33 significant unsigned value bits → ceil(33/7) = 5 groups (35 entity bits, with 2 leading zero padding bits). Binary of 2^32 in 35-bit unsigned: `0010000_0000000_0000000_0000000_0000000`.
 
 | Group | Bits (35-bit value) | Binary | Byte |
 |-------|---------------------|--------|------|
@@ -498,7 +498,7 @@ Bit groups (MSB first, 7 bits each) from the 70-bit two's complement entity valu
 ### 4.33. Nullable Unsigned — UINT64_MAX (18446744073709551615)
 
 **Source**: FAST 1.1 §10.6.1 (p.23) + §6.2.1 (p.10)
-**Calculation**: UINT64_MAX = 18446744073709551615 → encode (18446744073709551615 + 1) = 18446744073709551616 = 2^64. Stop-bit encoding: 65 significant bits (64 value bits + 1 leading zero sign bit) → ceil(65/7) = 10 groups (70 entity bits). Binary of 2^64 in 70-bit unsigned: `0000001_000000000_000000000_000000000_000000000_000000000_000000000_000000000_000000000_0000000`.
+**Calculation**: UINT64_MAX = 18446744073709551615 → encode (18446744073709551615 + 1) = 18446744073709551616 = 2^64. Stop-bit encoding: 65 significant unsigned value bits → ceil(65/7) = 10 groups (70 entity bits, with 5 leading zero padding bits). Binary of 2^64 in 70-bit unsigned: `0000010_0000000_0000000_0000000_0000000_0000000_0000000_0000000_0000000_0000000`.
 
 | Group | Bits (70-bit value) | Binary | Byte |
 |-------|---------------------|--------|------|
@@ -522,7 +522,7 @@ Bit groups (MSB first, 7 bits each) from the 70-bit two's complement entity valu
 ### 4.34. Nullable Signed — INT64_MAX (9223372036854775807)
 
 **Source**: FAST 1.1 §10.6.1 (p.23) + §6.2.1 (p.10)
-**Calculation**: INT64_MAX = 9223372036854775807 (non-negative) → encode (9223372036854775807 + 1) = 9223372036854775808 = 2^63. Positive raw 2^63 requires 65 significant signed bits (1 leading zero sign bit + 64 value bits) → 10 stop-bit groups (70 entity bits). Binary of 2^63 in 70-bit signed two's complement: `0000001_000000000_000000000_000000000_000000000_000000000_000000000_000000000_000000000_0000000`.
+**Calculation**: INT64_MAX = 9223372036854775807 (non-negative) → encode (9223372036854775807 + 1) = 9223372036854775808 = 2^63. Positive raw 2^63 requires 65 significant signed bits (1 leading zero sign bit + 64 value bits) → 10 stop-bit groups (70 entity bits). Binary of 2^63 in 70-bit signed two's complement: `0000001_0000000_0000000_0000000_0000000_0000000_0000000_0000000_0000000_0000000`.
 
 | Group | Bits (70-bit value) | Binary | Byte |
 |-------|---------------------|--------|------|
@@ -594,7 +594,7 @@ Bit groups (MSB first, 7 bits each) from the 70-bit two's complement entity valu
 
 The comparison table contains 29 numbered rows (#1–#22, #24–#30; original #23 consolidated into #5, new #29 and #30 added). Plus 2 unresolved items outside the table. All categories are mutually exclusive; no item appears in more than one category.
 
-**Confirmed discrepancies (18)**:
+**Confirmed discrepancies (17)**:
 - **#1, #2, #22** (production decoder `wire_cursor.cpp`): Nullable signed decode applies `raw - 1` unconditionally instead of only for non-negative decoded values. Nullable NULL detection checks byte `0x00` instead of stop-bit decoded value 0 (wire `0x80`). INT32_MIN is rejected as overflow due to the unconditional decrement.
 - **#3** (production decoder): Nullable unsigned NULL detection checks byte `0x00` instead of stop-bit decoded 0; rejects wire `0x80` (the correct NULL encoding) as NonCanonical.
 - **#5** (production decoder): Signed i64 pre-shift overflow guard computes sign from `raw >> 63` (always 0 after 9 bytes). The normative first wire group for INT64_MIN is `0x7F`, but `raw >> 57` extracts bits [62..57] = `0x3F`; the guard rejects INT64_MIN because `0x3F ≠ 0x00` → IntegerOverflow. (Consolidates former #23.)
@@ -614,7 +614,7 @@ The comparison table contains 29 numbered rows (#1–#22, #24–#30; original #2
 - **#11** (nullable byte vector): Call structure matches spec (`read_nullable_u32` for length), but `read_nullable_u32` has confirmed defects (#3, #22).
 - **#12** (nullable decimal): Call structure matches spec (nullable exponent, skip mantissa if null), but exponent is nullable signed i32 with confirmed defects (#1, #2, #22).
 
-**Confirmed correct (6)**: Items #4, #6, #7, #8, #9, #19 — confirmed correct against the authoritative sources (FAST 1.1 specification and MOEX SPECTRA specification v1.30.2). Item #17 is confirmed correct for the specific tested vector (nullable u32 value 0xFFFFFFFE), but is not the true nullable maximum (see #29).
+**Confirmed correct (7)**: Items #4, #6, #7, #8, #9, #17, #19 — confirmed correct against the authoritative sources (FAST 1.1 specification and MOEX SPECTRA specification v1.30.2). Item #17 is confirmed correct for the specific tested vector (nullable u32 value 0xFFFFFFFE → wire `[0x0F, 0x7F, 0x7F, 0x7F, 0xFF]`), but is not the true nullable maximum (see #29).
 
 **No discrepancy (2)**: Items #18, #20 — not discrepancies: #18 is a separate concern not handled by WireCursor; #20 is handled at the template level and does not represent a code discrepancy.
 
@@ -622,7 +622,7 @@ The comparison table contains 29 numbered rows (#1–#22, #24–#30; original #2
 - **Preamble endianness**: The MOEX specification does not specify the byte order of the 4-byte preamble (§3.2, spectra_fastgate_en.pdf).
 - **meta.info fetch**: The cause of the HTTP 404 when fetching `meta.info` from the MOEX FTP is unresolved (see §2.2).
 
-**Totals**: 18 confirmed discrepancies + 3 structurally correct + 6 confirmed correct + 2 no discrepancy = 29 items in the comparison table; 2 unresolved items outside the table = 31 total classified items.
+**Totals**: 17 confirmed discrepancies + 3 structurally correct + 7 confirmed correct + 2 no discrepancy = 29 items in the comparison table; 2 unresolved items outside the table = 31 total classified items.
 
 ---
 
