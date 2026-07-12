@@ -177,6 +177,27 @@ static void test_signed_max_width() {
         CHECK(c.read_stopbit_i32(val) == DecodeStatus::Ok);
         CHECK_EQ(val, std::numeric_limits<std::int32_t>::min());
     }
+    // INT64_MAX: 10 bytes
+    // 0x7FFFFFFFFFFFFFFF in 70-bit: 0_0000000_1111111_1111111_1111111_1111111_1111111_1111111_1111111_1111111_1111111
+    // 7-bit groups: 0000000, 1111111, 1111111, 1111111, 1111111, 1111111, 1111111, 1111111, 1111111, 1111111+stop
+    // Bytes: 0x00, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0xFF
+    {
+        auto bytes = hex("007F7F7F7F7F7F7F7FFF");
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::Ok);
+        CHECK_EQ(val, std::numeric_limits<std::int64_t>::max());
+    }
+    // INT64_MIN: 10 bytes
+    // 70-bit 2's complement sign extension: 1111111_0000000_0000000_0000000_0000000_0000000_0000000_0000000_0000000_0000000+stop
+    // Bytes: 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80
+    {
+        auto bytes = hex("7F000000000000000080");
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::Ok);
+        CHECK_EQ(val, std::numeric_limits<std::int64_t>::min());
+    }
     TEST_PASS("signed_max_width");
 }
 

@@ -195,17 +195,13 @@ static void test_stopbit_i32() {
 }
 
 static void test_stopbit_i64() {
-    // INT64_MIN: 10 bytes
-    // INT64_MIN = -9223372036854775808
-    // 70-bit 2's complement: sign bit = 1, rest all 0 except bottom
-    // Let me just test a few values
     // 0
     {
         auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
         std::int64_t val = 999;
         CHECK(c.read_stopbit_i64(val) == DecodeStatus::Ok);
-        CHECK_EQ(val, 0);
+        CHECK_EQ(val, 0ll);
     }
     // -1
     {
@@ -214,6 +210,54 @@ static void test_stopbit_i64() {
         std::int64_t val = 0;
         CHECK(c.read_stopbit_i64(val) == DecodeStatus::Ok);
         CHECK_EQ(val, -1ll);
+    }
+    // INT64_MIN: [7F 00 00 00 00 00 00 00 00 80]
+    {
+        auto bytes = make_bytes({0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::Ok);
+        CHECK_EQ(val, (-9223372036854775807ll - 1ll));
+    }
+    // INT64_MAX: [00 7F 7F 7F 7F 7F 7F 7F 7F FF]
+    {
+        auto bytes = make_bytes({0x00, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::Ok);
+        CHECK_EQ(val, 9223372036854775807ll);
+    }
+    // Positive overflow: +2^63 [01 00 00 00 00 00 00 00 00 80]
+    {
+        auto bytes = make_bytes({0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Negative overflow: -2^63-1 [7E 7F 7F 7F 7F 7F 7F 7F 7F FF]
+    {
+        auto bytes = make_bytes({0x7E, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Signed overlong: [00 80] (0 fits in 1 byte)
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Signed overlong: [7F FF] (-1 fits in 1 byte)
+    {
+        auto bytes = make_bytes({0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        CHECK(c.read_stopbit_i64(val) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
     }
     TEST_PASS("stopbit_i64");
 }
@@ -424,6 +468,184 @@ static void test_nullable_i32() {
         CHECK_EQ(c.position(), 0u);
     }
     TEST_PASS("nullable_i32");
+}
+
+static void test_nullable_u64() {
+    // Sequential read of all required vectors
+    {
+        auto bytes = make_bytes({
+            0x80,                                           // NULL
+            0x81,                                           // 0
+            0x82,                                           // 1
+            0x01, 0x80,                                     // 127
+            0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // UINT64_MAX
+            0x80                                            // sentinel
+        });
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint64_t val = 0;
+        bool is_null = false;
+
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(c.position(), 1u);
+
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, 0ull);
+
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, 1ull);
+
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, 127ull);
+
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, 0xFFFFFFFFFFFFFFFFull);
+
+        // Sentinel
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::Ok);
+        CHECK(is_null);
+    }
+    // Overflow: raw 2^64+1 [02 00 00 00 00 00 00 00 00 81]
+    {
+        auto bytes = make_bytes({0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint64_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overlong NULL: [00 80]
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint64_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overlong raw 1: [00 81]
+    {
+        auto bytes = make_bytes({0x00, 0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint64_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Truncated prefix (no stop bit) — 10-byte representative
+    {
+        std::uint8_t full[] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80};
+        for (int len = 1; len <= 9; ++len) {
+            WireCursor c(full, static_cast<std::size_t>(len));
+            std::uint64_t val = 0xDEAD;
+            bool is_null = true;
+            CHECK(c.read_nullable_u64(val, is_null) == DecodeStatus::NeedMoreData);
+            CHECK_EQ(c.position(), 0u);
+            CHECK_EQ(val, 0xDEADull);
+            CHECK(is_null);
+        }
+    }
+    TEST_PASS("nullable_u64");
+}
+
+static void test_nullable_i64() {
+    // Sequential read of all required vectors
+    {
+        auto bytes = make_bytes({
+            0x80,                                           // NULL
+            0x81,                                           // 0
+            0x82,                                           // 1
+            0xFF,                                           // -1
+            0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // INT64_MIN
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // INT64_MAX
+            0x80                                            // sentinel
+        });
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        bool is_null = false;
+
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(c.position(), 1u);
+
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, 0ll);
+
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, 1ll);
+
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, -1ll);
+
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, (-9223372036854775807ll - 1ll));
+
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, 9223372036854775807ll);
+
+        // Sentinel
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::Ok);
+        CHECK(is_null);
+    }
+    // Positive overflow: raw 2^63+1 [01 00 00 00 00 00 00 00 00 81]
+    {
+        auto bytes = make_bytes({0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Below minimum: raw -2^63-1 [7E 7F 7F 7F 7F 7F 7F 7F 7F FF]
+    {
+        auto bytes = make_bytes({0x7E, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overlong NULL: [00 80]
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Signed overlong -1: [7F FF]
+    {
+        auto bytes = make_bytes({0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int64_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Truncated prefix (no stop bit) — 10-byte representative
+    {
+        std::uint8_t full[] = {0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80};
+        for (int len = 1; len <= 9; ++len) {
+            WireCursor c(full, static_cast<std::size_t>(len));
+            std::int64_t val = 12345;
+            bool is_null = false;
+            CHECK(c.read_nullable_i64(val, is_null) == DecodeStatus::NeedMoreData);
+            CHECK_EQ(c.position(), 0u);
+            CHECK_EQ(val, 12345ll);
+            CHECK(!is_null);
+        }
+    }
+    TEST_PASS("nullable_i64");
 }
 
 // --- Presence map tests (stop-bit termination required) ---
@@ -685,6 +907,8 @@ int main() {
     test_stopbit_i64();
     test_nullable_u32();
     test_nullable_i32();
+    test_nullable_u64();
+    test_nullable_i64();
     test_presence_map();
     test_ascii_string();
     test_decimal();

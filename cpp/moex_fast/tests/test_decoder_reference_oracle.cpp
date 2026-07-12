@@ -253,6 +253,18 @@ static void test_stopbit_i64() {
         byte_vec actual; encode_stopbit_i64(actual, -1ll);
         CHECK_BYTES(actual, expected);
     }
+    // INT64_MIN -> 10 bytes: [7F 00 00 00 00 00 00 00 00 80]
+    {
+        byte_vec expected{0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80};
+        byte_vec actual; encode_stopbit_i64(actual, (-9223372036854775807ll - 1ll));
+        CHECK_BYTES(actual, expected);
+    }
+    // INT64_MAX -> 10 bytes: [00 7F 7F 7F 7F 7F 7F 7F 7F FF]
+    {
+        byte_vec expected{0x00, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0xFF};
+        byte_vec actual; encode_stopbit_i64(actual, 9223372036854775807ll);
+        CHECK_BYTES(actual, expected);
+    }
     TEST_PASS("stopbit_i64");
 }
 
@@ -293,16 +305,34 @@ static void test_nullable_u32() {
 
 // --- Nullable uInt64 ---
 static void test_nullable_u64() {
-    // Null -> 0x00
+    // Null -> [80] (stop-bit 0)
     {
-        byte_vec expected{0x00};
+        byte_vec expected{0x80};
         byte_vec actual; encode_nullable_u64(actual, 0ull, true);
         CHECK_BYTES(actual, expected);
     }
-    // Value 0 -> 0x81
+    // Value 0 -> stopbit(1) = 0x81
     {
         byte_vec expected{0x81};
         byte_vec actual; encode_nullable_u64(actual, 0ull, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // Value 1 -> stopbit(2) = 0x82
+    {
+        byte_vec expected{0x82};
+        byte_vec actual; encode_nullable_u64(actual, 1ull, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // Value 127 -> stopbit(128) = 0x01 0x80
+    {
+        byte_vec expected{0x01, 0x80};
+        byte_vec actual; encode_nullable_u64(actual, 127ull, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // UINT64_MAX -> explicit widened: raw 2^64 = [02 00 00 00 00 00 00 00 00 80]
+    {
+        byte_vec expected{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80};
+        byte_vec actual; encode_nullable_u64(actual, 0xFFFFFFFFFFFFFFFFull, false);
         CHECK_BYTES(actual, expected);
     }
     TEST_PASS("nullable_u64");
@@ -351,22 +381,40 @@ static void test_nullable_i32() {
 
 // --- Nullable int64 ---
 static void test_nullable_i64() {
-    // Null -> 0x00
+    // Null -> [80] (stop-bit 0)
     {
-        byte_vec expected{0x00};
+        byte_vec expected{0x80};
         byte_vec actual; encode_nullable_i64(actual, 0ll, true);
         CHECK_BYTES(actual, expected);
     }
-    // Value 0 -> 0x81
+    // Value 0 -> stopbit(0+1) = stopbit(1) = 0x81
     {
         byte_vec expected{0x81};
         byte_vec actual; encode_nullable_i64(actual, 0ll, false);
         CHECK_BYTES(actual, expected);
     }
-    // Value -1 -> 0x80
+    // Value 1 -> stopbit(1+1) = stopbit(2) = 0x82
     {
-        byte_vec expected{0x80};
+        byte_vec expected{0x82};
+        byte_vec actual; encode_nullable_i64(actual, 1ll, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // Value -1 -> negative, encoded unchanged as stopbit(-1) = 0xFF
+    {
+        byte_vec expected{0xFF};
         byte_vec actual; encode_nullable_i64(actual, -1ll, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // INT64_MIN -> negative, unchanged, stopbit(INT64_MIN) = [7F 00 00 00 00 00 00 00 00 80]
+    {
+        byte_vec expected{0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80};
+        byte_vec actual; encode_nullable_i64(actual, (-9223372036854775807ll - 1ll), false);
+        CHECK_BYTES(actual, expected);
+    }
+    // INT64_MAX -> non-negative, widened INT64_MAX+1 = 2^63 = [01 00 00 00 00 00 00 00 00 80]
+    {
+        byte_vec expected{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80};
+        byte_vec actual; encode_nullable_i64(actual, 9223372036854775807ll, false);
         CHECK_BYTES(actual, expected);
     }
     TEST_PASS("nullable_i64");

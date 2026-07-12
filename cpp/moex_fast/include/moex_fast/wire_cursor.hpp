@@ -44,7 +44,7 @@ public:
     //   u32: raw 0 = NULL; raw 1..2^32 -> value = raw - 1; raw > 2^32 overflow.
     //   i32: raw 0 = NULL; raw < 0 unchanged; raw > 0 -> value = raw - 1.
     //   Only non-negative signed values use the +1 offset.
-    // Nullable u64/i64: 0x00 first byte => null (1 byte); otherwise offset encoding.
+    // Nullable u64/i64: NULL wire is stop-bit 0 ([0x80]), not literal byte 0x00.
     DecodeStatus read_nullable_u32(std::uint32_t& out, bool& is_null);
     DecodeStatus read_nullable_u64(std::uint64_t& out, bool& is_null);
     DecodeStatus read_nullable_i32(std::int32_t& out, bool& is_null);

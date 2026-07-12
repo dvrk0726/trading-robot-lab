@@ -4,6 +4,7 @@
 // It does NOT use WireCursor, fast_decoder, or any production encoding helpers.
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -135,10 +136,17 @@ inline void encode_stopbit_i64(std::vector<std::uint8_t>& buf, std::int64_t val)
         while (v < -1) { nbits++; v >>= 1; }
     }
     int ngroups = (nbits + 6) / 7;
-    std::uint64_t raw;
-    std::memcpy(&raw, &val, 8);
+    std::uint64_t uval;
+    std::memcpy(&uval, &val, 8);
+    std::uint8_t sign_bit = static_cast<std::uint8_t>((uval >> 63) & 1);
     for (int g = ngroups - 1; g >= 0; --g) {
-        std::uint8_t byte = static_cast<std::uint8_t>((raw >> (g * 7)) & 0x7F);
+        std::uint8_t byte;
+        if (g == ngroups - 1 && ngroups * 7 > 64) {
+            // Top group has sign extension bits above 64
+            byte = sign_bit ? 0x7F : 0x00;
+        } else {
+            byte = static_cast<std::uint8_t>((uval >> (g * 7)) & 0x7F);
+        }
         if (g == 0) byte |= 0x80;
         buf.push_back(byte);
     }
@@ -156,10 +164,16 @@ inline void encode_nullable_u32(std::vector<std::uint8_t>& buf, std::uint32_t va
     }
 }
 
-// Nullable uInt64: null = 0x00; non-null value V = stopbit(V+1).
+// Nullable uInt64: NULL = stop-bit 0 ([0x80]); non-null value V = stopbit(V+1).
+// Widened to avoid wrap on UINT64_MAX+1.
 inline void encode_nullable_u64(std::vector<std::uint8_t>& buf, std::uint64_t val, bool is_null) {
     if (is_null) {
-        buf.push_back(0x00);
+        buf.push_back(0x80);
+    } else if (val == std::numeric_limits<std::uint64_t>::max()) {
+        // UINT64_MAX + 1 = 2^64: explicit 70-bit encoding
+        buf.push_back(0x02);
+        for (int i = 0; i < 8; ++i) buf.push_back(0x00);
+        buf.push_back(0x80);
     } else {
         encode_stopbit_u64(buf, val + 1);
     }
@@ -178,14 +192,21 @@ inline void encode_nullable_i32(std::vector<std::uint8_t>& buf, std::int32_t val
     }
 }
 
-// Nullable int64: null = 0x00; non-null value V = stopbit(V+1).
+// Nullable int64: NULL = stop-bit 0 ([0x80]); negative values encoded unchanged;
+// non-negative values widened by +1. No UB/wrap.
 inline void encode_nullable_i64(std::vector<std::uint8_t>& buf, std::int64_t val, bool is_null) {
     if (is_null) {
-        buf.push_back(0x00);
+        buf.push_back(0x80);
+    } else if (val < 0) {
+        encode_stopbit_i64(buf, val);
+    } else if (val == std::numeric_limits<std::int64_t>::max()) {
+        // INT64_MAX + 1 = 2^63: explicit 70-bit encoding
+        buf.push_back(0x01);
+        for (int i = 0; i < 8; ++i) buf.push_back(0x00);
+        buf.push_back(0x80);
     } else {
-        std::int64_t shifted = static_cast<std::int64_t>(
-            static_cast<std::uint64_t>(val) + 1ull);
-        encode_stopbit_i64(buf, shifted);
+        encode_stopbit_i64(buf, static_cast<std::int64_t>(
+            static_cast<std::uint64_t>(val) + 1ull));
     }
 }
 
