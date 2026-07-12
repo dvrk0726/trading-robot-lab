@@ -462,32 +462,34 @@ Bit groups (MSB first, 7 bits each) from the 70-bit two's complement entity valu
 ### 4.31. Nullable Unsigned — UINT32_MAX (4294967295)
 
 **Source**: FAST 1.1 §10.6.1 (p.23) + §6.2.1 (p.10)
-**Calculation**: Per §10.6.1: "every non-negative integer is incremented by 1 before it is encoded." UINT32_MAX = 4294967295 → encode (4294967295 + 1) = 4294967296 = 2^32. Stop-bit encoding: 33 data bits → ceil(33/7) = 5 groups. Binary of 2^32: `1_00000000_00000000_00000000_00000000`.
+**Calculation**: Per §10.6.1: "every non-negative integer is incremented by 1 before it is encoded." UINT32_MAX = 4294967295 → encode (4294967295 + 1) = 4294967296 = 2^32. Stop-bit encoding: 33 significant bits (32 value bits + 1 leading zero sign bit) → ceil(33/7) = 5 groups (35 entity bits). Binary of 2^32 in 35-bit unsigned: `001_00000000_00000000_00000000_00000000`.
 
-| Group | Bits | Binary | Byte |
-|-------|------|--------|------|
-| 0 | [38..32] | `0010000` | `0x10` |
-| 1 | [31..25] | `0000000` | `0x00` |
-| 2 | [24..18] | `0000000` | `0x00` |
-| 3 | [17..11] | `0000000` | `0x00` |
-| 4 (stop) | [10..4]+stop | `0000000` + stop | `0x80` |
+| Group | Bits (35-bit value) | Binary | Byte |
+|-------|---------------------|--------|------|
+| 0 | [34..28] | `0010000` | `0x10` |
+| 1 | [27..21] | `0000000` | `0x00` |
+| 2 | [20..14] | `0000000` | `0x00` |
+| 3 | [13..7] | `0000000` | `0x00` |
+| 4 (stop) | [6..0]+stop | `0000000` + stop | `0x80` |
 
 **Wire**: `[0x10, 0x00, 0x00, 0x00, 0x80]`
 
 **Production decoder defect**: `read_nullable_u32` decodes into `uint32_t` (max 2^32 − 1 = 4294967295) before applying the nullable inverse mapping (`raw − 1`). The intermediate value 2^32 overflows `uint32_t`, so the real nullable maximum cannot be decoded. The reference test (`test_decoder_reference_oracle.cpp:554-558`) labels `0xFFFFFFFE` as the nullable u32 "max" and tests it with wire `[0x0F, 0x7F, 0x7F, 0x7F, 0xFF]` (encoding 0xFFFFFFFF = 2^32 − 1). This tests the non-widened ceiling, not the true nullable maximum. No test exercises the actual maximum 2^32.
 
+**Reference encoder defect (unsigned maximum)**: `encode_nullable_u32` computes `val + 1` in the original `uint32_t` width. At `UINT32_MAX` (0xFFFFFFFF), `val + 1` wraps to 0 in `uint32_t`. The ordinary encoder then emits `stopbit(0)` = `[0x80]`, which is the correct nullable NULL wire value. This means `encode_nullable_u32(UINT32_MAX)` produces the same wire bytes as nullable NULL — a silent collision. No test exercises this true unsigned maximum.
+
 ### 4.32. Nullable Signed — INT32_MAX (2147483647)
 
 **Source**: FAST 1.1 §10.6.1 (p.23) + §6.2.1 (p.10)
-**Calculation**: INT32_MAX = 2147483647 (non-negative) → encode (2147483647 + 1) = 2147483648 = 2^31. Stop-bit encoding: 32 data bits → ceil(32/7) = 5 groups. Binary of 2^31: `10000000_00000000_00000000_00000000`.
+**Calculation**: INT32_MAX = 2147483647 (non-negative) → encode (2147483647 + 1) = 2147483648 = 2^31. Positive raw 2^31 requires 33 significant signed bits (1 leading zero sign bit + 32 value bits) → 5 stop-bit groups (35 entity bits). Binary of 2^31 in 35-bit signed two's complement: `000_10000000_00000000_00000000_00000000`.
 
-| Group | Bits | Binary | Byte |
-|-------|------|--------|------|
-| 0 | [37..31] | `0001000` | `0x08` |
-| 1 | [30..24] | `0000000` | `0x00` |
-| 2 | [23..17] | `0000000` | `0x00` |
-| 3 | [16..10] | `0000000` | `0x00` |
-| 4 (stop) | [9..3]+stop | `0000000` + stop | `0x80` |
+| Group | Bits (35-bit value) | Binary | Byte |
+|-------|---------------------|--------|------|
+| 0 | [34..28] | `0001000` | `0x08` |
+| 1 | [27..21] | `0000000` | `0x00` |
+| 2 | [20..14] | `0000000` | `0x00` |
+| 3 | [13..7] | `0000000` | `0x00` |
+| 4 (stop) | [6..0]+stop | `0000000` + stop | `0x80` |
 
 **Wire**: `[0x08, 0x00, 0x00, 0x00, 0x80]`
 
@@ -496,48 +498,50 @@ Bit groups (MSB first, 7 bits each) from the 70-bit two's complement entity valu
 ### 4.33. Nullable Unsigned — UINT64_MAX (18446744073709551615)
 
 **Source**: FAST 1.1 §10.6.1 (p.23) + §6.2.1 (p.10)
-**Calculation**: UINT64_MAX = 18446744073709551615 → encode (18446744073709551615 + 1) = 18446744073709551616 = 2^64. Stop-bit encoding: 65 data bits → ceil(65/7) = 10 groups. Binary of 2^64: `1` followed by 64 zeros.
+**Calculation**: UINT64_MAX = 18446744073709551615 → encode (18446744073709551615 + 1) = 18446744073709551616 = 2^64. Stop-bit encoding: 65 significant bits (64 value bits + 1 leading zero sign bit) → ceil(65/7) = 10 groups (70 entity bits). Binary of 2^64 in 70-bit unsigned: `0000001_000000000_000000000_000000000_000000000_000000000_000000000_000000000_000000000_0000000`.
 
-| Group | Bits | Binary | Byte |
-|-------|------|--------|------|
-| 0 | [68..62] | `0000010` | `0x02` |
-| 1 | [61..55] | `0000000` | `0x00` |
-| 2 | [54..48] | `0000000` | `0x00` |
-| 3 | [47..41] | `0000000` | `0x00` |
-| 4 | [40..34] | `0000000` | `0x00` |
-| 5 | [33..27] | `0000000` | `0x00` |
-| 6 | [26..20] | `0000000` | `0x00` |
-| 7 | [19..13] | `0000000` | `0x00` |
-| 8 | [12..6] | `0000000` | `0x00` |
-| 9 (stop) | [5..0]+stop | `000000` + stop | `0x80` |
+| Group | Bits (70-bit value) | Binary | Byte |
+|-------|---------------------|--------|------|
+| 0 | [69..63] | `0000010` | `0x02` |
+| 1 | [62..56] | `0000000` | `0x00` |
+| 2 | [55..49] | `0000000` | `0x00` |
+| 3 | [48..42] | `0000000` | `0x00` |
+| 4 | [41..35] | `0000000` | `0x00` |
+| 5 | [34..28] | `0000000` | `0x00` |
+| 6 | [27..21] | `0000000` | `0x00` |
+| 7 | [20..14] | `0000000` | `0x00` |
+| 8 | [13..7] | `0000000` | `0x00` |
+| 9 (stop) | [6..0]+stop | `0000000` + stop | `0x80` |
 
 **Wire**: `[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]`
 
 **Production decoder defect**: `read_nullable_u64` decodes into `uint64_t` (max 2^64 − 1) before applying the nullable inverse mapping. The intermediate value 2^64 overflows `uint64_t`. No test exercises the actual nullable u64 maximum.
 
+**Reference encoder defect (unsigned maximum)**: `encode_nullable_u64` computes `val + 1` in the original `uint64_t` width. At `UINT64_MAX` (0xFFFFFFFFFFFFFFFF), `val + 1` wraps to 0 in `uint64_t`. The ordinary encoder then emits `stopbit(0)` = `[0x80]`, which is the correct nullable NULL wire value. This means `encode_nullable_u64(UINT64_MAX)` produces the same wire bytes as nullable NULL — a silent collision. No test exercises this true unsigned maximum.
+
 ### 4.34. Nullable Signed — INT64_MAX (9223372036854775807)
 
 **Source**: FAST 1.1 §10.6.1 (p.23) + §6.2.1 (p.10)
-**Calculation**: INT64_MAX = 9223372036854775807 (non-negative) → encode (9223372036854775807 + 1) = 9223372036854775808 = 2^63. Stop-bit encoding: 64 data bits → ceil(64/7) = 10 groups. Binary of 2^63: `10000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000`.
+**Calculation**: INT64_MAX = 9223372036854775807 (non-negative) → encode (9223372036854775807 + 1) = 9223372036854775808 = 2^63. Positive raw 2^63 requires 65 significant signed bits (1 leading zero sign bit + 64 value bits) → 10 stop-bit groups (70 entity bits). Binary of 2^63 in 70-bit signed two's complement: `0000001_000000000_000000000_000000000_000000000_000000000_000000000_000000000_000000000_0000000`.
 
-| Group | Bits | Binary | Byte |
-|-------|------|--------|------|
-| 0 | [67..61] | `0000001` | `0x01` |
-| 1 | [60..54] | `0000000` | `0x00` |
-| 2 | [53..47] | `0000000` | `0x00` |
-| 3 | [46..40] | `0000000` | `0x00` |
-| 4 | [39..33] | `0000000` | `0x00` |
-| 5 | [32..26] | `0000000` | `0x00` |
-| 6 | [25..19] | `0000000` | `0x00` |
-| 7 | [18..12] | `0000000` | `0x00` |
-| 8 | [11..5] | `0000000` | `0x00` |
-| 9 (stop) | [4..0]+stop | `00000` + stop | `0x80` |
+| Group | Bits (70-bit value) | Binary | Byte |
+|-------|---------------------|--------|------|
+| 0 | [69..63] | `0000001` | `0x01` |
+| 1 | [62..56] | `0000000` | `0x00` |
+| 2 | [55..49] | `0000000` | `0x00` |
+| 3 | [48..42] | `0000000` | `0x00` |
+| 4 | [41..35] | `0000000` | `0x00` |
+| 5 | [34..28] | `0000000` | `0x00` |
+| 6 | [27..21] | `0000000` | `0x00` |
+| 7 | [20..14] | `0000000` | `0x00` |
+| 8 | [13..7] | `0000000` | `0x00` |
+| 9 (stop) | [6..0]+stop | `0000000` + stop | `0x80` |
 
 **Wire**: `[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]`
 
 **Production decoder defect**: `read_nullable_i64` decodes into `int64_t` (max 2^63 − 1) before applying the nullable inverse mapping. The intermediate value 2^63 overflows `int64_t`. No test exercises the actual nullable signed i64 maximum.
 
-**Reference encoder note**: `encode_stopbit_i64` for INT64_MAX (positive, bit 63 = 0) produces the correct encoding because all significant bits fit within 64 bits. The `val+1` wrap for signed values is masked by the sign-extension defect (#21): the encoder applies `val+1` to all signed values including negatives, but for INT64_MAX the wrap produces the correct intermediate value 2^63. This is a coincidental match, not an independent correct derivation — the encoder's signed nullable logic is broken for negatives (see #14, #15) and for boundary values requiring sign extension (see #21).
+**Reference encoder note**: `encode_stopbit_i64` for INT64_MAX (positive, bit 63 = 0) produces the correct encoding because all significant bits fit within 64 bits. For signed nullable maxima, the encoder's `val+1` wrap stores the bit pattern of `INT32_MIN`/`INT64_MIN` (e.g. INT64_MAX + 1 in `int64_t` wraps to `0x8000000000000000`), not a representable positive widened intermediate. The desired maximum bytes `[0x01, 0x00, ... 0x80]` / `[0x08, 0x00, ... 0x80]` occur only accidentally through the separate broken sign-extension encoder (#21), which extracts 7-bit groups from the wrapped bit pattern. This is not a correct widened derivation — the encoder's signed nullable logic is broken for negatives (see #14, #15) and for boundary values requiring sign extension (see #21). The unsigned case is even worse: `encode_nullable_u32/u64` wraps to zero at `UINT32_MAX`/`UINT64_MAX`, producing `[0x80]` — the same wire bytes as nullable NULL (see §4.31, §4.33).
 
 ---
 
@@ -572,10 +576,10 @@ Bit groups (MSB first, 7 bits each) from the 70-bit two's complement entity valu
 | 14 | **Reference encoder: nullable signed applies val+1 to all values** | `fast_reference_encoder.hpp:177-179`: shifts all signed values by +1 | FAST 1.1 §10.6.1 (p.23): "every **non-negative** integer is incremented by 1." Negative values should be encoded directly (not incremented). The encoder applies `val+1` to all signed values including negatives, producing the same wire code as NULL for value -1. | FAST 1.1, p.23 | **confirmed discrepancy** (reference encoder) |
 | 15 | **Reference encoder: nullable i64 applies val+1 to all values** | `fast_reference_encoder.hpp:188-190`: same pattern as i32 | Same defect as #14 for 64-bit. | FAST 1.1, p.23 | **confirmed discrepancy** (reference encoder) |
 | 16 | **Test: nullable i32 value -1 → wire 0x80** | `test_decoder_reference_oracle.cpp:319-323` | FAST 1.1 §10.6.1 (p.23): V=-1 is negative → NOT incremented → stopbit(-1) = `0xFF`. The test expects `0x80` (same as NULL), which is incorrect per the spec rule that only non-negative values are shifted. | FAST 1.1, p.23 | **confirmed discrepancy** (test expectation) |
-| 17 | **Test: nullable u32 max value** | `test_decoder_reference_oracle.cpp:554-558`: `0xFFFFFFFE` → `0x0F 0x7F 0x7F 0x7F 0xFF` | FAST 1.1: V=0xFFFFFFFE → stopbit(0xFFFFFFFE+1)=stopbit(0xFFFFFFFF). Correct. | FAST 1.1, p.23 | confirmed correct |
+| 17 | **Test: nullable u32 value 0xFFFFFFFE vector** | `test_decoder_reference_oracle.cpp:554-558`: `0xFFFFFFFE` → `0x0F 0x7F 0x7F 0x7F 0xFF` | FAST 1.1: V=0xFFFFFFFE → stopbit(0xFFFFFFFE+1)=stopbit(0xFFFFFFFF). The test vector and wire bytes are correct for this specific value. However, 0xFFFFFFFE is NOT the true nullable u32 maximum — the real maximum is UINT32_MAX (0xFFFFFFFF), which requires a widened intermediate 2^32 (see §4.31, #29). | FAST 1.1, p.23 | confirmed correct (vector only; not the true maximum) |
 | 18 | **MOEX preamble: 4-byte SeqNum before FAST body** | Not implemented in WireCursor (WireCursor operates on FAST body only) | MOEX §3.2: 4-byte preamble contains MsgSeqNum before FAST message. | spectra_fastgate_en.pdf §3.2 | No discrepancy (separate concern) |
 | 19 | **MOEX: only `constant` as explicit operator** | Code implements default (no-operator) behavior; constant is handled at template level | Exhaustive XML scan: `constant` is the only explicit operator element across all 19 MOEX templates (70 constant fields, 0 copy/delta/increment/default/tail). Fields without an operator element use the project designation `none`. | templatesT0/templates.xml (full scan, see §7) | confirmed correct |
-| 20 | **SecurityDesc uses charset="unicode"** | Not directly visible in WireCursor (WireCursor handles raw types) | templatesT0/templates.xml line 110: `<string ... charset="unicode"/>` | templates.xml | no discrepancy (handled at template level) |
+| 20 | **SecurityDesc uses charset="unicode"** | Not directly visible in WireCursor (WireCursor handles raw types) | templatesT0/templates.xml line 110: `<string ... charset="unicode"/>` | templates.xml | **no discrepancy** (handled at template level) |
 | 21 | **Reference encoder: sign-extension defect for signed i32 and i64** | `fast_reference_encoder.hpp:119-125` (i32) and `:128-147` (i64): extracts 7-bit groups from `uint32_t`/`uint64_t` via `memcpy` | FAST 1.1 §10.6.1.1 (p.23): Signed integers require sign extension to the minimum byte count. **32-bit**: INT32_MIN in 35-bit two's complement has sign bit (bit 34) = 1. Group 0 = `1111000` = `0x78`. The encoder extracts from `uint32_t` (32 bits), losing sign-extension bits [34..32], producing group 0 = `0001000` = `0x08` (sign bit = 0 → positive). **64-bit**: `encode_stopbit_i64` for INT64_MIN copies the 64-bit pattern into `uint64_t raw` via `memcpy` and extracts `(raw >> 63) & 0x7F` = `0x01` for group 0. The correct normative group 0 requires bits [69..63] = `1111111` = `0x7F` (six sign-extension bits [69..64] plus bit 63). The encoder loses bits [69..64] (all 1 for sign extension), producing `0x01` instead of `0x7F`. See §4.29 for INT64_MIN literal derivation. | FAST 1.1, p.23 | **confirmed discrepancy** (reference encoder, 32-bit and 64-bit) |
 | 22 | **Production decoder: nullable NULL detection via byte 0x00** | `wire_cursor.cpp:232,268,288`: `if (data_[pos_] == 0x00)` for nullable NULL | FAST 1.1 §10.6.1 (p.23) + Appendix 3.1.2 Ex.1 (p.33): nullable integer NULL wire = `0x80` (entity value 0x00 stop-bit encoded). The code checks for byte `0x00` (not a valid stop-bit entity) instead of reading the stop-bit value and checking for decoded 0 (wire `0x80`). | FAST 1.1, p.23 + p.33 | **confirmed discrepancy** (production decoder) |
 | 24 | **Unsigned canonical: u32 accepts overlong multi-byte encodings** | `wire_cursor.cpp:61`: `if (bytes_read > 1 && result <= 0x7Fu)` returns NonCanonical | FAST 1.1 §10.6.1 (p.23): "An integer is overlong if the entity value still represents the same integer after removing seven or more of the most significant bits." The check `result <= 0x7Fu` only rejects values that fit in 7 bits (1 byte). It does NOT reject values that fit in fewer bytes than used. Example: `[00 01 80]` (3 bytes) decodes to value 128, which passes `128 > 0x7F`, but canonical encoding is `[01 80]` (2 bytes). | FAST 1.1, p.23 | **confirmed discrepancy** (production decoder) |
@@ -583,14 +587,14 @@ Bit groups (MSB first, 7 bits each) from the 70-bit two's complement entity valu
 | 26 | **Presence map: no ERR R7 overlong check; test accepts [00 80]** | `wire_cursor.cpp:307-342`: `read_presence_map` has no overlong check; `test_decoder_primitives.cpp:357-371`: explicitly accepts `[0x00, 0x80]` as valid Ok | FAST 1.1 §10.5 (p.21): "It is a reportable error [ERR R7] if a presence map is overlong." Canonical all-zero pmap is `[0x80]` (1 byte). `[0x00, 0x80]` (2 bytes) is overlong: removing the top 7 zero data bits leaves the same all-zero value. `read_presence_map` performs no overlong check. The active test at line 364 asserts `Ok` for `[00 80]`, treating overlong as valid. | FAST 1.1, p.21 | **confirmed discrepancy** (production decoder + test) |
 | 27 | **Nullable ASCII: always sets is_null=false; decodes NULL as empty; rejects valid empty** | `wire_cursor.cpp:377-380`: `is_null = false; return read_ascii_string(out, max_bytes);` | FAST 1.1 §10.6.3 (p.24) + Appendix 3.1.3 Ex.1 (p.34): nullable ASCII NULL wire = `[0x80]` (entity value `0x00`, stop-bit encoded); empty wire = `[0x00, 0x80]` (entity value `0x00 0x00`, stop-bit encoded). `read_nullable_ascii` always sets `is_null = false` and delegates to `read_ascii_string`: (a) NULL `[80]` is decoded as non-null empty string (data_bits=0, stop → Ok empty); (b) empty `[00 80]` is rejected as InvalidEncoding (zero preamble in continuation byte). | FAST 1.1, p.24 + p.34 | **confirmed discrepancy** (production decoder) |
 | 28 | **Nullable ASCII: no active primitive tests** | `test_decoder_primitives.cpp`: `main()` test list (lines 570-584) has no `test_nullable_ascii` | FAST 1.1 §10.6.3 (p.24) + Appendix 3.1.3 Ex.1 (p.34): The approved RT-3 test plan requires separate nullable ASCII NULL and empty tests. No `test_nullable_ascii` function exists; `read_nullable_ascii` is never called. | FAST 1.1, p.24 + p.34 | **confirmed discrepancy** (test gap) |
-| 29 | **Nullable maximum values: production readers cannot decode widened intermediates; no tests for real maxima** | `wire_cursor.cpp`: `read_nullable_u32`/`i32`/`u64`/`i64` decode into non-widened target type | FAST 1.1 §10.6.1 (p.23): non-negative nullable values are incremented by 1 before encoding. True nullable maxima require widened intermediates: UINT32_MAX → raw 2^32 → `[10 00 00 00 80]`; INT32_MAX → raw 2^31 → `[08 00 00 00 80]`; UINT64_MAX → raw 2^64 → `[02 00 00 00 00 00 00 00 00 80]`; INT64_MAX → raw 2^63 → `[01 00 00 00 00 00 00 00 00 80]`. Production readers decode into `uint32_t`/`int32_t`/`uint64_t`/`int64_t` before applying the nullable inverse, so these valid intermediate values overflow the target type. The reference test only labels `0xFFFFFFFE` as the nullable u32 "max" (encoding non-widened 0xFFFFFFFF) and does not test the real maxima. The signed reference encoder's `val+1` wrap produces the correct bytes for INT64_MAX only by coincidence (positive value, no sign extension needed) — not by independent correct derivation. See §4.31–§4.34 for literal derivations. | FAST 1.1, p.23 | **confirmed discrepancy** (production decoder + reference test gap) |
+| 29 | **Nullable maximum values: production readers cannot decode widened intermediates; unsigned encoder NULL collision; no tests for real maxima** | `wire_cursor.cpp`: `read_nullable_u32`/`i32`/`u64`/`i64` decode into non-widened target type | FAST 1.1 §10.6.1 (p.23): non-negative nullable values are incremented by 1 before encoding. True nullable maxima require widened intermediates: UINT32_MAX → raw 2^32 → `[10 00 00 00 80]`; INT32_MAX → raw 2^31 → `[08 00 00 00 80]`; UINT64_MAX → raw 2^64 → `[02 00 00 00 00 00 00 00 00 80]`; INT64_MAX → raw 2^63 → `[01 00 00 00 00 00 00 00 00 80]`. Production readers decode into `uint32_t`/`int32_t`/`uint64_t`/`int64_t` before applying the nullable inverse, so these valid intermediate values overflow the target type. **Unsigned encoder defect**: `encode_nullable_u32(UINT32_MAX)` and `encode_nullable_u64(UINT64_MAX)` compute `val+1` in the original unsigned width, wrapping to zero; the ordinary encoder then emits `[0x80]`, which collides with the correct nullable NULL wire value. **Signed encoder note**: For signed maxima, `val+1` wrap stores `INT32_MIN`/`INT64_MIN` bit patterns (not a representable positive widened intermediate); the desired maximum bytes occur only accidentally through the separately broken sign-extension encoder (#21) — this is not a correct widened derivation. The reference test only labels `0xFFFFFFFE` as the nullable u32 "max" (#17) and does not test the real maxima. No test exercises `UINT32_MAX`/`UINT64_MAX` nullable encoding. See §4.31–§4.34 for literal derivations. | FAST 1.1, p.23 | **confirmed discrepancy** (production decoder + reference encoder unsigned NULL collision + reference test gap) |
 | 30 | **Reference encoder: presence-map encoder is non-canonical** | `fast_reference_encoder.hpp` `encode_presence_map`: always emits `ceil(bit_count/7)` groups | FAST 1.1 §10.5 (p.21): "It is a reportable error [ERR R7] if a presence map is overlong." Trailing all-zero groups must be truncated. The encoder always emits `ceil(bit_count/7)` groups regardless of trailing zeros, so it generates ERR R7 overlong maps. This is the same class of defect as #26 (production decoder + test accept overlong pmap), but in the reference encoder/oracle. | FAST 1.1, p.21 | **confirmed discrepancy** (reference encoder) |
 
 ### Summary of Discrepancies
 
-The comparison table contains 29 numbered rows (#1–#22, #24–#30; original #23 consolidated into #5, original #29 consolidated into #21, new #29 and #30 added). Plus 2 unresolved items outside the table. All categories are mutually exclusive; no item appears in more than one category.
+The comparison table contains 29 numbered rows (#1–#22, #24–#30; original #23 consolidated into #5, new #29 and #30 added). Plus 2 unresolved items outside the table. All categories are mutually exclusive; no item appears in more than one category.
 
-**Confirmed discrepancies (17)**:
+**Confirmed discrepancies (18)**:
 - **#1, #2, #22** (production decoder `wire_cursor.cpp`): Nullable signed decode applies `raw - 1` unconditionally instead of only for non-negative decoded values. Nullable NULL detection checks byte `0x00` instead of stop-bit decoded value 0 (wire `0x80`). INT32_MIN is rejected as overflow due to the unconditional decrement.
 - **#3** (production decoder): Nullable unsigned NULL detection checks byte `0x00` instead of stop-bit decoded 0; rejects wire `0x80` (the correct NULL encoding) as NonCanonical.
 - **#5** (production decoder): Signed i64 pre-shift overflow guard computes sign from `raw >> 63` (always 0 after 9 bytes). The normative first wire group for INT64_MIN is `0x7F`, but `raw >> 57` extracts bits [62..57] = `0x3F`; the guard rejects INT64_MIN because `0x3F ≠ 0x00` → IntegerOverflow. (Consolidates former #23.)
@@ -602,7 +606,7 @@ The comparison table contains 29 numbered rows (#1–#22, #24–#30; original #2
 - **#13** (reference encoder): Nullable integer NULL encoded as `0x00` instead of `0x80`.
 - **#14, #15** (reference encoder): Nullable signed i32/i64 applies `val+1` to all values instead of only non-negative values.
 - **#16** (test expectation): Test expects nullable signed -1 → wire `0x80`, but per the spec rule (only non-negative values incremented), -1 should encode as `0xFF`.
-- **#29** (production decoder + reference test gap): Nullable maximum values require widened intermediates (e.g. UINT32_MAX → raw 2^32, INT64_MAX → raw 2^63). Production readers decode into non-widened target types, so these valid maxima overflow. The reference test does not exercise the real maxima.
+- **#29** (production decoder + reference encoder + reference test gap): Nullable maximum values require widened intermediates (e.g. UINT32_MAX → raw 2^32, INT64_MAX → raw 2^63). Production readers decode into non-widened target types, so these valid maxima overflow. `encode_nullable_u32(UINT32_MAX)` and `encode_nullable_u64(UINT64_MAX)` wrap `val+1` to zero, emitting `[0x80]` — the same wire bytes as nullable NULL. For signed maxima, `val+1` wrap stores `INT32_MIN`/`INT64_MIN` bit patterns; the desired bytes occur only accidentally through the broken sign-extension encoder (#21). The reference test does not exercise the real unsigned maxima.
 - **#30** (reference encoder): `encode_presence_map` always emits `ceil(bit_count/7)` groups without trimming trailing all-zero groups, generating ERR R7 overlong maps.
 
 **Structurally correct only (3)**:
@@ -610,7 +614,7 @@ The comparison table contains 29 numbered rows (#1–#22, #24–#30; original #2
 - **#11** (nullable byte vector): Call structure matches spec (`read_nullable_u32` for length), but `read_nullable_u32` has confirmed defects (#3, #22).
 - **#12** (nullable decimal): Call structure matches spec (nullable exponent, skip mantissa if null), but exponent is nullable signed i32 with confirmed defects (#1, #2, #22).
 
-**Confirmed correct (7)**: Items #4, #6, #7, #8, #9, #17, #19 — confirmed correct against the authoritative sources (FAST 1.1 specification and MOEX SPECTRA specification v1.30.2).
+**Confirmed correct (6)**: Items #4, #6, #7, #8, #9, #19 — confirmed correct against the authoritative sources (FAST 1.1 specification and MOEX SPECTRA specification v1.30.2). Item #17 is confirmed correct for the specific tested vector (nullable u32 value 0xFFFFFFFE), but is not the true nullable maximum (see #29).
 
 **No discrepancy (2)**: Items #18, #20 — not discrepancies: #18 is a separate concern not handled by WireCursor; #20 is handled at the template level and does not represent a code discrepancy.
 
@@ -618,7 +622,7 @@ The comparison table contains 29 numbered rows (#1–#22, #24–#30; original #2
 - **Preamble endianness**: The MOEX specification does not specify the byte order of the 4-byte preamble (§3.2, spectra_fastgate_en.pdf).
 - **meta.info fetch**: The cause of the HTTP 404 when fetching `meta.info` from the MOEX FTP is unresolved (see §2.2).
 
-**Totals**: 17 confirmed discrepancies + 3 structurally correct + 7 confirmed correct + 2 no discrepancy = 29 items in the comparison table; 2 unresolved items outside the table = 31 total classified items.
+**Totals**: 18 confirmed discrepancies + 3 structurally correct + 6 confirmed correct + 2 no discrepancy = 29 items in the comparison table; 2 unresolved items outside the table = 31 total classified items.
 
 ---
 
