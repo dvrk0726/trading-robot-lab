@@ -997,13 +997,6 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     }
 
     if (elem_name == "sequence") {
-        // D. Nesting accounting: reject before descending into subtree
-        if (nesting_depth + 1 > ctx.limits.max_nesting_depth) {
-            ctx.error("excessive_nesting",
-                      "Nesting depth exceeds limit at " + field_path, field_path);
-            return f;
-        }
-
         f.wire_type = DecWireType::Sequence;
         f.is_sequence = true;
         f.has_pmap_bit = true;
@@ -1103,13 +1096,6 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     }
 
     if (elem_name == "group") {
-        // D. Nesting accounting: reject before descending into subtree
-        if (nesting_depth + 1 > ctx.limits.max_nesting_depth) {
-            ctx.error("excessive_nesting",
-                      "Nesting depth exceeds limit at " + field_path, field_path);
-            return f;
-        }
-
         f.wire_type = DecWireType::Group;
         f.has_children = true;
         f.has_pmap_bit = !f.is_mandatory;
@@ -1225,6 +1211,15 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
                           parent_path + ": the accepted profile does not use references", parent_path);
             }
             continue;
+        }
+
+        // D. Nesting depth accounting: reject before budget reservation, index increment, or subtree descent
+        if (nesting_depth > ctx.limits.max_nesting_depth) {
+            ctx.error("excessive_nesting",
+                      "Nesting depth exceeds limit in " +
+                      (parent_path.empty() ? std::string("template") : parent_path),
+                      parent_path);
+            return;
         }
 
         // C. Early field/node accounting: check budget before allocating

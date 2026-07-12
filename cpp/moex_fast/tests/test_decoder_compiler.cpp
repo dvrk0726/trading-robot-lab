@@ -2163,7 +2163,7 @@ static void test_9B2_xmlns_not_ordinary_attribute() {
     TEST_PASS("9B2_xmlns_not_ordinary_attribute");
 }
 
-// === 9B2 phase 3 tests ===
+// === 9B3 tests ===
 
 // Test 1: Each caller limit above its hard ceiling returns compile_limit_exceeds_hard_ceiling
 static void test_hard_ceiling_max_templates() {
@@ -2286,8 +2286,7 @@ static void test_max_templates_includes_invalid() {
   <template id="2" name="Msg"><uInt32 name="F2"/></template>
 </templates>)";
         auto r = compile_templates_from_string(xml, lim);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "excessive_templates"));
+        check_invalid_compile_9B2(r, "excessive_templates");
     }
     // First template invalid (duplicate id), second exceeds budget
     {
@@ -2298,8 +2297,7 @@ static void test_max_templates_includes_invalid() {
   <template id="3" name="C"><uInt32 name="F3"/></template>
 </templates>)";
         auto r = compile_templates_from_string(xml, lim);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "excessive_templates"));
+        check_invalid_compile_9B2(r, "excessive_templates");
     }
     TEST_PASS("max_templates_includes_invalid");
 }
@@ -2401,17 +2399,19 @@ static void test_field_accounting_nested() {
     TEST_PASS("field_accounting_nested");
 }
 
-// Test 6: Prohibited composite node rejected before descending into subtree
+// Test 6: First valid child at excessive depth rejected before invalid subtree is inspected
 static void test_composite_rejected_before_subtree() {
     CompileLimits lim;
     lim.max_nesting_depth = 1;
-    // Group at depth 1 (inside template at depth 0) with invalid child inside
-    // excessive_nesting should fire, NOT the unknown_element from the subtree
+    // Group at depth 0 containing nested group at depth 1;
+    // first valid child at depth 2 triggers excessive_nesting
+    // before the invalid construct below it is inspected
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <group name="G">
       <group name="Inner">
+        <uInt32 name="F1"/>
         <bogusWidget name="X"/>
       </group>
     </group>
@@ -2420,6 +2420,7 @@ static void test_composite_rejected_before_subtree() {
     auto r = compile_templates_from_string(xml, lim);
     CHECK(!r.ok);
     CHECK(has_issue(r, "excessive_nesting"));
+    CHECK(!has_issue(r, "unknown_element"));
     CHECK(!r.compiled.valid());
     CHECK(r.compiled.empty());
     CHECK_EQ(r.compiled.size(), 0u);
@@ -2536,6 +2537,79 @@ static void test_mixed_field_index_contiguous() {
     CHECK_EQ(fields[3].children[0].index, 5u);  // DL (length)
     CHECK_EQ(fields[3].children[1].index, 6u);  // D1 (entry)
     TEST_PASS("mixed_field_index_contiguous");
+}
+
+// === 9B3 focused evidence ===
+
+// max_nesting_depth=0: top-level empty group accepted at depth 0
+static void test_nesting_depth_zero_empty_group() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 0;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G"/>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    CHECK(!r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 1u);
+    CHECK_EQ(r.compiled.templates()[0].fields.size(), 1u);
+    CHECK(r.compiled.templates()[0].fields[0].has_children);
+    TEST_PASS("nesting_depth_zero_empty_group");
+}
+
+// max_nesting_depth=1: top-level group containing empty nested group accepted at depth 1
+static void test_nesting_depth_one_empty_nested_group() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G">
+      <group name="Inner"/>
+    </group>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    CHECK(!r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 1u);
+    CHECK_EQ(r.compiled.templates()[0].fields.size(), 1u);
+    CHECK(r.compiled.templates()[0].fields[0].has_children);
+    CHECK_EQ(r.compiled.templates()[0].fields[0].children.size(), 1u);
+    CHECK(r.compiled.templates()[0].fields[0].children[0].has_children);
+    TEST_PASS("nesting_depth_one_empty_nested_group");
+}
+
+// Field-budget precedence: composite node exceeding max_fields_per_template
+// returns excessive_fields before inspecting its invalid subtree
+static void test_field_budget_precedence_over_subtree() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <group name="G">
+      <bogusWidget name="X"/>
+    </group>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "excessive_fields"));
+    CHECK(!has_issue(r, "unknown_element"));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("field_budget_precedence_over_subtree");
 }
 
 int main() {
@@ -2660,6 +2734,10 @@ int main() {
     test_nesting_boundary();
     test_decimal_field_budget_count();
     test_mixed_field_index_contiguous();
+    // 9B3 focused evidence
+    test_nesting_depth_zero_empty_group();
+    test_nesting_depth_one_empty_nested_group();
+    test_field_budget_precedence_over_subtree();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }
