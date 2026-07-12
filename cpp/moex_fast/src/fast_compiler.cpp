@@ -857,7 +857,7 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
 void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
                   const std::string& template_name, CompileCtx& ctx,
                   const std::string& parent_path, std::uint32_t nesting_depth,
-                  std::uint32_t& field_index);
+                  std::uint32_t& field_index, bool parent_is_sequence);
 
 CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
                           const std::string& template_name, CompileCtx& ctx,
@@ -989,7 +989,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         }
 
         std::vector<CompiledField> entry_fields;
-        parse_fields(node, entry_fields, template_name, ctx, field_path, nesting_depth + 1, field_index);
+        parse_fields(node, entry_fields, template_name, ctx, field_path, nesting_depth + 1, field_index, true);
 
         for (auto& ef : entry_fields) {
             f.children.push_back(std::move(ef));
@@ -1003,7 +1003,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         f.has_children = true;
         f.has_pmap_bit = !f.is_mandatory;
 
-        parse_fields(node, f.children, template_name, ctx, field_path, nesting_depth + 1, field_index);
+        parse_fields(node, f.children, template_name, ctx, field_path, nesting_depth + 1, field_index, false);
         return f;
     }
 
@@ -1051,7 +1051,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
 void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
                   const std::string& template_name, CompileCtx& ctx,
                   const std::string& parent_path, std::uint32_t nesting_depth,
-                  std::uint32_t& field_index) {
+                  std::uint32_t& field_index, bool parent_is_sequence) {
     for (auto child : parent.children()) {
         std::string name(child.name());
 
@@ -1069,7 +1069,13 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
             continue;
         }
 
-        if (name == "length") continue;
+        if (name == "length") {
+            if (parent_is_sequence) continue;
+            ctx.error("unknown_element",
+                      "Misplaced <length> in " +
+                      (parent_path.empty() ? std::string("template") : parent_path), parent_path);
+            continue;
+        }
 
         if (!is_known_field_element(name) && !is_reference_element(name)) {
             ctx.error("unknown_element",
@@ -1205,7 +1211,7 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
         ctx.seen_ids.insert(ct.id);
 
         std::uint32_t field_index = 0;
-        parse_fields(tmpl, ct.fields, ct.name, ctx, "", 0, field_index);
+        parse_fields(tmpl, ct.fields, ct.name, ctx, "", 0, field_index, false);
 
         if (field_index > limits.max_fields_per_template) {
             ctx.error("excessive_fields",

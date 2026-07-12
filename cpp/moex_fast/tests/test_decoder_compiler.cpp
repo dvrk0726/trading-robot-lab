@@ -1132,7 +1132,7 @@ static void test_structural_misplaced_operator_in_template() {
     TEST_PASS("structural_misplaced_operator_in_template");
 }
 
-// Length at template level is accepted as a field (processed by parse_field)
+// Misplaced length at template level returns unknown_element
 static void test_structural_length_at_template_level() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -1143,9 +1143,25 @@ static void test_structural_length_at_template_level() {
 </templates>)";
 
     auto r = compile_templates_from_string(xml);
-    CHECK(r.ok);
-    CHECK(r.compiled.valid());
+    check_invalid_compile_9B1(r, "unknown_element");
     TEST_PASS("structural_length_at_template_level");
+}
+
+// Misplaced length at group level returns unknown_element
+static void test_structural_length_at_group_level() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G">
+      <length name="L"/>
+      <uInt32 name="F1"/>
+    </group>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_length_at_group_level");
 }
 
 // Misplaced exponent in template returns unknown_element
@@ -1594,6 +1610,7 @@ int main() {
     test_structural_unknown_root_child();
     test_structural_misplaced_operator_in_template();
     test_structural_length_at_template_level();
+    test_structural_length_at_group_level();
     test_structural_misplaced_exponent_in_template();
     test_structural_misplaced_mantissa_in_template();
     test_structural_misplaced_operator_in_group();
