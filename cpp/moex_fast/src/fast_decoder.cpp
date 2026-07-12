@@ -30,7 +30,7 @@ struct JournalEntry {
 
 // --- PImpl ---
 struct DecoderSession::Impl {
-    const CompiledTemplateSet* templates;
+    CompiledTemplateSet templates;
     DecodeLimits limits;
 
     // Session state
@@ -1114,6 +1114,19 @@ struct DecoderSession::Impl {
     // --- Main decode entry point ---
     DecodeResult do_decode(const std::uint8_t* data, std::size_t size, bool exact) {
         DecodeResult result;
+
+        // Invalid handle: fail before reading input or changing state
+        if (!templates.valid()) {
+            result.status = DecodeStatus::InternalError;
+            result.bytes_consumed = 0;
+            DecodeIssue issue;
+            issue.code = "invalid_compiled_template_set";
+            issue.offset = 0;
+            issue.message = "CompiledTemplateSet is invalid or empty";
+            result.issues.push_back(std::move(issue));
+            return result;
+        }
+
         DecodeCtx ctx;
         ctx.cursor = WireCursor(data, size);
         ctx.node_count = 0;
@@ -1160,7 +1173,7 @@ struct DecoderSession::Impl {
                 return result;
             }
 
-            if (!templates->find(template_id)) {
+            if (!templates.find(template_id)) {
                 rollback();
                 result.status = DecodeStatus::UnknownTemplate;
                 ctx.set_error(DecodeStatus::UnknownTemplate, "unknown_template",
@@ -1180,7 +1193,7 @@ struct DecoderSession::Impl {
             template_id = prev_template_id;
         }
 
-        ctx.tmpl = templates->find(template_id);
+        ctx.tmpl = templates.find(template_id);
         if (!ctx.tmpl) {
             rollback();
             result.status = DecodeStatus::UnknownTemplate;
@@ -1278,7 +1291,7 @@ struct DecoderSession::Impl {
 
 DecoderSession::DecoderSession(const CompiledTemplateSet& templates, const DecodeLimits& limits)
     : impl_(std::make_unique<Impl>()) {
-    impl_->templates = &templates;
+    impl_->templates = templates;
     impl_->limits = Impl::enforce_hard_ceilings(limits);
 }
 
@@ -1306,7 +1319,7 @@ SessionFingerprint DecoderSession::fingerprint() const {
 }
 
 const CompiledTemplateSet& DecoderSession::templates() const {
-    return *impl_->templates;
+    return impl_->templates;
 }
 
 }  // namespace moex_fast

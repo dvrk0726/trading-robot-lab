@@ -654,33 +654,38 @@ std::uint32_t count_pmap_bits(const std::vector<CompiledField>& fields) {
     return bits;
 }
 
-// Detect cycles in template references (simple DFS)
-bool detect_cycles(const CompiledTemplateSet& /*ts*/) {
-    // For the accepted profile, templates don't cross-reference each other
-    // This is a placeholder for future templateRef resolution
-    return false;
-}
+// Intermediate result from parsing; sealed into CompiledTemplateSet by the friend functions.
+struct CompileDraft {
+    std::vector<CompiledTemplate> templates;
+    std::map<std::uint32_t, std::size_t> id_to_index;
+    std::string templates_sha256;
+    std::string compiler_version = "0.2.0";
+    std::string schema_version = "1.0";
+    std::size_t templates_file_size = 0;
+    std::vector<CompileIssue> issues;
+    bool ok = false;
+};
 
-CompileResult compile_from_doc(pugi::xml_document& doc, const std::string& xml_content,
-                                const CompileLimits& limits) {
-    CompileResult result;
+CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_content,
+                               const CompileLimits& limits) {
+    CompileDraft draft;
     CompileCtx ctx;
     ctx.limits = limits;
 
-    result.compiled.templates_sha256 = compute_sha256_bytes(
+    draft.templates_sha256 = compute_sha256_bytes(
         reinterpret_cast<const std::uint8_t*>(xml_content.data()), xml_content.size());
-    result.compiled.templates_file_size = xml_content.size();
+    draft.templates_file_size = xml_content.size();
 
     auto root = doc.child("templates");
     if (!root) root = doc.child("TemplateConfiguration");
     if (!root) {
         ctx.error("missing_root", "Missing root element <templates>");
-        result.issues = std::move(ctx.issues);
-        return result;
+        draft.issues = std::move(ctx.issues);
+        return draft;
     }
 
     for (auto tmpl : root.children("template")) {
-        if (result.compiled.templates.size() >= limits.max_templates) {
+        if (draft.templates.size() >= limits.max_templates) {
             ctx.error("excessive_templates", "Template count exceeds limit");
             break;
         }
@@ -730,23 +735,15 @@ CompileResult compile_from_doc(pugi::xml_document& doc, const std::string& xml_c
 
         ct.total_pmap_bits = count_pmap_bits(ct.fields);
 
-        std::size_t idx = result.compiled.templates.size();
-        result.compiled.templates.push_back(std::move(ct));
-        result.compiled.id_to_index[result.compiled.templates.back().id] = idx;
+        std::size_t idx = draft.templates.size();
+        draft.templates.push_back(std::move(ct));
+        draft.id_to_index[draft.templates.back().id] = idx;
     }
 
-    // Check for dictionary key collisions
-    // (dict_key_to_path is populated during field parsing)
-
-    // Detect cycles
-    if (detect_cycles(result.compiled)) {
-        ctx.error("cyclic_reference", "Cyclic reference detected in templates");
-    }
-
-    // Any issue makes the compiled set unusable
-    result.ok = ctx.issues.empty() && !result.compiled.templates.empty();
-    result.issues = std::move(ctx.issues);
-    return result;
+    // Any issue makes the compiled set unusable; seal only on zero issues + at least one template
+    draft.ok = ctx.issues.empty() && !draft.templates.empty();
+    draft.issues = std::move(ctx.issues);
+    return draft;
 }
 
 }  // namespace
@@ -770,7 +767,20 @@ CompileResult compile_templates(const std::string& xml_path, const CompileLimits
         return result;
     }
 
-    return compile_from_doc(doc, content, limits);
+    auto draft = compile_from_doc(doc, content, limits);
+    result.ok = draft.ok;
+    result.issues = std::move(draft.issues);
+    if (draft.ok) {
+        CompiledTemplateSet::Builder b;
+        b.templates = std::move(draft.templates);
+        b.id_to_index = std::move(draft.id_to_index);
+        b.templates_sha256 = std::move(draft.templates_sha256);
+        b.compiler_version = std::move(draft.compiler_version);
+        b.schema_version = std::move(draft.schema_version);
+        b.templates_file_size = draft.templates_file_size;
+        result.compiled = CompiledTemplateSet::seal(std::move(b));
+    }
+    return result;
 }
 
 CompileResult compile_templates_from_string(const std::string& xml_content, const CompileLimits& limits) {
@@ -784,7 +794,20 @@ CompileResult compile_templates_from_string(const std::string& xml_content, cons
         return result;
     }
 
-    return compile_from_doc(doc, xml_content, limits);
+    auto draft = compile_from_doc(doc, xml_content, limits);
+    result.ok = draft.ok;
+    result.issues = std::move(draft.issues);
+    if (draft.ok) {
+        CompiledTemplateSet::Builder b;
+        b.templates = std::move(draft.templates);
+        b.id_to_index = std::move(draft.id_to_index);
+        b.templates_sha256 = std::move(draft.templates_sha256);
+        b.compiler_version = std::move(draft.compiler_version);
+        b.schema_version = std::move(draft.schema_version);
+        b.templates_file_size = draft.templates_file_size;
+        result.compiled = CompiledTemplateSet::seal(std::move(b));
+    }
+    return result;
 }
 
 std::string compute_sha256_bytes(const std::uint8_t* data, std::size_t len) {

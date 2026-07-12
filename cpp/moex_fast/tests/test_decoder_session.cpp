@@ -3,6 +3,7 @@
 #include "test_check.hpp"
 #include <iostream>
 #include <vector>
+#include <functional>
 
 using namespace moex_fast;
 
@@ -30,9 +31,6 @@ static std::vector<std::uint8_t> hex(const char* h) {
 
 // Test: decode a single message with constants and mandatory integers
 static void test_single_message_constants() {
-    // Template: constant string + mandatory uInt32
-    // Template ID 100, pmap bit for template-id = 1
-    // Wire: pmap(1 bit for tmpl-id), tmpl-id=100, constant="HI", SeqNum=42
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="100" name="SimpleMsg">
@@ -46,13 +44,9 @@ static void test_single_message_constants() {
     // Encode manually:
     // pmap: bit0=1 (template-id present) -> single byte with stop bit
     // pmap byte: 0xC0 (bit6=1 for tmpl-id, rest zero, stop bit set)
-    // Wait: pmap is read as MSB-first within each byte, with stop bit in bit 7.
-    // For 1 pmap bit (template-id): data bit is bit 6 of first byte.
-    // Set bit 6 = 1: byte = 0x40 | 0x80 = 0xC0
     // template-id = 100 -> stop-bit: 0x64 | 0x80 = 0xE4
-    // Const "HI": stop-bit terminated ASCII: 0x48 0x49 0x00
+    // Const "HI": consumes NO wire bytes.
     // SeqNum = 42 -> stop-bit: 0x2A | 0x80 = 0xAA
-    // Constant "HI" consumes NO wire bytes. Data = pmap + tmpl-id + SeqNum only.
     auto data = hex("C0" "E4" "AA");
 
     DecoderSession session(ts);
@@ -87,13 +81,9 @@ static void test_template_id_reuse() {
     auto ts = compile_minimal(xml);
 
     // Message 1: template-id present (10), Val=100
-    // pmap: bit0=1 -> 0xC0, tmpl-id=10 -> 0x8A, Val=100 -> 0x64|0x80 = 0xE4
     auto msg1 = hex("C0" "8A" "E4");
 
     // Message 2: template-id absent (reuse 10), Val=200
-    // pmap: bit0=0 -> 0x80 (stop bit, no data bits set)
-    // Val=200 -> 0x01 0x48... let me compute: 200 = 0xC8
-    // 200 >> 7 = 1, 200 & 0x7F = 0x48. So 0x01 0xC8
     auto msg2 = hex("80" "01C8");
 
     DecoderSession session(ts);
@@ -139,7 +129,7 @@ static void test_unknown_template_id() {
 
     auto ts = compile_minimal(xml);
 
-    // pmap: bit0=1 -> 0xC0, tmpl-id=99 -> 0x63|0x80 = 0xE3... wait 99 = 0x63, |0x80 = 0xE3
+    // pmap: bit0=1 -> 0xC0, tmpl-id=99 -> 0x63|0x80 = 0xE3
     auto data = hex("C0" "E3");
     DecoderSession session(ts);
     auto result = session.decode_one(data.data(), data.size());
@@ -159,7 +149,6 @@ static void test_trailing_bytes() {
     auto ts = compile_minimal(xml);
 
     // Valid message + trailing byte
-    // pmap: 0xC0, tmpl-id=10 -> 0x8A, Val=1 -> 0x81, trailing=0xFF
     auto data = hex("C0" "8A" "81" "FF");
     DecoderSession session(ts);
     auto result = session.decode_exact(data.data(), data.size());
@@ -178,8 +167,7 @@ static void test_bytes_consumed() {
 
     auto ts = compile_minimal(xml);
 
-    // Two messages concatenated. First: pmap=0xC0, tmpl=0x8A, val=0x81
-    // Second: pmap=0xC0, tmpl=0x8A, val=0x82
+    // Two messages concatenated.
     auto data = hex("C0" "8A" "81" "C0" "8A" "82");
 
     DecoderSession session(ts);
@@ -234,14 +222,8 @@ static void test_optional_null() {
 
     auto ts = compile_minimal(xml);
 
-    // pmap: bit0=1 (tmpl-id), bit1=1 (Val present but null)
-    // Byte: data bits are bit6=tmpl-id, bit5=Val
-    // Set bit6=1, bit5=0 (absent): 0x40 | 0x80 = 0xC0
-    // Hmm, bit5=0 means absent. Let me use: bit6=1, bit5=1 (present but null)
-    // Actually, for optional fields: pmap bit = 1 means "present on wire", 0 means "use previous/initial"
-    // For none operator with optional: pmap=1 means read from wire, pmap=0 means null
-    // So to get null: set pmap bit to 0
-    // pmap bits: [tmpl-id=1, Val=0] -> byte: bit6=1, bit5=0 -> 0x40 | 0x80 = 0xC0
+    // pmap: bit0=1 (tmpl-id), bit1=0 (Val absent/null)
+    // Byte: bit6=1, bit5=0 -> 0x40 | 0x80 = 0xC0
     auto data = hex("C0" "8A");  // tmpl-id=10, Val absent (null)
 
     DecoderSession session(ts);
@@ -254,6 +236,119 @@ static void test_optional_null() {
     TEST_PASS("optional_null");
 }
 
+// --- New tests for round 9A ---
+
+// Test: templates() returns const reference to session-owned handle
+static void test_session_templates_accessor() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg"><uInt32 name="Val"/></template>
+</templates>)";
+
+    auto ts = compile_minimal(xml);
+    DecoderSession session(ts);
+
+    const auto& handle = session.templates();
+    CHECK(handle.valid());
+    CHECK_EQ(handle.size(), 1u);
+    CHECK_EQ(handle.find(10)->name, "Msg");
+
+    // Type check: must be const reference
+    static_assert(std::is_same_v<
+        decltype(session.templates()),
+        const CompiledTemplateSet&>,
+        "templates() must return const CompiledTemplateSet&");
+
+    TEST_PASS("session_templates_accessor");
+}
+
+// Test 5: DecoderSession lifetime — session from local CompileResult works after result destroyed
+static void test_session_lifetime() {
+    // Create session via helper/lambda that destroys local compile result
+    auto make_session = []() -> DecoderSession {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg10">
+    <uInt32 name="Val" id="1"/>
+  </template>
+</templates>)";
+        auto result = compile_templates_from_string(xml);
+        CHECK(result.ok);
+        // Construct session from local result's handle
+        DecoderSession s(result.compiled);
+        // result goes out of scope here — session must still work
+        return s;
+    };
+
+    DecoderSession session = make_session();
+
+    // Session must still be functional after local CompileResult destroyed
+    auto data = hex("C0" "8A" "81");
+    auto r = session.decode_one(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.template_id, 10u);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[0].value), 1u);
+
+    // Templates accessor must still return valid handle
+    CHECK(session.templates().valid());
+    CHECK_EQ(session.templates().size(), 1u);
+
+    TEST_PASS("session_lifetime");
+}
+
+// Test 6: invalid-handle session returns InternalError, zero consumption, unchanged fingerprint
+static void test_invalid_handle_session() {
+    // Default-constructed (invalid) handle
+    CompiledTemplateSet invalid;
+    CHECK(!invalid.valid());
+
+    DecoderSession session(invalid);
+
+    // Fingerprint before decode
+    auto fp_before = session.fingerprint();
+
+    // decode_one must return InternalError
+    auto data = hex("C0" "8A" "81");
+    auto r1 = session.decode_one(data.data(), data.size());
+    CHECK(r1.status == DecodeStatus::InternalError);
+    CHECK_EQ(r1.bytes_consumed, 0u);
+    CHECK(!r1.issues.empty());
+    CHECK_EQ(r1.issues[0].code, "invalid_compiled_template_set");
+    CHECK_EQ(r1.issues[0].offset, 0u);
+
+    // decode_exact must also return InternalError
+    auto r2 = session.decode_exact(data.data(), data.size());
+    CHECK(r2.status == DecodeStatus::InternalError);
+    CHECK_EQ(r2.bytes_consumed, 0u);
+    CHECK(!r2.issues.empty());
+    CHECK_EQ(r2.issues[0].code, "invalid_compiled_template_set");
+    CHECK_EQ(r2.issues[0].offset, 0u);
+
+    // Fingerprint must be unchanged (session state unmodified)
+    auto fp_after = session.fingerprint();
+    CHECK_EQ(fp_before.has_template_id, fp_after.has_template_id);
+    CHECK_EQ(fp_before.template_id, fp_after.template_id);
+    CHECK_EQ(fp_before.dict_entry_count, fp_after.dict_entry_count);
+    CHECK_EQ(fp_before.dict_hash, fp_after.dict_hash);
+
+    TEST_PASS("invalid_handle_session");
+}
+
+// Test: session from invalid handle; decode_exact variant
+static void test_invalid_handle_session_exact() {
+    CompiledTemplateSet invalid;
+    DecoderSession session(invalid);
+
+    auto data = hex("C0" "8A" "81");
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::InternalError);
+    CHECK_EQ(r.bytes_consumed, 0u);
+    CHECK_EQ(r.issues[0].code, "invalid_compiled_template_set");
+    CHECK_EQ(r.issues[0].offset, 0u);
+
+    TEST_PASS("invalid_handle_session_exact");
+}
+
 int main() {
     test_single_message_constants();
     test_template_id_reuse();
@@ -263,6 +358,10 @@ int main() {
     test_bytes_consumed();
     test_reset();
     test_optional_null();
+    test_session_templates_accessor();
+    test_session_lifetime();
+    test_invalid_handle_session();
+    test_invalid_handle_session_exact();
     std::cout << "All decoder session tests passed.\n";
     return 0;
 }

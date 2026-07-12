@@ -117,16 +117,71 @@ struct CompiledTemplate {
     std::uint32_t total_pmap_bits = 0;
 };
 
-// --- Compiled template set (immutable after compilation) ---
-struct CompiledTemplateSet {
-    std::vector<CompiledTemplate> templates;
-    std::map<std::uint32_t, std::size_t> id_to_index;  // ordered map for determinism
-    std::string templates_sha256;
-    std::string compiler_version = "0.2.0";
-    std::string schema_version = "1.0";
-    std::size_t templates_file_size = 0;
+// Forward declarations for compiler (friend of CompiledTemplateSet)
+struct CompileLimits;
+struct CompileResult;
+CompileResult compile_templates_from_string(const std::string& xml_content, const CompileLimits& limits);
+CompileResult compile_templates(const std::string& xml_path, const CompileLimits& limits);
 
+// --- Compiled template set (immutable shared-handle) ---
+class CompiledTemplateSet {
+public:
+    // Default construction produces an invalid/empty handle.
+    CompiledTemplateSet();
+
+    // Copyable and movable; copies share immutable storage.
+    CompiledTemplateSet(const CompiledTemplateSet&) = default;
+    CompiledTemplateSet& operator=(const CompiledTemplateSet&) = default;
+    CompiledTemplateSet(CompiledTemplateSet&&) noexcept = default;
+    CompiledTemplateSet& operator=(CompiledTemplateSet&&) noexcept = default;
+
+    // Const observers
+    bool valid() const;
+    bool empty() const;
+    std::size_t size() const;
+
+    // Ordered const template collection
+    const std::vector<CompiledTemplate>& templates() const;
+
+    // Lookup by id (returns nullptr if not found or handle invalid)
     const CompiledTemplate* find(std::uint32_t id) const;
+
+    // Provenance (empty/zero on invalid handle)
+    const std::string& templates_sha256() const;
+    const std::string& compiler_version() const;
+    const std::string& schema_version() const;
+    std::size_t templates_file_size() const;
+
+private:
+    struct Storage {
+        std::vector<CompiledTemplate> templates;
+        std::map<std::uint32_t, std::size_t> id_to_index;
+        std::string templates_sha256;
+        std::string compiler_version = "0.2.0";
+        std::string schema_version = "1.0";
+        std::size_t templates_file_size = 0;
+    };
+
+    // Builder used internally by the compiler; only friend can construct.
+    struct Builder {
+        std::vector<CompiledTemplate> templates;
+        std::map<std::uint32_t, std::size_t> id_to_index;
+        std::string templates_sha256;
+        std::string compiler_version = "0.2.0";
+        std::string schema_version = "1.0";
+        std::size_t templates_file_size = 0;
+    };
+
+    std::shared_ptr<const Storage> storage_;
+
+    explicit CompiledTemplateSet(std::shared_ptr<const Storage> s);
+
+    // Compiler creates handles through this.
+    static CompiledTemplateSet seal(Builder&& b);
+
+    friend struct CompileResult;
+    friend CompileResult compile_templates_from_string(const std::string&, const CompileLimits&);
+    friend CompileResult compile_templates(const std::string&, const CompileLimits&);
 };
 
 // --- Compile result ---

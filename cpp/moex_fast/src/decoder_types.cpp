@@ -75,10 +75,71 @@ const char* value_source_name(ValueSource vs) {
     return "unknown";
 }
 
+// --- CompiledTemplateSet implementation ---
+
+// Static empty data returned by const-ref accessors on invalid handles.
+static const std::vector<CompiledTemplate>& empty_templates() {
+    static const std::vector<CompiledTemplate> v{};
+    return v;
+}
+static const std::string& empty_string() {
+    static const std::string s{};
+    return s;
+}
+
+CompiledTemplateSet::CompiledTemplateSet() : storage_(nullptr) {}
+
+CompiledTemplateSet::CompiledTemplateSet(std::shared_ptr<const Storage> s)
+    : storage_(std::move(s)) {}
+
+CompiledTemplateSet CompiledTemplateSet::seal(Builder&& b) {
+    auto s = std::make_shared<Storage>();
+    s->templates = std::move(b.templates);
+    s->id_to_index = std::move(b.id_to_index);
+    s->templates_sha256 = std::move(b.templates_sha256);
+    s->compiler_version = std::move(b.compiler_version);
+    s->schema_version = std::move(b.schema_version);
+    s->templates_file_size = b.templates_file_size;
+    return CompiledTemplateSet(std::shared_ptr<const Storage>(std::move(s)));
+}
+
+bool CompiledTemplateSet::valid() const {
+    return storage_ != nullptr;
+}
+
+bool CompiledTemplateSet::empty() const {
+    return !storage_ || storage_->templates.empty();
+}
+
+std::size_t CompiledTemplateSet::size() const {
+    return storage_ ? storage_->templates.size() : 0;
+}
+
+const std::vector<CompiledTemplate>& CompiledTemplateSet::templates() const {
+    return storage_ ? storage_->templates : empty_templates();
+}
+
 const CompiledTemplate* CompiledTemplateSet::find(std::uint32_t id) const {
-    auto it = id_to_index.find(id);
-    if (it == id_to_index.end()) return nullptr;
-    return &templates[it->second];
+    if (!storage_) return nullptr;
+    auto it = storage_->id_to_index.find(id);
+    if (it == storage_->id_to_index.end()) return nullptr;
+    return &storage_->templates[it->second];
+}
+
+const std::string& CompiledTemplateSet::templates_sha256() const {
+    return storage_ ? storage_->templates_sha256 : empty_string();
+}
+
+const std::string& CompiledTemplateSet::compiler_version() const {
+    return storage_ ? storage_->compiler_version : empty_string();
+}
+
+const std::string& CompiledTemplateSet::schema_version() const {
+    return storage_ ? storage_->schema_version : empty_string();
+}
+
+std::size_t CompiledTemplateSet::templates_file_size() const {
+    return storage_ ? storage_->templates_file_size : 0;
 }
 
 }  // namespace moex_fast
