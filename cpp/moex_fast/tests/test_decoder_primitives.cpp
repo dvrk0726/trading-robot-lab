@@ -1083,8 +1083,10 @@ static void test_ascii_string() {
     // Empty input
     {
         WireCursor c(nullptr, 0);
-        std::string val;
+        std::string val = "sentinel";
         CHECK(c.read_ascii_string(val) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
     }
     // Limit=0: empty succeeds
     {
