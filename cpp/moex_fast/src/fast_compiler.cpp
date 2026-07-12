@@ -175,6 +175,23 @@ bool is_reference_element(const std::string& n) {
     return n == "typeRef" || n == "templateRef" || n == "groupRef";
 }
 
+bool is_xmlns_attr(const std::string& name) {
+    return name == "xmlns" || (name.size() > 6 && name.substr(0, 6) == "xmlns:");
+}
+
+void validate_element_attributes(pugi::xml_node node,
+                                  const std::set<std::string>& allowed,
+                                  CompileCtx& ctx, const std::string& desc) {
+    for (auto attr : node.attributes()) {
+        std::string name(attr.name());
+        if (is_xmlns_attr(name)) continue;
+        if (allowed.find(name) == allowed.end()) {
+            ctx.error("unknown_attribute",
+                      "Unknown attribute '" + name + "' on " + desc, desc);
+        }
+    }
+}
+
 }  // namespace (anonymous)
 
 // Normative operator/type matrix for the accepted MOEX SPECTRA profile
@@ -378,10 +395,18 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
         if (name == "constant") {
             op.kind = OpKind::Constant;
             op.has_constant = true;
-            std::string val_text = child.text().as_string("");
-            if (val_text.empty()) {
-                auto val_attr = child.attribute("value");
-                if (val_attr) val_text = val_attr.as_string("");
+            validate_element_attributes(child, {"value"}, ctx, field_path);
+            std::string val_text = child.text().get();
+            std::string val_attr_str;
+            auto val_attr = child.attribute("value");
+            if (val_attr) val_attr_str = val_attr.as_string("");
+            if (!val_text.empty() && val_attr) {
+                ctx.error("ambiguous_operator_value",
+                          "Operator <constant> in " + field_path + " has both direct text and value attribute", field_path);
+            } else if (val_text.empty() && val_attr) {
+                val_text = val_attr_str;
+            } else if (val_text.empty() && !val_attr) {
+                val_text = "";
             }
             if (wire_type == DecWireType::ByteVector) {
                 if (!val_text.empty()) {
@@ -441,10 +466,18 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             }
         } else if (name == "default") {
             op.kind = OpKind::Default;
-            std::string val_text = child.text().as_string("");
-            if (val_text.empty()) {
-                auto val_attr = child.attribute("value");
-                if (val_attr) val_text = val_attr.as_string("");
+            validate_element_attributes(child, {"value", "key", "dictionary"}, ctx, field_path);
+            std::string val_text = child.text().get();
+            std::string val_attr_str;
+            auto val_attr = child.attribute("value");
+            if (val_attr) val_attr_str = val_attr.as_string("");
+            if (!val_text.empty() && val_attr) {
+                ctx.error("ambiguous_operator_value",
+                          "Operator <default> in " + field_path + " has both direct text and value attribute", field_path);
+            } else if (val_text.empty() && val_attr) {
+                val_text = val_attr_str;
+            } else if (val_text.empty() && !val_attr) {
+                val_text = "";
             }
             if (!val_text.empty()) {
                 op.has_initial = true;
@@ -514,10 +547,18 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             }
         } else if (name == "copy") {
             op.kind = OpKind::Copy;
-            std::string val_text = child.text().as_string("");
-            if (val_text.empty()) {
-                auto val_attr = child.attribute("value");
-                if (val_attr) val_text = val_attr.as_string("");
+            validate_element_attributes(child, {"value", "key", "dictionary"}, ctx, field_path);
+            std::string val_text = child.text().get();
+            std::string val_attr_str;
+            auto val_attr = child.attribute("value");
+            if (val_attr) val_attr_str = val_attr.as_string("");
+            if (!val_text.empty() && val_attr) {
+                ctx.error("ambiguous_operator_value",
+                          "Operator <copy> in " + field_path + " has both direct text and value attribute", field_path);
+            } else if (val_text.empty() && val_attr) {
+                val_text = val_attr_str;
+            } else if (val_text.empty() && !val_attr) {
+                val_text = "";
             }
             if (!val_text.empty()) {
                 op.has_initial = true;
@@ -587,10 +628,18 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             }
         } else if (name == "increment") {
             op.kind = OpKind::Increment;
-            std::string val_text = child.text().as_string("");
-            if (val_text.empty()) {
-                auto val_attr = child.attribute("value");
-                if (val_attr) val_text = val_attr.as_string("");
+            validate_element_attributes(child, {"value", "key", "dictionary"}, ctx, field_path);
+            std::string val_text = child.text().get();
+            std::string val_attr_str;
+            auto val_attr = child.attribute("value");
+            if (val_attr) val_attr_str = val_attr.as_string("");
+            if (!val_text.empty() && val_attr) {
+                ctx.error("ambiguous_operator_value",
+                          "Operator <increment> in " + field_path + " has both direct text and value attribute", field_path);
+            } else if (val_text.empty() && val_attr) {
+                val_text = val_attr_str;
+            } else if (val_text.empty() && !val_attr) {
+                val_text = "";
             }
             if (!val_text.empty()) {
                 op.has_initial = true;
@@ -645,6 +694,7 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             }
         } else if (name == "delta") {
             op.kind = OpKind::Delta;
+            validate_element_attributes(child, {"key", "dictionary"}, ctx, field_path);
             auto key_attr = child.attribute("key");
             if (key_attr) op.explicit_key = key_attr.as_string("");
             auto dict_attr = child.attribute("dictionary");
@@ -657,6 +707,7 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             }
         } else if (name == "tail") {
             op.kind = OpKind::Tail;
+            validate_element_attributes(child, {"key", "dictionary"}, ctx, field_path);
             auto key_attr = child.attribute("key");
             if (key_attr) op.explicit_key = key_attr.as_string("");
             auto dict_attr = child.attribute("dictionary");
@@ -708,6 +759,10 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
     f.has_pmap_bit = has_pmap_bit;
 
     std::string field_path = parent_path.empty() ? f.name : parent_path + "." + f.name;
+
+    // Validate decimal field attributes
+    static const std::set<std::string> decimal_attrs = {"id", "name", "presence"};
+    validate_element_attributes(node, decimal_attrs, ctx, field_path);
 
     auto fix_attr = node.attribute("id");
     if (fix_attr) {
@@ -776,6 +831,8 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
     }
 
     if (exponent_node) {
+        // Validate exponent attributes (no ordinary attributes)
+        validate_element_attributes(exponent_node, {}, ctx, field_path + ".exponent");
         // Validate exponent children: zero or one operator; no other element children
         int exp_op_count = 0;
         for (auto echild : exponent_node.children()) {
@@ -796,6 +853,8 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
         f.exponent_op.is_decimal_component = true;
     }
     if (mantissa_node) {
+        // Validate mantissa attributes (no ordinary attributes)
+        validate_element_attributes(mantissa_node, {}, ctx, field_path + ".mantissa");
         // Validate mantissa children: zero or one operator; no other element children
         int man_op_count = 0;
         for (auto mchild : mantissa_node.children()) {
@@ -910,6 +969,18 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         return parse_decimal_field(node, field_index, template_name, ctx, parent_path, f.has_pmap_bit);
     }
 
+    // Validate field attributes (non-decimal fields)
+    if (elem_name == "string") {
+        static const std::set<std::string> string_attrs = {"id", "name", "presence", "charset"};
+        validate_element_attributes(node, string_attrs, ctx, field_path);
+    } else if (is_known_field_element(elem_name)) {
+        static const std::set<std::string> field_attrs = {"id", "name", "presence"};
+        validate_element_attributes(node, field_attrs, ctx, field_path);
+    } else if (is_reference_element(elem_name)) {
+        static const std::set<std::string> ref_attrs = {"name"};
+        validate_element_attributes(node, ref_attrs, ctx, field_path);
+    }
+
     if (elem_name == "sequence") {
         f.wire_type = DecWireType::Sequence;
         f.is_sequence = true;
@@ -931,6 +1002,10 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
             }
         }
         if (length_node) {
+            // Validate length attributes
+            static const std::set<std::string> length_attrs = {"id", "name"};
+            validate_element_attributes(length_node, length_attrs, ctx, field_path + ".length");
+
             f.length_op.kind = OpKind::None;
             f.length_field_index = field_index;
             CompiledField len_field;
@@ -1009,6 +1084,20 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
 
     f.wire_type = element_to_wire_type(elem_name.c_str());
 
+    // MOEX charset semantics for string fields
+    if (elem_name == "string") {
+        auto charset_attr = node.attribute("charset");
+        if (charset_attr) {
+            std::string cv = charset_attr.as_string("");
+            if (cv == "unicode") {
+                f.wire_type = DecWireType::UnicodeString;
+            } else {
+                ctx.error("unknown_charset",
+                          "Unknown charset '" + cv + "' in " + field_path, field_path);
+            }
+        }
+    }
+
     // Validate scalar field children: zero or one operator; no other element children
     {
         int scalar_op_count = 0;
@@ -1086,6 +1175,8 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
 
         // Handle reference elements (typeRef, templateRef, groupRef)
         if (is_reference_element(name)) {
+            static const std::set<std::string> ref_attrs = {"name"};
+            validate_element_attributes(child, ref_attrs, ctx, parent_path + "." + name);
             std::string ref_name = child.attribute("name").as_string("");
             if (ref_name.empty()) {
                 ctx.error("empty_reference_name",
@@ -1148,6 +1239,9 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
         return draft;
     }
 
+    // Validate root attributes (no ordinary attributes allowed)
+    validate_element_attributes(root, {}, ctx, std::string("<") + root.name() + ">");
+
     // Validate root children: only <template> allowed
     for (auto rchild : root.children()) {
         std::string rname(rchild.name());
@@ -1209,6 +1303,9 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
             continue;
         }
         ctx.seen_ids.insert(ct.id);
+
+        // Validate template attributes
+        validate_element_attributes(tmpl, {"id", "name"}, ctx, "template " + ct.name);
 
         std::uint32_t field_index = 0;
         parse_fields(tmpl, ct.fields, ct.name, ctx, "", 0, field_index, false);

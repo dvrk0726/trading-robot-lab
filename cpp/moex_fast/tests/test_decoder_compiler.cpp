@@ -24,6 +24,17 @@ static void check_invalid_compile_9B1(const CompileResult& r, const std::string&
     CHECK(r.compiled.find(1) == nullptr);
 }
 
+static void check_invalid_compile_9B2(const CompileResult& r, const std::string& expected_code) {
+    CHECK(!r.ok);
+    CHECK(has_issue(r, expected_code));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+}
+
 // --- static_assert: template collection returns const ref only ---
 static_assert(std::is_same_v<
     decltype(std::declval<const CompiledTemplateSet&>().templates()),
@@ -1557,6 +1568,542 @@ static void test_structural_misplaced_reference_in_scalar() {
     TEST_PASS("structural_misplaced_reference_in_scalar");
 }
 
+// === 9B2 phase 2 tests ===
+
+// Test 1: XML namespace declarations do not trigger unknown_attribute; official-style default-namespace snippet compiles
+static void test_9B2_ns_decls_no_unknown_attribute() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates xmlns="http://www.fixprotocol.org/ns/fast/td/1.1">
+  <template id="100" name="TestMsg">
+    <string name="F1" id="1" xmlns:custom="http://example.com"/>
+    <uInt32 name="F2" id="2"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    CHECK_EQ(r.compiled.size(), 1u);
+    CHECK_EQ(r.compiled.templates()[0].fields.size(), 2u);
+    TEST_PASS("9B2_ns_decls_no_unknown_attribute");
+}
+
+// Test 2: MOEX-observed attribute combinations compile, including string charset='unicode' and constant value='...'
+static void test_9B2_moex_attr_combinations() {
+    // string charset='unicode' compiles
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="F1" id="1" charset="unicode"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK(r.compiled.templates()[0].fields[0].wire_type == DecWireType::UnicodeString);
+    }
+    // constant value='...' compiles
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1" id="1"><constant value="42"/></uInt32>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 42u);
+    }
+    TEST_PASS("9B2_moex_attr_combinations");
+}
+
+// Test 3: string charset='unicode' produces UnicodeString; absent charset remains AsciiString
+static void test_9B2_string_charset_unicode_wire_type() {
+    // charset='unicode' -> UnicodeString
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="F1" id="1" charset="unicode"><constant>\xC2\xA2</constant></string>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].wire_type == DecWireType::UnicodeString);
+    }
+    // absent charset -> AsciiString
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="F1" id="1"><constant>ABC</constant></string>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].wire_type == DecWireType::AsciiString);
+    }
+    // charset='unicode' accepts valid non-ASCII UTF-8 static constant
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<string name=\"F1\" id=\"1\" charset=\"unicode\"><constant>\xE2\x82\xAC</constant></string>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].wire_type == DecWireType::UnicodeString);
+    }
+    TEST_PASS("9B2_string_charset_unicode_wire_type");
+}
+
+// Test 4: empty, unknown and case-mismatched charset return unknown_charset
+static void test_9B2_unknown_charset() {
+    // empty charset
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" id="1" charset=""/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_charset");
+    }
+    // unknown charset value
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" id="1" charset="utf-8"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_charset");
+    }
+    // case-mismatched: Unicode (capital U)
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" id="1" charset="Unicode"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_charset");
+    }
+    // case-mismatched: UNICODE
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" id="1" charset="UNICODE"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_charset");
+    }
+    TEST_PASS("9B2_unknown_charset");
+}
+
+// Test 5: Unknown attribute on root returns unknown_attribute
+static void test_9B2_unknown_attr_root() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates version="1">
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_root");
+}
+
+// Test 5b: Unknown attribute on template returns unknown_attribute
+static void test_9B2_unknown_attr_template() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg" version="2"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_template");
+}
+
+// Test 5c: Unknown attribute on scalar/string returns unknown_attribute
+static void test_9B2_unknown_attr_scalar_string() {
+    // uInt32 with unknown attribute
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1" unknown="x"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_attribute");
+    }
+    // string with unknown attribute
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" unknown="x"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_attribute");
+    }
+    TEST_PASS("9B2_unknown_attr_scalar_string");
+}
+
+// Test 5d: Unknown attribute on decimal returns unknown_attribute
+static void test_9B2_unknown_attr_decimal() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><decimal name="D" unknown="x"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_decimal");
+}
+
+// Test 5e: Unknown attribute on sequence returns unknown_attribute
+static void test_9B2_unknown_attr_sequence() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S" unknown="x">
+      <length name="L"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_sequence");
+}
+
+// Test 5f: Unknown attribute on length returns unknown_attribute
+static void test_9B2_unknown_attr_length() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L" unknown="x"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_length");
+}
+
+// Test 5g: Unknown attribute on exponent returns unknown_attribute
+static void test_9B2_unknown_attr_exponent() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent unknown="x"><constant>0</constant></exponent>
+      <mantissa><constant>0</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_exponent");
+}
+
+// Test 5h: Unknown attribute on mantissa returns unknown_attribute
+static void test_9B2_unknown_attr_mantissa() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>0</constant></exponent>
+      <mantissa unknown="x"><constant>0</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_mantissa");
+}
+
+// Test 5i: Unknown attribute on operator returns unknown_attribute
+static void test_9B2_unknown_attr_operator() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><constant unknown="x">42</constant></uInt32>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_operator");
+}
+
+// Test 5j: Unknown attribute on reference returns unknown_attribute
+static void test_9B2_unknown_attr_reference() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <typeRef name="SomeType" unknown="x"/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    // Should have both unknown_attribute and unsupported_reference
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "unknown_attribute"));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("9B2_unknown_attr_reference");
+}
+
+// Test 6: Allowed synthetic operator attributes compile on corresponding operator families
+static void test_9B2_operator_attr_allowed_families() {
+    // value on constant
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"><constant value="42"/></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 42u);
+    }
+    // value,key,dictionary on default
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"><default value="10" key="k1" dictionary="global"/></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].op.has_initial);
+    }
+    // value,key,dictionary on copy
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"><copy value="5" key="k2" dictionary="template"/></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].op.has_initial);
+    }
+    // value,key,dictionary on increment
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"><increment value="1" key="k3" dictionary="global"/></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].op.has_initial);
+    }
+    // key,dictionary on delta
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1"><delta key="k4" dictionary="global"/></string></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].op.kind == OpKind::Delta);
+    }
+    // key,dictionary on tail
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1"><tail key="k5" dictionary="global"/></string></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].op.kind == OpKind::Tail);
+    }
+    TEST_PASS("9B2_operator_attr_allowed_families");
+}
+
+// Test 7: Text-only and value-only forms produce equivalent metadata for constant, default, copy, increment
+static void test_9B2_text_value_equivalent_constant() {
+    const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>42</constant></uInt32></template>
+</templates>)";
+    const char* xml_value = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant value="42"/></uInt32></template>
+</templates>)";
+    auto r1 = compile_templates_from_string(xml_text);
+    auto r2 = compile_templates_from_string(xml_value);
+    CHECK(r1.ok);
+    CHECK(r2.ok);
+    const auto& f1 = r1.compiled.templates()[0].fields[0];
+    const auto& f2 = r2.compiled.templates()[0].fields[0];
+    CHECK(f1.op.kind == f2.op.kind);
+    CHECK(f1.op.has_constant == f2.op.has_constant);
+    CHECK(f1.op.constant_uint == f2.op.constant_uint);
+    CHECK(f1.op.constant_str == f2.op.constant_str);
+    TEST_PASS("9B2_text_value_equivalent_constant");
+}
+
+static void test_9B2_text_value_equivalent_default() {
+    const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><default>10</default></uInt32></template>
+</templates>)";
+    const char* xml_value = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><default value="10"/></uInt32></template>
+</templates>)";
+    auto r1 = compile_templates_from_string(xml_text);
+    auto r2 = compile_templates_from_string(xml_value);
+    CHECK(r1.ok);
+    CHECK(r2.ok);
+    const auto& f1 = r1.compiled.templates()[0].fields[0];
+    const auto& f2 = r2.compiled.templates()[0].fields[0];
+    CHECK(f1.op.kind == f2.op.kind);
+    CHECK(f1.op.has_initial == f2.op.has_initial);
+    CHECK(f1.op.initial_uint == f2.op.initial_uint);
+    TEST_PASS("9B2_text_value_equivalent_default");
+}
+
+static void test_9B2_text_value_equivalent_copy() {
+    const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><copy>7</copy></uInt32></template>
+</templates>)";
+    const char* xml_value = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><copy value="7"/></uInt32></template>
+</templates>)";
+    auto r1 = compile_templates_from_string(xml_text);
+    auto r2 = compile_templates_from_string(xml_value);
+    CHECK(r1.ok);
+    CHECK(r2.ok);
+    const auto& f1 = r1.compiled.templates()[0].fields[0];
+    const auto& f2 = r2.compiled.templates()[0].fields[0];
+    CHECK(f1.op.kind == f2.op.kind);
+    CHECK(f1.op.has_initial == f2.op.has_initial);
+    CHECK(f1.op.initial_uint == f2.op.initial_uint);
+    TEST_PASS("9B2_text_value_equivalent_copy");
+}
+
+static void test_9B2_text_value_equivalent_increment() {
+    const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><increment>3</increment></uInt32></template>
+</templates>)";
+    const char* xml_value = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><increment value="3"/></uInt32></template>
+</templates>)";
+    auto r1 = compile_templates_from_string(xml_text);
+    auto r2 = compile_templates_from_string(xml_value);
+    CHECK(r1.ok);
+    CHECK(r2.ok);
+    const auto& f1 = r1.compiled.templates()[0].fields[0];
+    const auto& f2 = r2.compiled.templates()[0].fields[0];
+    CHECK(f1.op.kind == f2.op.kind);
+    CHECK(f1.op.has_initial == f2.op.has_initial);
+    CHECK(f1.op.initial_uint == f2.op.initial_uint);
+    TEST_PASS("9B2_text_value_equivalent_increment");
+}
+
+// Test 8: Simultaneous direct text and value returns ambiguous_operator_value for constant, default, copy, increment
+static void test_9B2_ambiguous_value_constant() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant value="42">42</constant></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    TEST_PASS("9B2_ambiguous_value_constant");
+}
+
+static void test_9B2_ambiguous_value_default() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><default value="10">10</default></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    TEST_PASS("9B2_ambiguous_value_default");
+}
+
+static void test_9B2_ambiguous_value_copy() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><copy value="7">7</copy></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    TEST_PASS("9B2_ambiguous_value_copy");
+}
+
+static void test_9B2_ambiguous_value_increment() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><increment value="3">3</increment></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    TEST_PASS("9B2_ambiguous_value_increment");
+}
+
+// Test 9: value on delta and tail returns unknown_attribute
+static void test_9B2_value_on_delta_unknown_attribute() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F"><delta value="x"/></string></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_value_on_delta_unknown_attribute");
+}
+
+static void test_9B2_value_on_tail_unknown_attribute() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F"><tail value="x"/></string></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_value_on_tail_unknown_attribute");
+}
+
+// Test 10: xmlns and xmlns:prefix are not ordinary attributes
+static void test_9B2_xmlns_not_ordinary_attribute() {
+    // xmlns on root
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates xmlns="http://www.fixprotocol.org/ns/fast/td/1.1">
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // xmlns:prefix on root
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates xmlns:fast="http://www.fixprotocol.org/ns/fast/td/1.1">
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // xmlns on field
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1" xmlns="http://example.com"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    TEST_PASS("9B2_xmlns_not_ordinary_attribute");
+}
+
 int main() {
     test_valid_compile();
     test_duplicate_template_id();
@@ -1635,6 +2182,33 @@ int main() {
     test_structural_length_unknown_child();
     test_structural_reference_at_allowed_level();
     test_structural_misplaced_reference_in_scalar();
+    // 9B2 phase 2 attribute/charset/operator-value tests
+    test_9B2_ns_decls_no_unknown_attribute();
+    test_9B2_moex_attr_combinations();
+    test_9B2_string_charset_unicode_wire_type();
+    test_9B2_unknown_charset();
+    test_9B2_unknown_attr_root();
+    test_9B2_unknown_attr_template();
+    test_9B2_unknown_attr_scalar_string();
+    test_9B2_unknown_attr_decimal();
+    test_9B2_unknown_attr_sequence();
+    test_9B2_unknown_attr_length();
+    test_9B2_unknown_attr_exponent();
+    test_9B2_unknown_attr_mantissa();
+    test_9B2_unknown_attr_operator();
+    test_9B2_unknown_attr_reference();
+    test_9B2_operator_attr_allowed_families();
+    test_9B2_text_value_equivalent_constant();
+    test_9B2_text_value_equivalent_default();
+    test_9B2_text_value_equivalent_copy();
+    test_9B2_text_value_equivalent_increment();
+    test_9B2_ambiguous_value_constant();
+    test_9B2_ambiguous_value_default();
+    test_9B2_ambiguous_value_copy();
+    test_9B2_ambiguous_value_increment();
+    test_9B2_value_on_delta_unknown_attribute();
+    test_9B2_value_on_tail_unknown_attribute();
+    test_9B2_xmlns_not_ordinary_attribute();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }
