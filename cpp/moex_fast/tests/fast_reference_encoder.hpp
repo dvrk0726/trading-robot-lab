@@ -101,22 +101,25 @@ inline void encode_stopbit_u64(std::vector<std::uint8_t>& buf, std::uint64_t val
 // also needs an extra group.
 // Uses int64_t accumulator for proper sign extension to 35 bits.
 inline void encode_stopbit_i32(std::vector<std::uint8_t>& buf, std::int32_t val) {
-    // Number of bits needed to represent val in 2's complement.
+    // Portable C++20: no right shift of negative signed value.
+    std::uint32_t uval = static_cast<std::uint32_t>(val);
     int nbits;
     if (val >= 0) {
-        // Need 1 sign bit (0) + ceil(log2(val+1)) payload bits, min 1.
         nbits = 1;
-        std::uint32_t u = static_cast<std::uint32_t>(val);
+        std::uint32_t u = uval;
         while (u > 0) { nbits++; u >>= 1; }
     } else {
-        // Negative: find where we can truncate the leading 1s.
+        // Count significant bits via unsigned complement (no signed shift).
         nbits = 1;
-        std::int32_t v = val;
-        while (v < -1) { nbits++; v >>= 1; }
+        std::uint32_t u = ~uval;
+        while (u > 0) { nbits++; u >>= 1; }
     }
     int ngroups = (nbits + 6) / 7;
-    // Sign-extend to 64 bits for proper group extraction beyond 32 bits.
-    std::int64_t raw = static_cast<std::int64_t>(val);
+    // Sign-extend to 64 bits using unsigned operations.
+    std::uint64_t raw = static_cast<std::uint64_t>(uval);
+    if (val < 0) {
+        raw |= 0xFFFFFFFF00000000ULL;
+    }
     for (int g = ngroups - 1; g >= 0; --g) {
         std::uint8_t byte = static_cast<std::uint8_t>((raw >> (g * 7)) & 0x7F);
         if (g == 0) byte |= 0x80;

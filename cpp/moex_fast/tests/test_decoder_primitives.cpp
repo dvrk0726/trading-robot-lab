@@ -83,6 +83,44 @@ static void test_stopbit_u32() {
         CHECK(c.read_stopbit_u32(val) == DecodeStatus::NonCanonicalEncoding);
         CHECK_EQ(c.position(), 0u); // cursor restored
     }
+    // Overflow: 2^32 [10 00 00 00 80]
+    {
+        auto bytes = make_bytes({0x10, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0;
+        CHECK(c.read_stopbit_u32(val) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0u);
+    }
+    // General overlong: [00 01 80] for value 128 (should be [01 80])
+    {
+        auto bytes = make_bytes({0x00, 0x01, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0;
+        CHECK(c.read_stopbit_u32(val) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0u);
+    }
+    // Prefix loop: UINT32_MAX [0F 7F 7F 7F FF] lengths 1..4
+    {
+        std::uint8_t full[] = {0x0F, 0x7F, 0x7F, 0x7F, 0xFF};
+        for (int len = 1; len <= 4; ++len) {
+            WireCursor c(full, static_cast<std::size_t>(len));
+            std::uint32_t val = 0xDEAD;
+            CHECK(c.read_stopbit_u32(val) == DecodeStatus::NeedMoreData);
+            CHECK_EQ(c.position(), 0u);
+            CHECK_EQ(val, 0xDEADu);
+        }
+    }
+    // 5-byte no stop bit: [10 00 00 00 00]
+    {
+        auto bytes = make_bytes({0x10, 0x00, 0x00, 0x00, 0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0xDEAD;
+        CHECK(c.read_stopbit_u32(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0xDEADu);
+    }
     TEST_PASS("stopbit_u32");
 }
 
@@ -210,6 +248,89 @@ static void test_stopbit_i32() {
         WireCursor c(bytes.data(), bytes.size());
         std::int32_t val = 0;
         CHECK(c.read_stopbit_i32(val) == DecodeStatus::NonCanonicalEncoding);
+    }
+    // INT32_MIN: [78 00 00 00 80]
+    {
+        auto bytes = make_bytes({0x78, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        CHECK(c.read_stopbit_i32(val) == DecodeStatus::Ok);
+        CHECK_EQ(val, std::numeric_limits<std::int32_t>::min());
+    }
+    // INT32_MAX: [07 7F 7F 7F FF]
+    {
+        auto bytes = make_bytes({0x07, 0x7F, 0x7F, 0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        CHECK(c.read_stopbit_i32(val) == DecodeStatus::Ok);
+        CHECK_EQ(val, std::numeric_limits<std::int32_t>::max());
+    }
+    // Overflow +2^31: [08 00 00 00 80]
+    {
+        auto bytes = make_bytes({0x08, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        CHECK(c.read_stopbit_i32(val) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0);
+    }
+    // Overflow -2^31-1: [77 7F 7F 7F FF]
+    {
+        auto bytes = make_bytes({0x77, 0x7F, 0x7F, 0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        CHECK(c.read_stopbit_i32(val) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0);
+    }
+    // Positive overlong: [00 01 80] for value 128 (should be [01 80])
+    {
+        auto bytes = make_bytes({0x00, 0x01, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        CHECK(c.read_stopbit_i32(val) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0);
+    }
+    // Three-byte negative overlong: [7F 7F FF] for -1 (should be [FF])
+    {
+        auto bytes = make_bytes({0x7F, 0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        CHECK(c.read_stopbit_i32(val) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 0);
+    }
+    // Prefix loop: INT32_MIN [78 00 00 00 80] lengths 1..4
+    {
+        std::uint8_t full[] = {0x78, 0x00, 0x00, 0x00, 0x80};
+        for (int len = 1; len <= 4; ++len) {
+            WireCursor c(full, static_cast<std::size_t>(len));
+            std::int32_t val = 12345;
+            CHECK(c.read_stopbit_i32(val) == DecodeStatus::NeedMoreData);
+            CHECK_EQ(c.position(), 0u);
+            CHECK_EQ(val, 12345);
+        }
+    }
+    // Prefix loop: INT32_MAX [07 7F 7F 7F FF] lengths 1..4
+    {
+        std::uint8_t full[] = {0x07, 0x7F, 0x7F, 0x7F, 0xFF};
+        for (int len = 1; len <= 4; ++len) {
+            WireCursor c(full, static_cast<std::size_t>(len));
+            std::int32_t val = 12345;
+            CHECK(c.read_stopbit_i32(val) == DecodeStatus::NeedMoreData);
+            CHECK_EQ(c.position(), 0u);
+            CHECK_EQ(val, 12345);
+        }
+    }
+    // 5-byte no stop bit: [08 00 00 00 00]
+    {
+        auto bytes = make_bytes({0x08, 0x00, 0x00, 0x00, 0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 12345;
+        CHECK(c.read_stopbit_i32(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, 12345);
     }
     TEST_PASS("stopbit_i32");
 }

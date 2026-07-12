@@ -36,32 +36,34 @@ DecodeStatus WireCursor::read_bytes(std::size_t count, const std::uint8_t*& out_
 
 // --- Stop-bit unsigned 32 (FIX FAST 1.1, section 6.3.2) ---
 // Each byte: bit 7 = stop (1 = last), bits 6..0 = data (MSB first).
-// Max 5 bytes for uInt32 (35 data bits). Overflow checked before shift/add.
-// Canonical: multi-byte value must not fit in fewer bytes.
+// Max 5 bytes for uInt32 (35 data bits). Widened uint64_t accumulator.
+// Overflow: raw > UINT32_MAX. Canonical: minimum-group encoding.
+// 5 bytes without stop bit => InvalidEncoding before overflow classification.
+// On failure cursor restored; out untouched.
 DecodeStatus WireCursor::read_stopbit_u32(std::uint32_t& out) {
     std::size_t start = pos_;
-    std::uint32_t result = 0;
+    std::uint64_t raw = 0;  // widened accumulator for full 35-bit entity
     int bytes_read = 0;
     for (int i = 0; i < 5; ++i) {
         if (pos_ >= size_) { pos_ = start; return DecodeStatus::NeedMoreData; }
         std::uint8_t b = data_[pos_++];
         ++bytes_read;
 
-        std::uint32_t data_bits = static_cast<std::uint32_t>(b & 0x7Fu);
-
-        // Check overflow before shift
-        if (result > (std::numeric_limits<std::uint32_t>::max() >> 7)) {
-            pos_ = start; return DecodeStatus::IntegerOverflow;
-        }
-
-        result = (result << 7) | data_bits;
+        std::uint64_t data_bits = static_cast<std::uint64_t>(b & 0x7Fu);
+        raw = (raw << 7) | data_bits;
 
         if (b & 0x80u) {
-            // Stop bit found — check non-canonical encoding
-            if (bytes_read > 1 && result <= 0x7Fu) {
-                pos_ = start; return DecodeStatus::NonCanonicalEncoding;
+            // Stop bit found
+            if (raw > 0xFFFFFFFFull) {
+                pos_ = start; return DecodeStatus::IntegerOverflow;
             }
-            out = result;
+            if (bytes_read > 1) {
+                int prev_bits = (bytes_read - 1) * 7;
+                if (raw < (1ULL << prev_bits)) {
+                    pos_ = start; return DecodeStatus::NonCanonicalEncoding;
+                }
+            }
+            out = static_cast<std::uint32_t>(raw);
             return DecodeStatus::Ok;
         }
     }
@@ -105,11 +107,15 @@ DecodeStatus WireCursor::read_stopbit_u64(std::uint64_t& out) {
 
 // --- Stop-bit signed 32 (FIX FAST 1.1, section 6.3.2) ---
 // Two's complement. Sign bit is bit 6 of first byte.
-// Max 5 bytes (35 data bits). Canonical: minimum byte count.
-// Uses uint64_t accumulator to avoid premature overflow.
+// Max 5 bytes (35 data bits). Widened uint64_t accumulator.
+// Overflow: bits 34..32 must be sign extension of bit 31.
+// Canonical: minimum-group encoding via unsigned operations only.
+// Value recovery avoids implementation-defined unsigned-to-signed cast.
+// 5 bytes without stop bit => InvalidEncoding before domain classification.
+// On failure cursor restored; out untouched.
 DecodeStatus WireCursor::read_stopbit_i32(std::int32_t& out) {
     std::size_t start = pos_;
-    std::uint64_t raw = 0;  // wider accumulator for 35-bit values
+    std::uint64_t raw = 0;  // widened accumulator for 35-bit signed entity
     int bytes_read = 0;
     for (int i = 0; i < 5; ++i) {
         if (pos_ >= size_) { pos_ = start; return DecodeStatus::NeedMoreData; }
@@ -121,44 +127,51 @@ DecodeStatus WireCursor::read_stopbit_i32(std::int32_t& out) {
 
         if (b & 0x80u) {
             int sig_bits = bytes_read * 7;
+            static constexpr std::uint64_t mask35 = (1ULL << 35) - 1;
 
-            // Max-width validation: bits above 32 must be sign extension of bit 31
-            if (sig_bits > 32) {
-                std::uint64_t sign = (raw >> 31) & 1;
-                for (int bit = 32; bit < sig_bits; ++bit) {
-                    if (((raw >> bit) & 1) != sign) {
-                        pos_ = start; return DecodeStatus::IntegerOverflow;
-                    }
-                }
-                // Mask to 32 bits after validation
-                raw &= 0xFFFFFFFFull;
-            }
-
-            // Sign extension from the sign bit to 32 bits
-            if (sig_bits < 32) {
-                std::uint64_t sign_bit = 1ull << (sig_bits - 1);
+            // Sign-extend to 35 bits
+            if (sig_bits < 35) {
+                std::uint64_t sign_bit = 1ULL << (sig_bits - 1);
                 if (raw & sign_bit) {
-                    std::uint64_t mask = ~((1ull << sig_bits) - 1);
-                    raw |= (mask & 0xFFFFFFFFull);
+                    raw |= ~((1ULL << sig_bits) - 1);
+                }
+            }
+            raw &= mask35;
+
+            // Overflow: bits 34..32 must be sign extension of bit 31
+            if (sig_bits > 32) {
+                std::uint64_t sign31 = (raw >> 31) & 1;
+                std::uint64_t expected_high = sign31 ? 0x7ULL : 0x0ULL;
+                std::uint64_t actual_high = (raw >> 32) & 0x7ULL;
+                if (actual_high != expected_high) {
+                    pos_ = start; return DecodeStatus::IntegerOverflow;
                 }
             }
 
-            // Canonical encoding: value must not fit in fewer bytes
+            // Canonical: value must not fit in fewer bytes (unsigned logic)
             if (bytes_read > 1) {
                 int prev_bits = (bytes_read - 1) * 7;
-                if (prev_bits >= 1) {
-                    std::int32_t decoded = static_cast<std::int32_t>(static_cast<std::uint32_t>(raw));
-                    std::int32_t lo = (prev_bits >= 32) ? std::numeric_limits<std::int32_t>::min()
-                        : -(static_cast<std::int32_t>(1) << (prev_bits - 1));
-                    std::int32_t hi = (prev_bits >= 32) ? std::numeric_limits<std::int32_t>::max()
-                        : (static_cast<std::int32_t>(1) << (prev_bits - 1)) - 1;
-                    if (decoded >= lo && decoded <= hi) {
-                        pos_ = start; return DecodeStatus::NonCanonicalEncoding;
-                    }
+                std::uint64_t prev_mask = (1ULL << prev_bits) - 1;
+                std::uint64_t truncated = raw & prev_mask;
+                std::uint64_t trunc_sign = 1ULL << (prev_bits - 1);
+                if (truncated & trunc_sign) {
+                    truncated |= ~prev_mask;
+                }
+                truncated &= mask35;
+                if (truncated == raw) {
+                    pos_ = start; return DecodeStatus::NonCanonicalEncoding;
                 }
             }
 
-            out = static_cast<std::int32_t>(static_cast<std::uint32_t>(raw));
+            // Safe conversion: avoid implementation-defined unsigned-to-signed cast
+            // For values <= INT32_MAX: direct cast. For values > INT32_MAX:
+            // complement-and-negate, which is fully defined in C++20.
+            std::uint32_t raw32 = static_cast<std::uint32_t>(raw & 0xFFFFFFFFULL);
+            if (raw32 <= static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+                out = static_cast<std::int32_t>(raw32);
+            } else {
+                out = -static_cast<std::int32_t>(~raw32) - 1;
+            }
             return DecodeStatus::Ok;
         }
     }
