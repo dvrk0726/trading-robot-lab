@@ -158,6 +158,57 @@ static void test_constant_operator() {
     TEST_PASS("constant_operator");
 }
 
+// Test: 9B1 integration - template id 10 with four mandatory uInt64 fields
+// constant, default, copy and increment each set to UINT64_MAX.
+// Message C0 8A decodes all four fields as exact UINT64_MAX with correct ValueSource.
+static void test_uint64_max_integration() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="UInt64MaxMsg">
+    <uInt64 name="ConstField" id="1"><constant>18446744073709551615</constant></uInt64>
+    <uInt64 name="DefaultField" id="2"><default>18446744073709551615</default></uInt64>
+    <uInt64 name="CopyField" id="3"><copy>18446744073709551615</copy></uInt64>
+    <uInt64 name="IncrField" id="4"><increment>18446744073709551615</increment></uInt64>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // Message: C0 8A
+    // pmap C0 = 11000000: tmpl-id present, Default/Copy/Incr absent (pmap bit 1/2/3 = 0)
+    // ConstField has no pmap bit (mandatory + constant)
+    // Default/Copy/Incr have pmap bits: all absent => use initial values
+    auto msg = hex("C0" "8A");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(msg.data(), msg.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.template_id, 10u);
+    CHECK_EQ(r.message.fields.size(), 4u);
+
+    // ConstField: constant UINT64_MAX
+    CHECK_EQ(r.message.fields[0].name, "ConstField");
+    CHECK(r.message.fields[0].source == ValueSource::Constant);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[0].value), UINT64_MAX);
+
+    // DefaultField: default initial UINT64_MAX
+    CHECK_EQ(r.message.fields[1].name, "DefaultField");
+    CHECK(r.message.fields[1].source == ValueSource::Default);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[1].value), UINT64_MAX);
+
+    // CopyField: copy initial UINT64_MAX
+    CHECK_EQ(r.message.fields[2].name, "CopyField");
+    CHECK(r.message.fields[2].source == ValueSource::Copy);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[2].value), UINT64_MAX);
+
+    // IncrField: increment initial UINT64_MAX
+    CHECK_EQ(r.message.fields[3].name, "IncrField");
+    CHECK(r.message.fields[3].source == ValueSource::Increment);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[3].value), UINT64_MAX);
+
+    TEST_PASS("uint64_max_integration");
+}
+
 // Test: optional decimal field - proves Decimal call site uses ordinary i64 mantissa
 static void test_optional_decimal_regression() {
     // Template id 10, one optional decimal field (exponent + mantissa).
@@ -196,6 +247,7 @@ int main() {
     test_copy_operator();
     test_increment_operator();
     test_constant_operator();
+    test_uint64_max_integration();
     test_optional_decimal_regression();
     std::cout << "All decoder operator tests passed.\n";
     return 0;

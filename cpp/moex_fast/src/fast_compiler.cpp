@@ -214,19 +214,130 @@ bool is_supported_op_type(OpKind op, DecWireType wire_type, bool is_mandatory) {
 
 namespace {
 
-bool parse_int_value(const std::string& text, std::int64_t& out) {
+bool parse_u32(const std::string& text, std::uint32_t& out) {
     if (text.empty()) return false;
-    try {
-        size_t pos = 0;
-        if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
-            out = std::stoll(text, &pos, 16);
-        } else {
-            out = std::stoll(text, &pos, 10);
-        }
-        return pos == text.size();
-    } catch (...) {
-        return false;
+    std::uint64_t val = 0;
+    for (char c : text) {
+        if (c < '0' || c > '9') return false;
+        if (val > UINT64_MAX / 10) return false;
+        val *= 10;
+        std::uint64_t d = static_cast<std::uint64_t>(c - '0');
+        if (val > UINT64_MAX - d) return false;
+        val += d;
     }
+    if (val > UINT32_MAX) return false;
+    out = static_cast<std::uint32_t>(val);
+    return true;
+}
+
+bool parse_u64(const std::string& text, std::uint64_t& out) {
+    if (text.empty()) return false;
+    std::uint64_t val = 0;
+    for (char c : text) {
+        if (c < '0' || c > '9') return false;
+        if (val > UINT64_MAX / 10) return false;
+        val *= 10;
+        std::uint64_t d = static_cast<std::uint64_t>(c - '0');
+        if (val > UINT64_MAX - d) return false;
+        val += d;
+    }
+    out = val;
+    return true;
+}
+
+bool parse_i32(const std::string& text, std::int32_t& out) {
+    if (text.empty()) return false;
+    const char* p = text.data();
+    const char* e = p + text.size();
+    bool neg = false;
+    if (*p == '-') { neg = true; ++p; }
+    if (p == e) return false;
+    std::uint64_t val = 0;
+    for (; p < e; ++p) {
+        char c = *p;
+        if (c < '0' || c > '9') return false;
+        if (val > UINT64_MAX / 10) return false;
+        val *= 10;
+        std::uint64_t d = static_cast<std::uint64_t>(c - '0');
+        if (val > UINT64_MAX - d) return false;
+        val += d;
+    }
+    if (neg) {
+        if (val > static_cast<std::uint64_t>(INT32_MAX) + 1) return false;
+        out = (val <= static_cast<std::uint64_t>(INT32_MAX))
+              ? static_cast<std::int32_t>(-static_cast<std::int64_t>(val))
+              : INT32_MIN;
+    } else {
+        if (val > INT32_MAX) return false;
+        out = static_cast<std::int32_t>(val);
+    }
+    return true;
+}
+
+bool parse_i64(const std::string& text, std::int64_t& out) {
+    if (text.empty()) return false;
+    const char* p = text.data();
+    const char* e = p + text.size();
+    bool neg = false;
+    if (*p == '-') { neg = true; ++p; }
+    if (p == e) return false;
+    std::uint64_t val = 0;
+    for (; p < e; ++p) {
+        char c = *p;
+        if (c < '0' || c > '9') return false;
+        if (val > UINT64_MAX / 10) return false;
+        val *= 10;
+        std::uint64_t d = static_cast<std::uint64_t>(c - '0');
+        if (val > UINT64_MAX - d) return false;
+        val += d;
+    }
+    if (neg) {
+        if (val > static_cast<std::uint64_t>(INT64_MAX) + 1) return false;
+        out = (val <= static_cast<std::uint64_t>(INT64_MAX))
+              ? -static_cast<std::int64_t>(val)
+              : INT64_MIN;
+    } else {
+        if (val > INT64_MAX) return false;
+        out = static_cast<std::int64_t>(val);
+    }
+    return true;
+}
+
+bool validate_ascii_static(const std::string& val) {
+    constexpr std::size_t kMaxStaticBytes = 1024 * 1024;
+    if (val.size() > kMaxStaticBytes) return false;
+    for (unsigned char c : val) {
+        if (c == 0 || c > 0x7F) return false;
+    }
+    return true;
+}
+
+bool validate_unicode_static(const std::string& val) {
+    constexpr std::size_t kMaxStaticBytes = 1024 * 1024;
+    if (val.size() > kMaxStaticBytes) return false;
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(val.data());
+    const unsigned char* e = p + val.size();
+    while (p < e) {
+        std::uint32_t cp = 0;
+        std::uint32_t needed = 0;
+        if (*p <= 0x7F) { cp = *p; needed = 1; }
+        else if ((*p & 0xE0) == 0xC0) { cp = *p & 0x1F; needed = 2; }
+        else if ((*p & 0xF0) == 0xE0) { cp = *p & 0x0F; needed = 3; }
+        else if ((*p & 0xF8) == 0xF0) { cp = *p & 0x07; needed = 4; }
+        else return false;
+        if (static_cast<std::uint32_t>(e - p) < needed) return false;
+        for (std::uint32_t i = 1; i < needed; ++i) {
+            if ((p[i] & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (p[i] & 0x3F);
+        }
+        if (needed == 2 && cp < 0x80) return false;
+        if (needed == 3 && cp < 0x800) return false;
+        if (needed == 4 && (cp < 0x10000 || cp > 0x10FFFF)) return false;
+        if (cp >= 0xD800 && cp <= 0xDFFF) return false;
+        if (cp > 0x10FFFF) return false;
+        p += needed;
+    }
+    return true;
 }
 
 std::string build_dict_key(DictScope scope, const std::string& template_name,
@@ -263,14 +374,61 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
                 auto val_attr = child.attribute("value");
                 if (val_attr) val_text = val_attr.as_string("");
             }
-            if (wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString) {
-                op.constant_str = val_text;
-            } else {
-                if (!parse_int_value(val_text, op.constant_int)) {
+            if (wire_type == DecWireType::ByteVector) {
+                if (!val_text.empty()) {
                     ctx.error("invalid_constant_value",
-                              "Invalid constant value '" + val_text + "' for " + field_path, field_path);
+                              "Non-empty byte-vector constant not supported for " + field_path, field_path);
                 }
-                op.constant_uint = static_cast<std::uint64_t>(op.constant_int);
+            } else if (wire_type == DecWireType::AsciiString) {
+                op.constant_str = val_text;
+                if (!validate_ascii_static(val_text)) {
+                    ctx.error("invalid_constant_value",
+                              "Invalid ASCII constant value for " + field_path, field_path);
+                }
+            } else if (wire_type == DecWireType::UnicodeString) {
+                op.constant_str = val_text;
+                if (!validate_unicode_static(val_text)) {
+                    ctx.error("invalid_constant_value",
+                              "Invalid Unicode constant value for " + field_path, field_path);
+                }
+            } else if (wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64) {
+                std::uint64_t tmp = 0;
+                if (wire_type == DecWireType::uInt32) {
+                    std::uint32_t tmp32 = 0;
+                    if (!parse_u32(val_text, tmp32)) {
+                        ctx.error("invalid_constant_value",
+                                  "Invalid constant value '" + val_text + "' for uInt32 " + field_path +
+                                  " (range 0..4294967295)", field_path);
+                    } else {
+                        tmp = tmp32;
+                    }
+                } else {
+                    if (!parse_u64(val_text, tmp)) {
+                        ctx.error("invalid_constant_value",
+                                  "Invalid constant value '" + val_text + "' for uInt64 " + field_path +
+                                  " (range 0..18446744073709551615)", field_path);
+                    }
+                }
+                op.constant_uint = tmp;
+            } else {
+                std::int64_t tmp = 0;
+                if (wire_type == DecWireType::Int32) {
+                    std::int32_t tmp32 = 0;
+                    if (!parse_i32(val_text, tmp32)) {
+                        ctx.error("invalid_constant_value",
+                                  "Invalid constant value '" + val_text + "' for int32 " + field_path +
+                                  " (range -2147483648..2147483647)", field_path);
+                    } else {
+                        tmp = tmp32;
+                    }
+                } else {
+                    if (!parse_i64(val_text, tmp)) {
+                        ctx.error("invalid_constant_value",
+                                  "Invalid constant value '" + val_text + "' for int64 " + field_path +
+                                  " (range -9223372036854775808..9223372036854775807)", field_path);
+                    }
+                }
+                op.constant_int = tmp;
             }
         } else if (name == "default") {
             op.kind = OpKind::Default;
@@ -281,12 +439,57 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             }
             if (!val_text.empty()) {
                 op.has_initial = true;
-                if (wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString) {
+                if (wire_type == DecWireType::ByteVector) {
+                    ctx.error("invalid_default_value",
+                              "Non-empty byte-vector default initial value not supported for " + field_path, field_path);
+                } else if (wire_type == DecWireType::AsciiString) {
                     op.initial_str = val_text;
-                } else {
-                    if (!parse_int_value(val_text, op.initial_int)) {
+                    if (!validate_ascii_static(val_text)) {
                         ctx.error("invalid_default_value",
-                                  "Invalid default value '" + val_text + "' for " + field_path, field_path);
+                                  "Invalid ASCII default value for " + field_path, field_path);
+                    }
+                } else if (wire_type == DecWireType::UnicodeString) {
+                    op.initial_str = val_text;
+                    if (!validate_unicode_static(val_text)) {
+                        ctx.error("invalid_default_value",
+                                  "Invalid Unicode default value for " + field_path, field_path);
+                    }
+                } else if (wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64) {
+                    if (wire_type == DecWireType::uInt32) {
+                        std::uint32_t tmp32 = 0;
+                        if (!parse_u32(val_text, tmp32)) {
+                            ctx.error("invalid_default_value",
+                                      "Invalid default value '" + val_text + "' for uInt32 " + field_path +
+                                      " (range 0..4294967295)", field_path);
+                        } else {
+                            op.initial_uint = tmp32;
+                        }
+                    } else {
+                        std::uint64_t tmp64 = 0;
+                        if (!parse_u64(val_text, tmp64)) {
+                            ctx.error("invalid_default_value",
+                                      "Invalid default value '" + val_text + "' for uInt64 " + field_path +
+                                      " (range 0..18446744073709551615)", field_path);
+                        } else {
+                            op.initial_uint = tmp64;
+                        }
+                    }
+                } else {
+                    if (wire_type == DecWireType::Int32) {
+                        std::int32_t tmp32 = 0;
+                        if (!parse_i32(val_text, tmp32)) {
+                            ctx.error("invalid_default_value",
+                                      "Invalid default value '" + val_text + "' for int32 " + field_path +
+                                      " (range -2147483648..2147483647)", field_path);
+                        } else {
+                            op.initial_int = tmp32;
+                        }
+                    } else {
+                        if (!parse_i64(val_text, op.initial_int)) {
+                            ctx.error("invalid_default_value",
+                                      "Invalid default value '" + val_text + "' for int64 " + field_path +
+                                      " (range -9223372036854775808..9223372036854775807)", field_path);
+                        }
                     }
                 }
             }
@@ -309,12 +512,57 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             }
             if (!val_text.empty()) {
                 op.has_initial = true;
-                if (wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString) {
+                if (wire_type == DecWireType::ByteVector) {
+                    ctx.error("invalid_copy_value",
+                              "Non-empty byte-vector copy initial value not supported for " + field_path, field_path);
+                } else if (wire_type == DecWireType::AsciiString) {
                     op.initial_str = val_text;
-                } else {
-                    if (!parse_int_value(val_text, op.initial_int)) {
+                    if (!validate_ascii_static(val_text)) {
                         ctx.error("invalid_copy_value",
-                                  "Invalid copy initial value '" + val_text + "' for " + field_path, field_path);
+                                  "Invalid ASCII copy value for " + field_path, field_path);
+                    }
+                } else if (wire_type == DecWireType::UnicodeString) {
+                    op.initial_str = val_text;
+                    if (!validate_unicode_static(val_text)) {
+                        ctx.error("invalid_copy_value",
+                                  "Invalid Unicode copy value for " + field_path, field_path);
+                    }
+                } else if (wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64) {
+                    if (wire_type == DecWireType::uInt32) {
+                        std::uint32_t tmp32 = 0;
+                        if (!parse_u32(val_text, tmp32)) {
+                            ctx.error("invalid_copy_value",
+                                      "Invalid copy initial value '" + val_text + "' for uInt32 " + field_path +
+                                      " (range 0..4294967295)", field_path);
+                        } else {
+                            op.initial_uint = tmp32;
+                        }
+                    } else {
+                        std::uint64_t tmp64 = 0;
+                        if (!parse_u64(val_text, tmp64)) {
+                            ctx.error("invalid_copy_value",
+                                      "Invalid copy initial value '" + val_text + "' for uInt64 " + field_path +
+                                      " (range 0..18446744073709551615)", field_path);
+                        } else {
+                            op.initial_uint = tmp64;
+                        }
+                    }
+                } else {
+                    if (wire_type == DecWireType::Int32) {
+                        std::int32_t tmp32 = 0;
+                        if (!parse_i32(val_text, tmp32)) {
+                            ctx.error("invalid_copy_value",
+                                      "Invalid copy initial value '" + val_text + "' for int32 " + field_path +
+                                      " (range -2147483648..2147483647)", field_path);
+                        } else {
+                            op.initial_int = tmp32;
+                        }
+                    } else {
+                        if (!parse_i64(val_text, op.initial_int)) {
+                            ctx.error("invalid_copy_value",
+                                      "Invalid copy initial value '" + val_text + "' for int64 " + field_path +
+                                      " (range -9223372036854775808..9223372036854775807)", field_path);
+                        }
                     }
                 }
             }
@@ -337,9 +585,43 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             }
             if (!val_text.empty()) {
                 op.has_initial = true;
-                if (!parse_int_value(val_text, op.initial_int)) {
-                    ctx.error("invalid_increment_value",
-                              "Invalid increment initial value '" + val_text + "' for " + field_path, field_path);
+                if (wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64) {
+                    if (wire_type == DecWireType::uInt32) {
+                        std::uint32_t tmp32 = 0;
+                        if (!parse_u32(val_text, tmp32)) {
+                            ctx.error("invalid_increment_value",
+                                      "Invalid increment initial value '" + val_text + "' for uInt32 " + field_path +
+                                      " (range 0..4294967295)", field_path);
+                        } else {
+                            op.initial_uint = tmp32;
+                        }
+                    } else {
+                        std::uint64_t tmp64 = 0;
+                        if (!parse_u64(val_text, tmp64)) {
+                            ctx.error("invalid_increment_value",
+                                      "Invalid increment initial value '" + val_text + "' for uInt64 " + field_path +
+                                      " (range 0..18446744073709551615)", field_path);
+                        } else {
+                            op.initial_uint = tmp64;
+                        }
+                    }
+                } else {
+                    if (wire_type == DecWireType::Int32) {
+                        std::int32_t tmp32 = 0;
+                        if (!parse_i32(val_text, tmp32)) {
+                            ctx.error("invalid_increment_value",
+                                      "Invalid increment initial value '" + val_text + "' for int32 " + field_path +
+                                      " (range -2147483648..2147483647)", field_path);
+                        } else {
+                            op.initial_int = tmp32;
+                        }
+                    } else {
+                        if (!parse_i64(val_text, op.initial_int)) {
+                            ctx.error("invalid_increment_value",
+                                      "Invalid increment initial value '" + val_text + "' for int64 " + field_path +
+                                      " (range -9223372036854775808..9223372036854775807)", field_path);
+                        }
+                    }
                 }
             }
             auto key_attr = child.attribute("key");
@@ -416,8 +698,20 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
     f.is_decimal = true;
     f.has_pmap_bit = has_pmap_bit;
 
+    std::string field_path = parent_path.empty() ? f.name : parent_path + "." + f.name;
+
     auto fix_attr = node.attribute("id");
-    if (fix_attr) { f.has_fix_tag = true; f.fix_tag = fix_attr.as_int(0); }
+    if (fix_attr) {
+        std::string fix_str = fix_attr.as_string("");
+        std::int32_t fix_val = 0;
+        if (!parse_i32(fix_str, fix_val) || fix_val <= 0) {
+            ctx.error("invalid_fix_tag",
+                      "Invalid FIX tag '" + fix_str + "' in " + field_path, field_path);
+        } else {
+            f.has_fix_tag = true;
+            f.fix_tag = fix_val;
+        }
+    }
 
     auto pres = node.attribute("presence");
     f.is_mandatory = !pres || std::string(pres.as_string("")) == "mandatory";
@@ -426,8 +720,6 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
         ctx.error("empty_field_name",
                   "Decimal field in " + parent_path + " has empty name", parent_path);
     }
-
-    std::string field_path = parent_path.empty() ? f.name : parent_path + "." + f.name;
 
     auto exponent_node = node.child("exponent");
     auto mantissa_node = node.child("mantissa");
@@ -454,24 +746,28 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
                                                  f.name + ".mantissa", DecWireType::Int64, "", false, true);
     }
 
-    // Register decimal component keys for collision detection
+    // Register decimal component keys for collision detection (skip empty keys from Constant/None)
     std::string exp_path = field_path + ".exponent";
     std::string man_path = field_path + ".mantissa";
-    auto exp_it = ctx.dict_key_to_path.find(f.exponent_op.dict_key);
-    if (exp_it != ctx.dict_key_to_path.end() && exp_it->second != exp_path) {
-        ctx.error("duplicate_dictionary_key",
-                  "Dictionary key collision: exponent key '" + f.exponent_op.dict_key +
-                  "' used by both " + exp_it->second + " and " + exp_path, field_path);
-    } else {
-        ctx.dict_key_to_path[f.exponent_op.dict_key] = exp_path;
+    if (!f.exponent_op.dict_key.empty()) {
+        auto exp_it = ctx.dict_key_to_path.find(f.exponent_op.dict_key);
+        if (exp_it != ctx.dict_key_to_path.end() && exp_it->second != exp_path) {
+            ctx.error("duplicate_dictionary_key",
+                      "Dictionary key collision: exponent key '" + f.exponent_op.dict_key +
+                      "' used by both " + exp_it->second + " and " + exp_path, field_path);
+        } else {
+            ctx.dict_key_to_path[f.exponent_op.dict_key] = exp_path;
+        }
     }
-    auto man_it = ctx.dict_key_to_path.find(f.mantissa_op.dict_key);
-    if (man_it != ctx.dict_key_to_path.end() && man_it->second != man_path) {
-        ctx.error("duplicate_dictionary_key",
-                  "Dictionary key collision: mantissa key '" + f.mantissa_op.dict_key +
-                  "' used by both " + man_it->second + " and " + man_path, field_path);
-    } else {
-        ctx.dict_key_to_path[f.mantissa_op.dict_key] = man_path;
+    if (!f.mantissa_op.dict_key.empty()) {
+        auto man_it = ctx.dict_key_to_path.find(f.mantissa_op.dict_key);
+        if (man_it != ctx.dict_key_to_path.end() && man_it->second != man_path) {
+            ctx.error("duplicate_dictionary_key",
+                      "Dictionary key collision: mantissa key '" + f.mantissa_op.dict_key +
+                      "' used by both " + man_it->second + " and " + man_path, field_path);
+        } else {
+            ctx.dict_key_to_path[f.mantissa_op.dict_key] = man_path;
+        }
     }
 
     return f;
@@ -517,7 +813,17 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     }
 
     auto fix_attr = node.attribute("id");
-    if (fix_attr) { f.has_fix_tag = true; f.fix_tag = fix_attr.as_int(0); }
+    if (fix_attr) {
+        std::string fix_str = fix_attr.as_string("");
+        std::int32_t fix_val = 0;
+        if (!parse_i32(fix_str, fix_val) || fix_val <= 0) {
+            ctx.error("invalid_fix_tag",
+                      "Invalid FIX tag '" + fix_str + "' in " + field_path, field_path);
+        } else {
+            f.has_fix_tag = true;
+            f.fix_tag = fix_val;
+        }
+    }
 
     if (elem_name == "decimal") {
         return parse_decimal_field(node, field_index, template_name, ctx, parent_path, f.has_pmap_bit);
@@ -541,7 +847,17 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
             len_field.is_mandatory = true;
             len_field.has_pmap_bit = false;
             auto len_fix = length_node.attribute("id");
-            if (len_fix) { len_field.has_fix_tag = true; len_field.fix_tag = len_fix.as_int(0); }
+            if (len_fix) {
+                std::string lfix_str = len_fix.as_string("");
+                std::int32_t lfix_val = 0;
+                if (!parse_i32(lfix_str, lfix_val) || lfix_val <= 0) {
+                    ctx.error("invalid_fix_tag",
+                              "Invalid FIX tag '" + lfix_str + "' in " + field_path + ".length", field_path);
+                } else {
+                    len_field.has_fix_tag = true;
+                    len_field.fix_tag = lfix_val;
+                }
+            }
 
             // Parse length operator if present
             for (auto lchild : length_node.children()) {
@@ -699,14 +1015,26 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
         }
 
         std::string id_str = id_attr.as_string("");
-        bool is_numeric = !id_str.empty() &&
-            std::all_of(id_str.begin(), id_str.end(), ::isdigit);
-        if (!is_numeric) {
-            ctx.error("non_numeric_template_id", "Template has non-numeric id: " + id_str);
+        if (id_str.empty()) {
+            ctx.error("missing_template_id", "Template missing 'id' attribute");
             continue;
         }
 
-        ct.id = static_cast<std::uint32_t>(id_attr.as_int(0));
+        std::uint32_t parsed_id = 0;
+        if (!parse_u32(id_str, parsed_id)) {
+            // Check if it's non-decimal
+            bool has_non_digit = false;
+            for (char c : id_str) {
+                if (c < '0' || c > '9') { has_non_digit = true; break; }
+            }
+            if (has_non_digit) {
+                ctx.error("non_numeric_template_id", "Template has non-numeric id: " + id_str);
+            } else {
+                ctx.error("template_id_out_of_range", "Template id out of range: " + id_str);
+            }
+            continue;
+        }
+        ct.id = parsed_id;
         if (ct.id == 0) {
             ctx.error("invalid_template_id", "Template id cannot be 0");
             continue;

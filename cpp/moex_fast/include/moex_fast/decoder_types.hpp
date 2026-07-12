@@ -73,6 +73,7 @@ struct OpInstruction {
 
     bool has_initial = false;
     std::int64_t initial_int = 0;
+    std::uint64_t initial_uint = 0;
     std::string initial_str;
 
     bool has_constant = false;

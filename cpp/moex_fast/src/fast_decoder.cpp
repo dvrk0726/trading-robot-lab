@@ -430,8 +430,11 @@ struct DecoderSession::Impl {
                 if (field.wire_type == DecWireType::AsciiString ||
                     field.wire_type == DecWireType::UnicodeString) {
                     out.value = field.op.initial_str;
+                } else if (field.wire_type == DecWireType::uInt32 ||
+                           field.wire_type == DecWireType::uInt64) {
+                    out.value = field.op.initial_uint;
                 } else {
-                    store_int_value(out, field.wire_type, field.op.initial_int);
+                    out.value = field.op.initial_int;
                 }
             } else {
                 if (field.is_mandatory) {
@@ -470,8 +473,11 @@ struct DecoderSession::Impl {
                 if (field.wire_type == DecWireType::AsciiString ||
                     field.wire_type == DecWireType::UnicodeString) {
                     out.value = field.op.initial_str;
+                } else if (field.wire_type == DecWireType::uInt32 ||
+                           field.wire_type == DecWireType::uInt64) {
+                    out.value = field.op.initial_uint;
                 } else {
-                    store_int_value(out, field.wire_type, field.op.initial_int);
+                    out.value = field.op.initial_int;
                 }
                 // Store initial in dictionary for subsequent messages
                 DictValue dv;
@@ -482,8 +488,8 @@ struct DecoderSession::Impl {
                     dv.str_val = field.op.initial_str;
                 } else if (field.wire_type == DecWireType::uInt32 ||
                            field.wire_type == DecWireType::uInt64) {
-                    dv.uint_val = static_cast<std::uint64_t>(field.op.initial_int);
-                    dv.int_val = field.op.initial_int;
+                    dv.uint_val = field.op.initial_uint;
+                    dv.int_val = static_cast<std::int64_t>(field.op.initial_uint);
                 } else {
                     dv.int_val = field.op.initial_int;
                     dv.uint_val = static_cast<std::uint64_t>(field.op.initial_int);
@@ -558,11 +564,22 @@ struct DecoderSession::Impl {
                     set_dict(field.op.dict_key, dv);
                 }
             } else if (field.op.has_initial) {
-                store_int_value(out, field.wire_type, field.op.initial_int);
+                if (field.wire_type == DecWireType::uInt32 ||
+                    field.wire_type == DecWireType::uInt64) {
+                    out.value = field.op.initial_uint;
+                } else {
+                    out.value = field.op.initial_int;
+                }
                 DictValue dv;
                 dv.defined = true;
-                dv.int_val = field.op.initial_int;
-                dv.uint_val = static_cast<std::uint64_t>(field.op.initial_int);
+                if (field.wire_type == DecWireType::uInt32 ||
+                    field.wire_type == DecWireType::uInt64) {
+                    dv.uint_val = field.op.initial_uint;
+                    dv.int_val = static_cast<std::int64_t>(field.op.initial_uint);
+                } else {
+                    dv.int_val = field.op.initial_int;
+                    dv.uint_val = static_cast<std::uint64_t>(field.op.initial_int);
+                }
                 dv.wire_type = field.wire_type;
                 set_dict(field.op.dict_key, dv);
             } else {

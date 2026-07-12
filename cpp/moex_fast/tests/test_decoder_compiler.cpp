@@ -2,8 +2,16 @@
 #include "test_check.hpp"
 #include <iostream>
 #include <type_traits>
+#include <string>
 
 using namespace moex_fast;
+
+static bool has_issue(const CompileResult& r, const std::string& code) {
+    for (const auto& issue : r.issues) {
+        if (issue.code == code) return true;
+    }
+    return false;
+}
 
 // --- static_assert: template collection returns const ref only ---
 static_assert(std::is_same_v<
@@ -455,6 +463,648 @@ static void test_default_handle_invalid() {
     TEST_PASS("default_handle_invalid");
 }
 
+// --- 9B1 tests ---
+
+// Template ID UINT32_MAX succeeds and is findable
+static void test_template_id_uint32_max() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="4294967295" name="MaxTid"><uInt32 name="F1"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK(result.compiled.valid());
+    auto* t = result.compiled.find(4294967295u);
+    CHECK(t != nullptr);
+    CHECK_EQ(t->id, 4294967295u);
+    TEST_PASS("template_id_uint32_max");
+}
+
+// Template id zero fails
+static void test_template_id_zero() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="0" name="Zero"><uInt32 name="F1"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    CHECK(has_issue(result, "invalid_template_id"));
+    CHECK(!result.compiled.valid());
+    TEST_PASS("template_id_zero");
+}
+
+// Template id non-decimal fails
+static void test_template_id_non_decimal() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10abc" name="Bad"><uInt32 name="F1"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    CHECK(has_issue(result, "non_numeric_template_id"));
+    CHECK(!result.compiled.valid());
+    TEST_PASS("template_id_non_decimal");
+}
+
+// Template id UINT32_MAX+1 fails
+static void test_template_id_out_of_range() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="4294967296" name="BigTid"><uInt32 name="F1"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    CHECK(has_issue(result, "template_id_out_of_range"));
+    CHECK(!result.compiled.valid());
+    TEST_PASS("template_id_out_of_range");
+}
+
+// FIX tag INT32_MAX succeeds on scalar
+static void test_fix_tag_scalar_ok() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="2147483647"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK_EQ(result.compiled.templates()[0].fields[0].fix_tag, 2147483647);
+    CHECK(result.compiled.templates()[0].fields[0].has_fix_tag);
+    TEST_PASS("fix_tag_scalar_ok");
+}
+
+// FIX tag INT32_MAX succeeds on decimal
+static void test_fix_tag_decimal_ok() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><decimal name="D" id="2147483647"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK_EQ(result.compiled.templates()[0].fields[0].fix_tag, 2147483647);
+    TEST_PASS("fix_tag_decimal_ok");
+}
+
+// FIX tag INT32_MAX succeeds on sequence length
+static void test_fix_tag_sequence_length_ok() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L" id="2147483647"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK_EQ(result.compiled.templates()[0].fields[0].children[0].fix_tag, 2147483647);
+    CHECK(result.compiled.templates()[0].fields[0].children[0].has_fix_tag);
+    TEST_PASS("fix_tag_sequence_length_ok");
+}
+
+// FIX tag zero fails
+static void test_fix_tag_zero() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="0"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    CHECK(has_issue(result, "invalid_fix_tag"));
+    CHECK(!result.compiled.valid());
+    TEST_PASS("fix_tag_zero");
+}
+
+// FIX tag negative fails
+static void test_fix_tag_negative() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="-5"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    CHECK(has_issue(result, "invalid_fix_tag"));
+    CHECK(!result.compiled.valid());
+    TEST_PASS("fix_tag_negative");
+}
+
+// FIX tag non-decimal fails
+static void test_fix_tag_non_decimal() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="abc"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    CHECK(has_issue(result, "invalid_fix_tag"));
+    CHECK(!result.compiled.valid());
+    TEST_PASS("fix_tag_non_decimal");
+}
+
+// FIX tag INT32_MAX+1 fails
+static void test_fix_tag_out_of_range() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="2147483648"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    CHECK(has_issue(result, "invalid_fix_tag"));
+    CHECK(!result.compiled.valid());
+    TEST_PASS("fix_tag_out_of_range");
+}
+
+// uInt32 0 and MAX succeed, -1 and MAX+1 fail
+static void test_uint32_constant_range() {
+    // 0 succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>0</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 0u);
+    }
+    // MAX succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>4294967295</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 4294967295u);
+    }
+    // -1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>-1</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    // MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>4294967296</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    TEST_PASS("uint32_constant_range");
+}
+
+// uInt64 0 and MAX succeed, -1 and MAX+1 fail
+static void test_uint64_constant_range() {
+    // 0
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><constant>0</constant></uInt64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 0u);
+    }
+    // MAX = 18446744073709551615
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><constant>18446744073709551615</constant></uInt64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, UINT64_MAX);
+    }
+    // -1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><constant>-1</constant></uInt64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    // 18446744073709551616 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><constant>18446744073709551616</constant></uInt64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    TEST_PASS("uint64_constant_range");
+}
+
+// int32 MIN and MAX succeed; adjacent values fail
+static void test_int32_constant_range() {
+    // MAX = 2147483647
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int32 name="F"><constant>2147483647</constant></int32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_int, INT32_MAX);
+    }
+    // MIN = -2147483648
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int32 name="F"><constant>-2147483648</constant></int32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_int, INT32_MIN);
+    }
+    // MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int32 name="F"><constant>2147483648</constant></int32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    // MIN-1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int32 name="F"><constant>-2147483649</constant></int32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    TEST_PASS("int32_constant_range");
+}
+
+// int64 MIN and MAX succeed; adjacent values fail
+static void test_int64_constant_range() {
+    // MAX = 9223372036854775807
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int64 name="F"><constant>9223372036854775807</constant></int64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_int, INT64_MAX);
+    }
+    // MIN = -9223372036854775808
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int64 name="F"><constant>-9223372036854775808</constant></int64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_int, INT64_MIN);
+    }
+    // MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int64 name="F"><constant>9223372036854775808</constant></int64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    // MIN-1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int64 name="F"><constant>-9223372036854775809</constant></int64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    TEST_PASS("int64_constant_range");
+}
+
+// Decimal exponent MIN/MAX and mantissa MIN/MAX exact metadata; adjacent failures
+static void test_decimal_component_range() {
+    // Exponent MAX (INT32_MAX) and mantissa MAX (INT64_MAX) succeed with exact metadata
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>2147483647</constant></exponent>
+      <mantissa><constant>9223372036854775807</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        const auto& f = r.compiled.templates()[0].fields[0];
+        CHECK(f.is_decimal);
+        CHECK_EQ(f.exponent_op.constant_int, INT32_MAX);
+        CHECK_EQ(f.mantissa_op.constant_int, INT64_MAX);
+    }
+    // Exponent MIN and mantissa MIN succeed
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>-2147483648</constant></exponent>
+      <mantissa><constant>-9223372036854775808</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        const auto& f = r.compiled.templates()[0].fields[0];
+        CHECK_EQ(f.exponent_op.constant_int, INT32_MIN);
+        CHECK_EQ(f.mantissa_op.constant_int, INT64_MIN);
+    }
+    // Exponent MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>2147483648</constant></exponent>
+      <mantissa><constant>0</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    // Mantissa MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>0</constant></exponent>
+      <mantissa><constant>9223372036854775808</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+    }
+    TEST_PASS("decimal_component_range");
+}
+
+// Sequence length initial 0/UINT32_MAX exact metadata; negative and MAX+1 fail
+static void test_sequence_length_initial_range() {
+    // 0 succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><default>0</default></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].length_op.has_initial);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].length_op.initial_uint, 0u);
+    }
+    // UINT32_MAX succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><default>4294967295</default></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].length_op.initial_uint, UINT32_MAX);
+    }
+    // Negative fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><default>-1</default></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_default_value"));
+    }
+    // MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><default>4294967296</default></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_default_value"));
+    }
+    TEST_PASS("sequence_length_initial_range");
+}
+
+// Reject hexadecimal numeric literal
+static void test_reject_hex_literal() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>0xFF</constant></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "invalid_constant_value"));
+    CHECK(!r.compiled.valid());
+    TEST_PASS("reject_hex_literal");
+}
+
+// Valid empty and non-empty ASCII constant values
+static void test_valid_ascii_static_values() {
+    // Empty ASCII
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F"><constant></constant></string></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_str, "");
+    }
+    // Non-empty ASCII
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F"><constant>Hello</constant></string></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_str, "Hello");
+    }
+    TEST_PASS("valid_ascii_static_values");
+}
+
+// Valid 1/2/3/4-byte Unicode static values
+static void test_valid_unicode_static_values() {
+    // 1-byte (ASCII)
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><unicode name="F"><constant>A</constant></unicode></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+    }
+    // 2-byte (U+00A2 = C2 A2)
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<unicode name=\"F\"><constant>\xC2\xA2</constant></unicode>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+    }
+    // 3-byte (U+20AC = E2 82 AC)
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<unicode name=\"F\"><constant>\xE2\x82\xAC</constant></unicode>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+    }
+    // 4-byte (U+1F600 = F0 9F 98 80)
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<unicode name=\"F\"><constant>\xF0\x9F\x98\x80</constant></unicode>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+    }
+    TEST_PASS("valid_unicode_static_values");
+}
+
+// Non-ASCII in ASCII field fails
+static void test_non_ascii_in_ascii_field() {
+    // Non-ASCII byte (0xC2 0xA2 = U+00A2 in UTF-8) in ASCII field
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<string name=\"F\"><constant>\xC2\xA2</constant></string>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "invalid_constant_value"));
+        CHECK(!r.compiled.valid());
+    }
+    TEST_PASS("non_ascii_in_ascii_field");
+}
+
+// Invalid Unicode (surrogate U+D800 = ED A0 80) fails
+static void test_invalid_unicode_surrogate() {
+    // Surrogate U+D800
+    const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<templates><template id=\"1\" name=\"Msg\">"
+        "<unicode name=\"F\"><constant>\xED\xA0\x80</constant></unicode>"
+        "</template></templates>";
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "invalid_constant_value"));
+    CHECK(!r.compiled.valid());
+    TEST_PASS("invalid_unicode_surrogate");
+}
+
+// Oversized static value (1 MiB + 1) fails
+static void test_oversized_static_value() {
+    // 1 MiB + 1 bytes of ASCII 'A'
+    std::string big(1024 * 1024 + 1, 'A');
+    std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<templates><template id=\"1\" name=\"Msg\">"
+        "<string name=\"F\"><constant>" + big + "</constant></string>"
+        "</template></templates>";
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "invalid_constant_value"));
+    CHECK(!r.compiled.valid());
+    TEST_PASS("oversized_static_value");
+}
+
+// Exact 1 MiB static value succeeds
+static void test_exact_1mib_static_value() {
+    std::string big(1024 * 1024, 'A');
+    std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<templates><template id=\"1\" name=\"Msg\">"
+        "<string name=\"F\"><constant>" + big + "</constant></string>"
+        "</template></templates>";
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_str.size(), 1024u * 1024u);
+    TEST_PASS("exact_1mib_static_value");
+}
+
+// Default operator initial value: uInt64 MAX
+static void test_uint64_default_initial() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><default>18446744073709551615</default></uInt64></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK_EQ(r.compiled.templates()[0].fields[0].op.initial_uint, UINT64_MAX);
+    CHECK(r.compiled.templates()[0].fields[0].op.has_initial);
+    TEST_PASS("uint64_default_initial");
+}
+
+// Copy operator initial value: uInt64 MAX
+static void test_uint64_copy_initial() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><copy>18446744073709551615</copy></uInt64></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK_EQ(r.compiled.templates()[0].fields[0].op.initial_uint, UINT64_MAX);
+    TEST_PASS("uint64_copy_initial");
+}
+
+// Increment operator initial value: uInt64 MAX
+static void test_uint64_increment_initial() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><increment>18446744073709551615</increment></uInt64></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK_EQ(r.compiled.templates()[0].fields[0].op.initial_uint, UINT64_MAX);
+    TEST_PASS("uint64_increment_initial");
+}
+
 int main() {
     test_valid_compile();
     test_duplicate_template_id();
@@ -475,6 +1125,34 @@ int main() {
     test_copy_lifetime();
     test_move_lifetime();
     test_default_handle_invalid();
+    // 9B1 tests
+    test_template_id_uint32_max();
+    test_template_id_zero();
+    test_template_id_non_decimal();
+    test_template_id_out_of_range();
+    test_fix_tag_scalar_ok();
+    test_fix_tag_decimal_ok();
+    test_fix_tag_sequence_length_ok();
+    test_fix_tag_zero();
+    test_fix_tag_negative();
+    test_fix_tag_non_decimal();
+    test_fix_tag_out_of_range();
+    test_uint32_constant_range();
+    test_uint64_constant_range();
+    test_int32_constant_range();
+    test_int64_constant_range();
+    test_decimal_component_range();
+    test_sequence_length_initial_range();
+    test_reject_hex_literal();
+    test_valid_ascii_static_values();
+    test_valid_unicode_static_values();
+    test_non_ascii_in_ascii_field();
+    test_invalid_unicode_surrogate();
+    test_oversized_static_value();
+    test_exact_1mib_static_value();
+    test_uint64_default_initial();
+    test_uint64_copy_initial();
+    test_uint64_increment_initial();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }
