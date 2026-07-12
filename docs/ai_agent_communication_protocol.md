@@ -47,7 +47,7 @@ MiMo не начинает `DRAFT`.
 
 ## Ready handoff to MiMo
 
-Architecture/Review Agent переводит Issue в `READY_FOR_MIMO` только после проверки полноты спецификации, закрытия зависимостей и завершения scope-freeze protocol. Scope-freeze checklist должен быть полностью закрыт; anti-overengineering check должен подтвердить минимality решения.
+Architecture/Review Agent переводит Issue в `READY_FOR_MIMO` только после проверки полноты спецификации, закрытия зависимостей и завершения scope-freeze protocol. Scope-freeze checklist должен быть полностью закрыт; anti-overengineering check должен подтвердить минимальность решения.
 
 Универсальная команда:
 
