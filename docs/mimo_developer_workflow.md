@@ -1,37 +1,54 @@
 # MiMo Code — Permanent Implementation Workflow
 
-Дата обновления: 2026-07-10  
+Дата обновления: 2026-07-13  
 Статус: обязательный регламент  
 Репозиторий: `dvrk0726/trading-robot-lab`
 
 ## Назначение
 
-Этот документ является постоянной инструкцией для MiMo Code и любого другого implementation agent.
+MiMo является implementation agent. Он выполняет только одну заранее исследованную, scope-frozen и явно разрешённую владельцем задачу.
 
-MiMo реализует только заранее подготовленные GitHub Issues. MiMo не определяет архитектуру самостоятельно, не объединяет Pull Request и не начинает следующую задачу без review предыдущей.
+MiMo не определяет архитектуру, не выбирает следующую задачу самостоятельно, не выполняет merge и не начинает следующую работу.
 
-## Универсальная команда владельца
+## Единственный формат запуска
+
+Владелец запускает только точную команду, подготовленную Architecture/Review Agent:
 
 ```text
-Возьми следующую задачу READY_FOR_MIMO, выполни её, создай Pull Request и остановись.
+mimo --model xiaomi/mimo-v2.5-pro --prompt "<exact task>"
 ```
 
-Эта команда означает весь процесс из данного документа. Дополнительные ручные команды владельца не требуются, если локальный Git и GitHub-доступ MiMo уже настроены.
+Универсальная команда вида «возьми следующую задачу» не является исполняемой инструкцией в текущем workflow.
+
+Каждый prompt должен однозначно содержать:
+
+```text
+repository
+Issue and current gate
+existing or new branch rule
+existing or new Pull Request rule
+base and full expected head SHA
+exact allowed files
+exact required changes
+exact tests/checks
+explicit non-goals
+commit/push/CI/stop requirements
+owner authorization
+```
 
 ## Роли
 
 ```text
 Owner:
-формулирует желаемый результат, проверяет готовый интерфейс/результат,
-принимает решения по расходам, доступам, MOEX, paper/live и production.
+утверждает архитектуру, начало реализации, merge и необратимые действия.
 
-Architecture / Review Agent (ChatGPT):
-архитектура, компактные задачи, статусы, review diff/test evidence,
-замечания, PROJECT_STATE и ROADMAP.
+Architecture / Review Agent:
+исследует, замораживает минимальный scope, формирует exact prompt,
+проверяет diff, tests, CI and architecture.
 
-MiMo Code:
-локальная реализация, branch, build, tests, commit, push,
-Pull Request и технический отчёт.
+MiMo:
+реализует exact prompt, builds/tests, creates one scoped commit,
+pushes to the authorized branch, waits for CI and stops.
 ```
 
 MiMo не является Owner, Architecture Approver, Risk Approver, Security Approver или Merge Approver.
@@ -40,267 +57,202 @@ MiMo не является Owner, Architecture Approver, Risk Approver, Security
 
 ```text
 Trading Lab не отправляет реальные заявки.
-Стратегия не вызывает execution напрямую.
+Strategy не вызывает execution напрямую.
 Каждый OrderIntent проходит RiskEngine.
 Live выключен по умолчанию.
 Production order entry заблокирован до VPTS/certification и решения Owner.
-Секреты, персональные данные и raw market data не попадают в Git.
-QSH-семантика и strategy_ready gating не ослабляются без отдельной задачи и review.
+Secrets, personal data and raw market data не попадают в Git.
+QSH semantics and strategy_ready gating не ослабляются без отдельной задачи.
 ```
 
-## Канонические статусы задач
+## Перед каждой задачей
 
-Каждый активный Issue имеет ровно один статус:
-
-```text
-DRAFT
-READY_FOR_MIMO
-IN_PROGRESS
-READY_FOR_REVIEW
-CHANGES_REQUIRED
-OWNER_REVIEW
-OWNER_APPROVED
-DONE
-```
-
-Значение статусов:
-
-```text
-DRAFT             — задача готовится или заблокирована зависимостью.
-READY_FOR_MIMO    — спецификация проверена; MiMo может начать.
-IN_PROGRESS       — MiMo выполняет только эту задачу.
-READY_FOR_REVIEW  — Pull Request создан; MiMo остановился.
-CHANGES_REQUIRED  — reviewer сформулировал точные исправления в том же PR.
-OWNER_REVIEW      — технический review пройден; владелец проверяет результат.
-OWNER_APPROVED    — владелец принял результат; merge ещё не выполнен.
-DONE              — PR проверен, объединён, состояние проекта обновлено.
-```
-
-Одновременно MiMo может иметь только одну задачу в `IN_PROGRESS`, `READY_FOR_REVIEW` или `CHANGES_REQUIRED`.
-
-## Как выбрать следующую задачу
-
-После универсальной команды MiMo обязан:
-
-1. Проверить, нет ли незавершённой предыдущей задачи MiMo со статусом `IN_PROGRESS`, `READY_FOR_REVIEW` или `CHANGES_REQUIRED`.
-2. Если такая задача есть, не начинать новую. Продолжить только `CHANGES_REQUIRED` либо остановиться, ожидая review.
-3. Найти открытые Issues со статусом `READY_FOR_MIMO`.
-4. Выбрать самый ранний по номеру Issue, если в нём нет другого приоритета.
-5. Прочитать Issue и все указанные task-spec файлы.
-6. Перевести выбранный Issue в `IN_PROGRESS` до изменения кода.
-
-Если GitHub-аутентификация не позволяет прочитать Issue, изменить статус, push или создать PR, MiMo останавливается и сообщает точную недостающую операцию. Он не работает вслепую.
-
-## Обязательный контекст
-
-Перед каждой задачей прочитать:
+MiMo обязан прочитать:
 
 ```text
 AI_CONTEXT.md
 PROJECT_STATE.md
 ROADMAP.md
 SECURITY.md
+docs/ai_team_workflow.md
+docs/ai_agent_communication_protocol.md
 docs/mimo_developer_workflow.md
 docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md
+current Issue
+current Pull Request and all current review comments
+all task specification files named in the prompt
+relevant ADR and MOEX architecture documents
 ```
 
-Дополнительно прочитать все файлы, перечисленные в Issue. Для realtime MOEX-задач обязательно:
+GitHub facts override stale text in reports or previous comments.
+
+## Два режима работы
+
+### New implementation task
+
+Разрешён только когда:
 
 ```text
-docs/moex/MOEX_REALTIME_ARCHITECTURE.md
-relevant ADR
-tasks/<task-id>/00_OVERVIEW.md
-tasks/<task-id>/01_REQUIREMENTS.md
-tasks/<task-id>/02_TEST_PLAN.md
-tasks/<task-id>/03_ACCEPTANCE.md
+Issue has READY_FOR_MIMO status;
+scope-freeze checklist is complete;
+owner explicitly authorized the exact prompt;
+prompt explicitly authorizes a new branch and PR.
 ```
+
+MiMo creates only the branch named in the prompt and one Pull Request to `main`.
+
+### Existing CHANGES_REQUIRED task
+
+MiMo must:
+
+```text
+work only in the existing branch and existing PR;
+not create a new branch or PR;
+read the merged specification and latest canonical review instruction;
+change only exact allowed files;
+perform one small logical correction;
+create one scoped commit;
+push to the same branch;
+wait for CI;
+stop.
+```
+
+Any previous prompt or comment explicitly marked superseded/non-executable must not be followed.
 
 ## Git preflight
 
-До правок MiMo выполняет:
+For a new task:
 
 ```powershell
 git status --short
 git switch main
 git pull --ff-only origin main
 git status --short
+git switch -c <branch-from-prompt>
 ```
 
-Рабочее дерево `main` должно быть чистым. Если оно грязное, MiMo не стирает и не прячет чужие изменения автоматически.
-
-Затем создаётся отдельная ветка:
+For `CHANGES_REQUIRED`:
 
 ```powershell
-git switch -c mimo/issue-<NUMBER>-<short-slug>
+git status --short
+git fetch origin
+git switch <existing-branch-from-prompt>
+git pull --ff-only origin <existing-branch-from-prompt>
+git status --short
+git rev-parse HEAD
 ```
 
-Допустимые префиксы:
+If the actual branch or full SHA differs from the prompt, MiMo stops and reports the mismatch. It must not guess, reset, rebase or force-push.
+
+## Absolute prohibitions
+
+MiMo must never:
 
 ```text
-mimo/
-fix/
-chore/
-docs/
-```
-
-Для MiMo по умолчанию используется `mimo/issue-...`.
-
-## Абсолютный запрет прямой работы в main
-
-MiMo запрещено:
-
-```text
-редактировать код в main;
-коммитить в main;
-push в main;
+edit, commit or push in main;
+merge or enable auto-merge;
 force-push;
-merge Pull Request;
-включать auto-merge;
-удалять review-ветку до принятия;
-обходить обязательные CI-проверки.
+delete branches;
+rewrite history;
+change architecture;
+expand scope;
+change unrelated files;
+start the next task;
+mark a gate DONE or accepted;
+commit official XML, raw market data, credentials or private network data.
 ```
 
-Если текущая ветка `main` или `master`, `tools/mimo_save.ps1` обязан завершиться ошибкой.
+## Implementation rules
 
-## Правила реализации
+```text
+one prompt = one small logical task;
+only allowed files may change;
+existing behavior listed in the prompt must be preserved;
+unsupported or unresolved behavior remains fail-closed;
+no hidden fallback, silent ignore or speculative feature;
+no report may substitute for required code/tests;
+all expected malformed input uses explicit deterministic errors.
+```
 
-MiMo:
+If new evidence invalidates the specification, MiMo stops. It does not redesign the task.
 
-1. Меняет только разрешённые Issue файлы и минимально необходимые build/test файлы.
-2. Не расширяет scope молча.
-3. Не добавляет network, FIX, TWIME, FAST binary decoder, order sending или credentials, если этого нет в утверждённой задаче.
-4. Не коммитит official XML, QSH, pcap/pcapng, базы, generated reports, binaries и build directories.
-5. Использует synthetic/sanitized fixtures.
-6. Сохраняет существующую QSH-семантику и `strategy_ready` gating.
-7. При архитектурном конфликте останавливается и фиксирует вопрос в Issue/PR.
+## Build and tests
 
-## Сборка и тесты
+MiMo runs every exact check from the prompt and all applicable baseline checks.
 
-Перед commit MiMo запускает все проверки из Issue и минимум:
+Repository baseline:
 
 ```powershell
 python -m pytest -q
 python shared/schemas/validate_examples.py
+python tools/check_repository_hygiene.py
 
 cmake -S cpp/qsh_ingest -B build/qsh_ingest
 cmake --build build/qsh_ingest --config Release
 ctest --test-dir build/qsh_ingest -C Release --output-on-failure
-
-python tools/check_repository_hygiene.py
 ```
 
-Если команда неприменима в локальной среде, это явно указывается в отчёте. Падение существующего regression-теста нельзя скрывать или объявлять несущественным.
+Task-specific CMake/build/CTest commands are mandatory when listed. Existing regression failures cannot be hidden or dismissed.
 
-Для RT-1 и последующих C++-задач существующие 20 QSH/M10X CTest-тестов обязательны.
+## Commit and push
 
-## Commit и push
-
-После успешных проверок:
+Before commit:
 
 ```powershell
 git diff --check
 git status --short
 git diff --stat
 git diff
-git add -A
+```
+
+Then:
+
+```powershell
+git add <only-authorized-files>
 git commit -m "<scoped message>"
-git push -u origin HEAD
+git push origin HEAD
 ```
 
-Один commit должен представлять один логический результат. Дополнительные commits допустимы для точных исправлений после review.
+One run produces one logical commit unless the prompt explicitly says otherwise.
 
-## Pull Request
+## CI and stop condition
 
-MiMo создаёт Pull Request в `main` и заполняет repository PR template.
-
-PR обязан содержать:
+After push MiMo must:
 
 ```text
-Issue number;
-branch name;
-commit SHA;
-что изменено;
-что намеренно не делалось;
-changed files;
-точные build/test commands;
-результаты тестов;
-CI status;
-известные ограничения;
-security/safety checklist;
-Owner Review Package, если есть интерфейс.
+record full commit SHA;
+wait for the existing PR CI;
+record workflow run and job conclusions;
+report changed files and exact commands/results;
+state anything not completed;
+stop.
 ```
 
-После создания PR MiMo:
+MiMo does not announce architecture acceptance, owner acceptance, merge permission or completion of the roadmap gate.
 
-1. Переводит Issue в `READY_FOR_REVIEW`.
-2. Добавляет ссылку на PR и отчёт.
-3. Не объединяет PR.
-4. Не начинает следующую задачу.
-5. Останавливается.
+## Report
 
-## Исправления после review
-
-При статусе `CHANGES_REQUIRED` MiMo работает в той же ветке и том же Pull Request:
+Use the report path named in the prompt. The report must include:
 
 ```text
-прочитать все review comments;
-внести только запрошенные изменения;
-повторить build/tests/hygiene;
-commit и push;
-обновить отчёт;
-вернуть статус READY_FOR_REVIEW;
-остановиться.
+Issue
+branch
+full start SHA
+full final SHA
+Pull Request
+changed files
+implemented scope
+explicitly omitted scope
+exact commands and results
+CI run and job status
+known limitations
+security/hygiene result
 ```
 
-Новый PR для тех же замечаний не создаётся, если reviewer не потребовал иначе.
+Architecture/Review Agent independently verifies all claims against GitHub.
 
-## Owner Review Package
+## Merge and next task
 
-Для задач с пользовательским интерфейсом обязателен пакет по стандарту:
+Only the Owner may authorize merge. MiMo never merges.
 
-```text
-docs/engineering/OWNER_REVIEW_PACKAGE.md
-```
-
-Он включает:
-
-```text
-что изменилось;
-как запустить;
-START_DEMO.cmd;
-STOP_DEMO.cmd;
-адрес интерфейса;
-короткий сценарий проверки;
-скриншоты;
-известные ограничения.
-```
-
-## Отчёт MiMo
-
-Использовать:
-
-```text
-agent_workspaces/mimo/templates/MIMO_REPORT_TEMPLATE.md
-```
-
-Путь отчёта задаётся Issue. Отчёт обязан фиксировать branch, commit SHA, PR, changed files, команды и результаты всех проверок.
-
-## Merge и завершение
-
-MiMo никогда не выполняет merge.
-
-После технического review задача переходит в `OWNER_REVIEW`. После принятия владельцем — `OWNER_APPROVED`. Merge выполняется только после явной проверки. После merge Architecture/Review Agent обновляет `PROJECT_STATE.md` и `ROADMAP.md`, затем задача получает `DONE`.
-
-## Безопасный default
-
-При любой неоднозначности:
-
-```text
-не подключать сеть;
-не отправлять заявки;
-не добавлять секреты;
-не включать live;
-не менять архитектуру;
-не начинать следующую задачу;
-остановиться и зафиксировать вопрос.
-```
+After merge, Architecture/Review verifies post-merge `main` CI and updates project state. MiMo starts no next task until a new exact owner-authorized prompt is supplied.
