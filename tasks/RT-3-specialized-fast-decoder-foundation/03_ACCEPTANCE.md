@@ -215,7 +215,7 @@ No allocation or loop starts before the corresponding length/count is validated.
 
 ## 12. Diagnostic and RT-2 boundaries
 
-If retained, `moex-fast-decode` is a minimal offline diagnostic for one FAST message body. It makes no network, UDP, preamble or framing claim.
+The existing `moex-fast-decode` remains a minimal offline diagnostic for one FAST message body. It makes no network, UDP, preamble, framing or unsupported-operator claim.
 
 A synthetic RT-2 integration test may pass one complete message body in `RawPacketRecord.payload` to a session. The production decoder library does not depend on `.mxraw` filesystem parsing.
 
