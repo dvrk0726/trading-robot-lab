@@ -1,272 +1,276 @@
-# RT-3 Acceptance Criteria
+# RT-3 Acceptance Criteria — MOEX SPECTRA T0/T1 Profile
 
-RT-3 is accepted only when all criteria below are satisfied. A green CI run alone is not sufficient.
+Date: 2026-07-13  
+Status: corrected specification for owner review
 
-## 1. Scope and repository placement
+RT-3 is accepted only when every criterion below is satisfied. Green CI alone is not sufficient.
 
-```text
-C++20 decoder is integrated under cpp/moex_fast/;
-existing RT-1 inspector remains available and compatible;
-no network, multicast, packet-framing, recovery, books or order-entry code is added;
-no private/official raw data or credentials enter Git;
-implementation is in a separate mimo/issue-21-* branch and PR;
-MiMo does not merge or start RT-4.
-```
+## 1. Scope
 
-## 2. Template compiler
+The delivered component is one specialized, template-driven C++20 decoder for the accepted MOEX SPECTRA T0 and T1 template sets.
+
+It must not be described as a full FAST 1.1 engine.
 
 ```text
-decoder-specific immutable compiled template tree exists;
-operators, initial values, dictionaries, nesting and sequence lengths are preserved;
-wire-affecting unsupported XML is rejected explicitly;
-duplicate ids/keys, invalid combinations and unresolved/cyclic references fail compilation;
-template SHA-256 and compiler version are retained;
-existing RT-1 six-test behavior is not weakened.
+input: one bounded FAST message body
+profile: accepted T0 or T1 templates.xml
+output: deterministic owned typed message
+session state: previous template ID only
 ```
 
-## 3. Primitive correctness
+No UDP framing, MOEX 4-byte preamble, networking, sequencing/recovery, books, order entry or strategy code is added.
 
-The implementation passes literal independent vectors for:
+## 2. Authoritative source gate
+
+Owner-local evidence must verify:
 
 ```text
-presence maps;
-uInt32/uInt64 and nullable forms;
-int32/int64 and nullable forms;
-ASCII, Unicode and byte vectors;
-decimal exponent/mantissa;
-null versus empty;
-truncation, overflow and non-canonical encodings.
+T0 SHA-256:
+DBD50F1E0BECC2B2EBD9DAC8E4C6609BA1538566811B610CDE9B6DD3E7F66A8E
+
+T1 SHA-256:
+84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 ```
 
-No primitive reads beyond the supplied span or allocates from an unchecked length.
-
-## 4. Template-ID state
+Namespace-aware inventory must report:
 
 ```text
-explicit id, previous-id reuse and id changes work;
-missing previous id and unknown id fail explicitly;
-truncated/non-canonical ids fail at the correct offset;
-failed messages do not change previous-template-id state;
-reset clears template-id state.
+T0: 19 templates, 393 fields, 70 constant, 323 no-operator
+T1: 19 templates, 396 fields, 70 constant, 326 no-operator
+copy/delta/increment/default/tail: 0
+dictionary attributes: 0
+namespace: http://www.fixprotocol.org/ns/fast/td/1.1
 ```
 
-## 5. Operator matrix
+The current production template file is downloaded and hashed immediately before final owner acceptance. If its hash is neither accepted T0 nor accepted T1, acceptance is blocked for a new source audit. No automatic scope expansion is allowed.
 
-The implementation provides an explicit documented supported matrix and active tests for all accepted profile combinations of:
+## 3. Template compiler
+
+Both accepted T0 and T1 files compile successfully outside Git.
+
+The immutable compiled tree preserves exactly what affects the accepted wire profile:
 
 ```text
-none;
-constant;
-default;
-copy;
-increment;
-delta;
-tail.
+template ID/name
+field name/FIX tag/source order
+integer/string/decimal type
+mandatory/optional presence
+ASCII/Unicode charset
+constant value
+sequence and its single length instruction
 ```
 
-Presence-bit, nullable, initial-value and dictionary behavior follows FIX FAST normative semantics. Unsupported combinations fail template compilation instead of being approximated.
+Every compile issue produces no usable compiled set.
 
-## 6. Dictionaries and transactional decode
+The compiler explicitly rejects:
 
 ```text
-canonical dictionary keys prevent cross-scope/type collisions;
-state is isolated per DecoderSession;
-compiled templates are safely shareable;
-every failed decode leaves dictionaries and template-id state unchanged;
-decode_exact trailing bytes cause rollback;
-failures inside later sequence entries roll back earlier provisional updates;
-reset clears all session dictionaries.
+default/copy/increment/delta/tail
+dictionary attributes and dictionary names
+typeRef/templateRef/groupRef
+generic group instructions
+byteVector outside the accepted inventory
+decimal component operators
+unknown wire-affecting XML
+invalid IDs, names, literals, charset or presence
+missing/duplicate sequence length
+excessive templates/fields/nesting
 ```
 
-Rollback is proven by before/after state fingerprints or equivalent deterministic evidence, followed by successful continuation decoding.
+No unsupported construct is silently ignored.
 
-## 7. Groups, sequences and exact values
+## 4. Generic FAST scope removal
+
+The implementation PR no longer contains or claims positive support for:
 
 ```text
-mandatory/optional groups decode correctly;
-null optional sequence differs from present empty sequence;
-entry order and field order are preserved;
-entry presence maps are handled;
-sequence and total-node limits are enforced before allocation/iteration;
-decimals remain exact exponent/mantissa pairs;
-no decoder-internal conversion to binary floating point occurs.
+default
+copy
+increment
+delta
+tail
+generic field dictionary state
+dictionary scopes or canonical dictionary keys
+user-defined dictionaries
+reference resolution or cycle detection
+generic operator test matrices
 ```
 
-## 8. Public API and error contract
+Dead generic branches, data structures and positive tests are removed. Rejection tests remain to enforce fail-closed behavior.
+
+Internal previous-template-ID reuse remains and is not treated as the XML `<copy>` operator.
+
+## 5. Primitive correctness
+
+Literal independent tests pass for all accepted primitive behavior:
 
 ```text
-decode_one returns bytes_consumed for one message prefix;
-decode_exact rejects trailing bytes;
-expected malformed input returns explicit status/issues, not uncaught exceptions;
-issues include stable code, byte offset, template id when known and deterministic field path;
-DecodedMessage owns its values independently of input/session lifetime;
-DecoderSession is explicitly one ordered logical stream and not thread-safe.
+presence maps
+ordinary and nullable uInt32/uInt64
+ordinary and nullable int32/int64
+ASCII and nullable ASCII
+Unicode and nullable Unicode
+exact decimal exponent/mantissa
+sequence length uInt32 and nullable optional length
 ```
 
-## 9. Hard limits and safety
-
-All hard limits from `01_REQUIREMENTS.md` are implemented and actively tested:
+Required correctness includes:
 
 ```text
-1 MiB message/value ceiling as applicable;
-64-byte presence-map ceiling;
-template/field/nesting/sequence/node ceilings;
-checked cursor and size arithmetic;
-no allocation before length/count validation;
-no unbounded recursion or loop;
-no unbounded dictionary key creation.
+no out-of-bounds reads
+correct signed sign extension
+nullable offset-by-one only for non-negative integers
+NULL distinct from zero and empty
+canonical/overlong rejection
+valid UTF-8 enforcement
+no mantissa after NULL decimal exponent
+checked length/count arithmetic before allocation
 ```
 
-Boundary tests must exercise overflow paths without requiring huge real allocations.
+## 6. Presence-map correctness
 
-## 10. Deterministic output and CLI
-
-A built `moex-fast-decode` executable provides exact-one-message offline decode from hex or binary file.
-
-Acceptance requires:
+Active tests prove:
 
 ```text
-deterministic text and strict JSON;
-versioned schema;
-templates and input SHA-256 provenance;
-template id/name and bytes_consumed;
-ordered decoded tree;
-explicit null/value-source representation;
-exact decimal integers;
-lowercase byte-vector hex;
-stable issue codes/offsets/paths;
-quoted paths with spaces;
-no private endpoint or full local path leak by default.
+message template-ID bit is first
+mandatory no-operator field uses no field bit
+optional no-operator field uses no field bit and nullable wire form
+mandatory constant uses no field bit and no wire bytes
+optional constant uses exactly one bit
+entry pmap exists only when an accepted entry instruction allocates a bit
+unterminated and overlong maps fail
 ```
 
-Repeated identical runs on Windows and Linux produce semantically identical canonical JSON.
+The compiler must not assign pmap bits solely because a field or sequence is optional.
 
-## 11. Independent evidence
-
-The test suite includes all of:
+## 7. Template-ID state and reset
 
 ```text
-hard-coded literal primitive/message vectors;
-separate test-only reference encoder/oracle;
-deterministic differential cases with fixed seed;
-corruption/truncation mutations;
-transaction rollback tests.
+explicit ID works
+previous successful ID reuse works
+ID change works
+unknown/missing/truncated/non-canonical ID fails
+failed message does not change previous ID
+decode_exact trailing bytes do not commit
+reset clears previous ID
 ```
 
-Comparing two production functions that share the same logic does not count as independent evidence.
+## 8. Decimal correctness
 
-## 12. RT-2 integration
-
-A repository-safe integration test proves:
+Supported decimals have no operator and no component operators.
 
 ```text
-synthetic `.mxraw` records carry exactly one FAST message each by fixture contract;
-RT-2 replay callback passes payload bytes to one DecoderSession;
-three stateful records decode in capture order;
-malformed payload returns an explicit decode error;
-bad payload does not mutate decoder state;
-no packet framing, exchange sequence, A/B or recovery behavior is claimed.
+mandatory decimal = ordinary exponent + ordinary mantissa
+optional decimal = nullable exponent; NULL omits mantissa
+output remains exact {exponent:int32, mantissa:int64}
+no decoder-internal floating-point conversion
 ```
 
-RT-3 production decoder remains a span-based codec and does not depend on `.mxraw` filesystem parsing.
+## 9. Sequence correctness
 
-## 13. Regression gates
-
-Final PR head must have green evidence for:
+All accepted T0/T1 sequence structures compile and synthetic wire tests prove:
 
 ```text
-RT-3 decoder Windows/MSVC Release: exact documented inventory, all pass;
-RT-3 decoder Linux/GCC Release: exact same inventory, all pass;
-RT-1 inspector Windows/Linux: 6/6;
-RT-2 raw/replay Windows/Linux: 18/18;
-QSH/M10X: 20/20;
-Python/contracts: PASS;
-repository hygiene: PASS.
+single length instruction
+mandatory ordinary uInt32 length
+optional nullable uInt32 length
+NULL sequence distinct from present empty sequence
+entry order and field order preserved
+entry pmap conditional on the accepted matrix
+entry and node limits checked before iteration/allocation
+failure in any entry fails the whole message
 ```
 
-Warnings-as-errors remain enabled. Release-active checks must not be replaced by standard `assert` that disappears under `NDEBUG`.
+No sequence length operator is supported.
 
-## 14. Documentation and handoff
-
-The implementation PR must accurately update:
+## 10. Transaction, ownership and errors
 
 ```text
-cpp/moex_fast/README.md;
-AI_CONTEXT.md;
-PROJECT_STATE.md;
-ROADMAP.md;
-agent_workspaces/mimo/reports/<date>-rt3-fast-decoder.md;
-PR description and Issue #21 status.
+CompiledTemplateSet is immutable and safely shareable
+DecoderSession belongs to one ordered logical source stream and is not thread-safe
+DecodedMessage owns values independently of input/session lifetime
+any failed decode leaves previous-template-ID state unchanged
+expected malformed input returns explicit status/issues, not uncaught exceptions
+issues contain stable code, offset, template ID when known and deterministic field path
 ```
 
-Documentation must state:
+No generic field dictionary or dictionary rollback is part of the accepted design.
+
+## 11. Limits
+
+Active tests cover configured and hard paths for:
 
 ```text
-exact supported operator/type matrix;
-explicit unsupported constructs;
-implementation SHA;
-implementation CI;
-final head SHA;
-final CI;
-exact test counts;
-commands and results;
-non-goals and RT-4 block.
+message bytes
+presence-map bytes
+templates
+fields
+nesting
+sequence entries
+total decoded nodes
+string bytes
 ```
 
-No stale `Pending`, old SHA, old CI number or unsupported capability claim is acceptable.
+No allocation or loop starts before the corresponding length/count is validated.
 
-## 15. Architecture review gate
+## 12. Diagnostic and RT-2 boundaries
 
-Before owner review, Architecture/Review must inspect:
+If retained, `moex-fast-decode` is a minimal offline diagnostic for one FAST message body. It makes no network, UDP, preamble or framing claim.
+
+A synthetic RT-2 integration test may pass one complete message body in `RawPacketRecord.payload` to a session. The production decoder library does not depend on `.mxraw` filesystem parsing.
+
+## 13. CI and regression gate
+
+The final correction head has green evidence for:
 
 ```text
-template compiler and operator matrix;
-all primitive bounds/overflow logic;
-dictionary keying and transaction journal;
-sequence/group recursion and limits;
-error offsets/paths;
-CLI JSON determinism;
-independent vectors/oracle;
-RT-2 integration boundary;
-all changed files and CI evidence.
+RT-3 Windows/MSVC Release exact inventory
+RT-3 Linux/GCC Release same inventory
+RT-1 inspector regression
+RT-2 raw/replay regression
+QSH/M10X regression
+Python/contracts
+repository hygiene
 ```
 
-Any correctness ambiguity in nullable/operator semantics is blocking.
+Warnings-as-errors remain enabled. Test assertions remain active under `NDEBUG`.
 
-## 16. Owner-local acceptance
+## 14. Documentation accuracy
 
-Owner acceptance uses the exact reviewed PR head and includes:
+Before owner review, implementation documentation and PR #23 description must state only the accepted MOEX T0/T1 capability. They must not claim complete operator-table, dictionary or reference support.
+
+Exact implementation head SHA, CI run, changed files and test inventory must be recorded. Stale counts or unsupported capability claims are blocking.
+
+## 15. Owner-local acceptance
+
+The owner runs the exact reviewed implementation head and verifies:
 
 ```text
-clean Release configure/build;
-all RT-3 CTest tests;
-golden exact CLI decode;
-stateful two-message template-id/copy/increment decode;
-truncated or corrupt message rejection;
-proof that a failed decode does not alter subsequent state;
-RT-2 synthetic replay into RT-3 decoder;
-git HEAD and clean status verification.
+clean Release configure/build
+all RT-3 tests
+T0 official XML hash + successful compilation
+T1 official XML hash + successful compilation
+current production XML hash decision
+one exact synthetic decode with constants, optional nullable fields and decimal
+one sequence decode including NULL versus empty
+previous-template-ID reuse
+truncated/corrupt input rejection
+known-good continuation proving rollback
+clean git status and exact HEAD
 ```
 
-Expected owner demo outcomes:
+## 16. Merge and completion
 
 ```text
-valid vectors decode with exact expected values;
-stateful second message reuses prior template/dictionary state;
-corrupt/truncated input returns non-zero and stable issue details;
-subsequent known-good message proves rollback;
-RT-2 replay preserves record order and decoder result order;
-no network connection is made.
+corrected specification PR reviewed
+-> owner explicitly authorizes specification merge
+-> post-merge main CI verified
+-> PR #23 corrected to the merged scope in its existing branch
+-> architecture review
+-> owner local acceptance
+-> owner explicitly authorizes implementation merge
+-> post-merge main CI verified
+-> Issue #21 may move to DONE
 ```
 
-## 17. Merge and completion
-
-```text
-Owner explicitly authorizes merge;
-expected PR head SHA is used during merge;
-post-merge CI on main is green;
-Issue #21 is then moved to DONE;
-only after DONE may RT-4 architecture preparation begin.
-```
-
-Neither MiMo nor automation may merge the implementation PR. Auto-merge remains disabled.
+RT-4 remains blocked until all of the above is complete. Neither MiMo nor automation may merge.
