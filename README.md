@@ -10,17 +10,36 @@ Shared Contracts — versioned events, signals, OrderIntent and RiskDecision sch
 
 ## Current state
 
-The historical C++ QSH/OrdLog engineering contour is complete at the current level. M10X has 20/20 regression tests. The next planned implementation task is RT-1, a local offline inspector for MOEX FAST configuration/templates.
+```text
+RT-1 local MOEX configuration/templates inspector: DONE
+RT-2 .mxraw v1 raw capture/replay contract: DONE
+RT-3 specialized MOEX SPECTRA T0/T1 FAST decoder: CHANGES_REQUIRED in PR #23
+RT-4 framing/sequencing/recovery: BLOCKED
+```
 
-RT-1 must not start until the MiMo branch/Pull Request/CI workflow is accepted and merged.
+Current RT-3 checkpoint:
 
-Read:
+```text
+Issue #21
+PR #23
+Branch mimo/issue-21-rt3-fast-decoder
+Head 062649476500f6060d22b9740cafa1b0250f3ba5
+Corrected specification PR #27 merged at e2e616673758b1cb888f5e3b4b7844343327c579
+Post-merge main CI #126 success
+```
+
+The accepted RT-3 target is one template-driven decoder for the official hash-bound MOEX T0 and T1 profiles. It is not a general FAST 1.1 engine.
+
+Read before work:
 
 ```text
 AI_CONTEXT.md
 PROJECT_STATE.md
 ROADMAP.md
 SECURITY.md
+docs/ai_team_workflow.md
+docs/ai_agent_communication_protocol.md
+docs/mimo_developer_workflow.md
 ```
 
 ## Architecture
@@ -39,22 +58,15 @@ Architecture decisions are stored under `decisions/`.
 
 ## Implementation workflow
 
-Authoritative instructions:
+All implementation and process changes use a dedicated branch and Pull Request. MiMo never commits or pushes to `main`, merges, enables auto-merge, force-pushes or starts the next task before review.
+
+MiMo is launched only with an exact owner-authorized command supplied by Architecture/Review:
 
 ```text
-docs/mimo_developer_workflow.md
-docs/ai_team_workflow.md
-docs/ai_agent_communication_protocol.md
-docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md
+mimo --model xiaomi/mimo-v2.5-pro --prompt "<exact task>"
 ```
 
-Universal MiMo command:
-
-```text
-Возьми следующую задачу READY_FOR_MIMO, выполни её, создай Pull Request и остановись.
-```
-
-Implementation is branch-only. MiMo does not commit/push code directly to `main`, does not merge and does not start the next task before review.
+For a new `READY_FOR_MIMO` task, the prompt may authorize a new branch and PR. For `CHANGES_REQUIRED`, MiMo must use the existing branch and PR and perform only the exact requested correction.
 
 ## Baseline checks
 
@@ -68,10 +80,8 @@ cmake --build build/qsh_ingest --config Release
 ctest --test-dir build/qsh_ingest -C Release --output-on-failure
 ```
 
-GitHub Actions runs repository hygiene, Python/contract checks and the complete 20-test QSH/M10X C++ regression suite.
+Task-specific checks are added on top of the baseline. Green CI does not replace architecture review or owner acceptance.
 
 ## Security
 
-Never commit credentials, personal data, private connection parameters, official private XML, raw QSH/FAST/pcap data, databases, binaries or build directories. See `SECURITY.md`.
-
-For user-facing work, use `docs/engineering/OWNER_REVIEW_PACKAGE.md`.
+Never commit credentials, personal data, private connection parameters, official owner-provided XML, raw QSH/FAST/pcap data, databases, binaries or build directories. See `SECURITY.md`.
