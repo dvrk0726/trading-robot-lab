@@ -295,7 +295,7 @@ Expected malformed input returns explicit status/issues, not uncaught exceptions
 
 ## 14. Diagnostic CLI and RT-2 boundary
 
-A minimal offline `moex-fast-decode` diagnostic CLI may remain because it is used for owner-local verification. It must accept one message body from hex or file and must not claim UDP/preamble parsing.
+Retain the existing minimal offline `moex-fast-decode` diagnostic CLI for owner-local verification. It accepts one message body from hex or file and must not claim UDP/preamble parsing or unsupported operator support.
 
 A synthetic integration test may pass one `RawPacketRecord.payload` byte span into `DecoderSession`. The decoder library itself must not depend on `.mxraw` filesystem parsing.
 
