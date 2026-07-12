@@ -1082,6 +1082,465 @@ static void test_uint64_increment_initial() {
     TEST_PASS("uint64_increment_initial");
 }
 
+// --- 9B2 phase 1 structural validation tests ---
+
+// Comments, whitespace, processing instructions are ignored; compile succeeds
+static void test_structural_comments_whitespace_pi() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<!-- comment -->
+<templates>
+  <?processing-instruction data?>
+  <template id="1" name="Msg">
+    <!-- field comment -->
+    <uInt32 name="F1"/>
+    <uInt64 name="F2"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    CHECK_EQ(r.compiled.size(), 1u);
+    TEST_PASS("structural_comments_whitespace_pi");
+}
+
+// Unknown root child (not <template>) returns unknown_element
+static void test_structural_unknown_root_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <unknownWidget name="X"/>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_unknown_root_child");
+}
+
+// Misplaced operator in template returns unknown_element
+static void test_structural_misplaced_operator_in_template() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <constant>42</constant>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_operator_in_template");
+}
+
+// Length at template level is accepted as a field (processed by parse_field)
+static void test_structural_length_at_template_level() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <length name="L"/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    TEST_PASS("structural_length_at_template_level");
+}
+
+// Misplaced exponent in template returns unknown_element
+static void test_structural_misplaced_exponent_in_template() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <exponent/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_exponent_in_template");
+}
+
+// Misplaced mantissa in template returns unknown_element
+static void test_structural_misplaced_mantissa_in_template() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <mantissa/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_mantissa_in_template");
+}
+
+// Misplaced operator in group returns unknown_element
+static void test_structural_misplaced_operator_in_group() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G">
+      <copy/>
+      <uInt32 name="F1"/>
+    </group>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_operator_in_group");
+}
+
+// Misplaced exponent in group returns unknown_element
+static void test_structural_misplaced_exponent_in_group() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G">
+      <exponent/>
+      <uInt32 name="F1"/>
+    </group>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_exponent_in_group");
+}
+
+// Scalar with two operators returns multiple_operators
+static void test_structural_scalar_two_operators() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><constant>1</constant><copy/></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "multiple_operators");
+    TEST_PASS("structural_scalar_two_operators");
+}
+
+// Scalar with unknown child returns unknown_element
+static void test_structural_scalar_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><bogus/></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_scalar_unknown_child");
+}
+
+// Operator with nested element returns unknown_element
+static void test_structural_operator_nested_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><constant><value>42</value></constant></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_operator_nested_child");
+}
+
+// Duplicate decimal exponent returns duplicate_decimal_exponent
+static void test_structural_duplicate_decimal_exponent() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>1</constant></exponent>
+      <exponent><constant>2</constant></exponent>
+      <mantissa><constant>0</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "duplicate_decimal_exponent");
+    TEST_PASS("structural_duplicate_decimal_exponent");
+}
+
+// Duplicate decimal mantissa returns duplicate_decimal_mantissa
+static void test_structural_duplicate_decimal_mantissa() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>0</constant></exponent>
+      <mantissa><constant>1</constant></mantissa>
+      <mantissa><constant>2</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "duplicate_decimal_mantissa");
+    TEST_PASS("structural_duplicate_decimal_mantissa");
+}
+
+// Unknown child in decimal returns unknown_element
+static void test_structural_decimal_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <bogus/>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_decimal_unknown_child");
+}
+
+// Decimal unknown presence returns unknown_presence
+static void test_structural_decimal_unknown_presence() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D" presence="conditional"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_presence");
+    TEST_PASS("structural_decimal_unknown_presence");
+}
+
+// Two operators in exponent returns multiple_operators
+static void test_structural_exponent_two_operators() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>1</constant><copy/></exponent>
+      <mantissa><constant>0</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "multiple_operators");
+    TEST_PASS("structural_exponent_two_operators");
+}
+
+// Unknown child in exponent returns unknown_element
+static void test_structural_exponent_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><bogus/></exponent>
+      <mantissa><constant>0</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_exponent_unknown_child");
+}
+
+// Two operators in mantissa returns multiple_operators
+static void test_structural_mantissa_two_operators() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>0</constant></exponent>
+      <mantissa><constant>1</constant><copy/></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "multiple_operators");
+    TEST_PASS("structural_mantissa_two_operators");
+}
+
+// Unknown child in mantissa returns unknown_element
+static void test_structural_mantissa_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>0</constant></exponent>
+      <mantissa><bogus/></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_mantissa_unknown_child");
+}
+
+// Sequence missing length returns missing_sequence_length
+static void test_structural_sequence_missing_length() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "missing_sequence_length");
+    TEST_PASS("structural_sequence_missing_length");
+}
+
+// Duplicate sequence length returns duplicate_sequence_length
+static void test_structural_duplicate_sequence_length() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L1"/>
+      <length name="L2"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "duplicate_sequence_length");
+    TEST_PASS("structural_duplicate_sequence_length");
+}
+
+// Misplaced operator in sequence returns unknown_element
+static void test_structural_sequence_misplaced_operator() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <copy/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_sequence_misplaced_operator");
+}
+
+// Misplaced exponent in sequence returns unknown_element
+static void test_structural_sequence_misplaced_exponent() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <exponent/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_sequence_misplaced_exponent");
+}
+
+// Misplaced mantissa in sequence returns unknown_element
+static void test_structural_sequence_misplaced_mantissa() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <mantissa/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_sequence_misplaced_mantissa");
+}
+
+// Two operators in length returns multiple_operators
+static void test_structural_length_two_operators() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><constant>1</constant><copy/></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "multiple_operators");
+    TEST_PASS("structural_length_two_operators");
+}
+
+// Unknown child in length returns unknown_element
+static void test_structural_length_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><bogus/></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_length_unknown_child");
+}
+
+// Reference at allowed level (template) remains unsupported_reference
+static void test_structural_reference_at_allowed_level() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <typeRef name="SomeType"/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "unsupported_reference"));
+    CHECK(!r.compiled.valid());
+    TEST_PASS("structural_reference_at_allowed_level");
+}
+
+// Misplaced reference in scalar returns unknown_element (not unsupported_reference)
+static void test_structural_misplaced_reference_in_scalar() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><typeRef name="X"/></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_reference_in_scalar");
+}
+
 int main() {
     test_valid_compile();
     test_duplicate_template_id();
@@ -1130,6 +1589,35 @@ int main() {
     test_uint64_default_initial();
     test_uint64_copy_initial();
     test_uint64_increment_initial();
+    // 9B2 phase 1 structural validation tests
+    test_structural_comments_whitespace_pi();
+    test_structural_unknown_root_child();
+    test_structural_misplaced_operator_in_template();
+    test_structural_length_at_template_level();
+    test_structural_misplaced_exponent_in_template();
+    test_structural_misplaced_mantissa_in_template();
+    test_structural_misplaced_operator_in_group();
+    test_structural_misplaced_exponent_in_group();
+    test_structural_scalar_two_operators();
+    test_structural_scalar_unknown_child();
+    test_structural_operator_nested_child();
+    test_structural_duplicate_decimal_exponent();
+    test_structural_duplicate_decimal_mantissa();
+    test_structural_decimal_unknown_child();
+    test_structural_decimal_unknown_presence();
+    test_structural_exponent_two_operators();
+    test_structural_exponent_unknown_child();
+    test_structural_mantissa_two_operators();
+    test_structural_mantissa_unknown_child();
+    test_structural_sequence_missing_length();
+    test_structural_duplicate_sequence_length();
+    test_structural_sequence_misplaced_operator();
+    test_structural_sequence_misplaced_exponent();
+    test_structural_sequence_misplaced_mantissa();
+    test_structural_length_two_operators();
+    test_structural_length_unknown_child();
+    test_structural_reference_at_allowed_level();
+    test_structural_misplaced_reference_in_scalar();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }

@@ -366,6 +366,15 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
         std::string name(child.name());
         if (!is_operator_element(name)) continue;
 
+        // Validate: operator must not have element children
+        for (auto opchild : child.children()) {
+            std::string opchild_name(opchild.name());
+            if (!opchild_name.empty()) {
+                ctx.error("unknown_element",
+                          "Nested element <" + opchild_name + "> in operator <" + name + "> of " + field_path, field_path);
+            }
+        }
+
         if (name == "constant") {
             op.kind = OpKind::Constant;
             op.has_constant = true;
@@ -714,7 +723,19 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
     }
 
     auto pres = node.attribute("presence");
-    f.is_mandatory = !pres || std::string(pres.as_string("")) == "mandatory";
+    if (pres) {
+        std::string pv = pres.as_string("");
+        if (pv == "mandatory") {
+            f.is_mandatory = true;
+        } else if (pv == "optional") {
+            f.is_mandatory = false;
+        } else {
+            ctx.error("unknown_presence", "Unknown decimal presence value '" + pv + "' in " + field_path, field_path);
+            f.is_mandatory = true;
+        }
+    } else {
+        f.is_mandatory = true;
+    }
 
     if (f.name.empty()) {
         ctx.error("empty_field_name",
@@ -724,12 +745,72 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
     auto exponent_node = node.child("exponent");
     auto mantissa_node = node.child("mantissa");
 
+    // Validate decimal children: reject unknown elements and duplicate exponent/mantissa
+    {
+        int exp_count = 0, man_count = 0;
+        for (auto dchild : node.children()) {
+            std::string dname(dchild.name());
+            if (dname == "exponent") {
+                exp_count++;
+                if (exp_count > 1) {
+                    ctx.error("duplicate_decimal_exponent",
+                              "Duplicate <exponent> in decimal " + field_path, field_path);
+                }
+            } else if (dname == "mantissa") {
+                man_count++;
+                if (man_count > 1) {
+                    ctx.error("duplicate_decimal_mantissa",
+                              "Duplicate <mantissa> in decimal " + field_path, field_path);
+                }
+            } else if (is_operator_element(dname)) {
+                ctx.error("unknown_element",
+                          "Misplaced operator <" + dname + "> in decimal " + field_path, field_path);
+            } else if (dname == "length") {
+                ctx.error("unknown_element",
+                          "Misplaced <length> in decimal " + field_path, field_path);
+            } else {
+                ctx.error("unknown_element",
+                          "Unknown child <" + dname + "> in decimal " + field_path, field_path);
+            }
+        }
+    }
+
     if (exponent_node) {
+        // Validate exponent children: zero or one operator; no other element children
+        int exp_op_count = 0;
+        for (auto echild : exponent_node.children()) {
+            std::string ename(echild.name());
+            if (is_operator_element(ename)) {
+                exp_op_count++;
+                if (exp_op_count > 1) {
+                    ctx.error("multiple_operators",
+                              "Multiple operators in exponent " + field_path + ".exponent", field_path);
+                }
+            } else if (!ename.empty()) {
+                ctx.error("unknown_element",
+                          "Unknown child <" + ename + "> in exponent " + field_path + ".exponent", field_path);
+            }
+        }
         f.exponent_op = parse_operator(exponent_node, DecWireType::Int32, template_name,
                                         f.name + ".exponent", ctx, field_path + ".exponent");
         f.exponent_op.is_decimal_component = true;
     }
     if (mantissa_node) {
+        // Validate mantissa children: zero or one operator; no other element children
+        int man_op_count = 0;
+        for (auto mchild : mantissa_node.children()) {
+            std::string mname(mchild.name());
+            if (is_operator_element(mname)) {
+                man_op_count++;
+                if (man_op_count > 1) {
+                    ctx.error("multiple_operators",
+                              "Multiple operators in mantissa " + field_path + ".mantissa", field_path);
+                }
+            } else if (!mname.empty()) {
+                ctx.error("unknown_element",
+                          "Unknown child <" + mname + "> in mantissa " + field_path + ".mantissa", field_path);
+            }
+        }
         f.mantissa_op = parse_operator(mantissa_node, DecWireType::Int64, template_name,
                                         f.name + ".mantissa", ctx, field_path + ".mantissa");
         f.mantissa_op.is_decimal_component = true;
@@ -838,6 +919,18 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         if (!length_node) {
             ctx.error("missing_sequence_length", "Sequence " + field_path + " missing <length>", field_path);
         } else {
+            // Check for duplicate length
+            int length_count = 0;
+            for (auto c : node.children("length")) {
+                (void)c;
+                length_count++;
+            }
+            if (length_count > 1) {
+                ctx.error("duplicate_sequence_length",
+                          "Sequence " + field_path + " has multiple <length> elements", field_path);
+            }
+        }
+        if (length_node) {
             f.length_op.kind = OpKind::None;
             f.length_field_index = field_index;
             CompiledField len_field;
@@ -859,13 +952,24 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
                 }
             }
 
-            // Parse length operator if present
-            for (auto lchild : length_node.children()) {
-                std::string lname(lchild.name());
-                if (is_operator_element(lname)) {
-                    f.length_op = parse_operator(length_node, DecWireType::uInt32, template_name,
-                                                 len_field.name, ctx, field_path + ".length");
-                    break;
+            // Parse length operator if present; validate children
+            {
+                int len_op_count = 0;
+                for (auto lchild : length_node.children()) {
+                    std::string lname(lchild.name());
+                    if (is_operator_element(lname)) {
+                        len_op_count++;
+                        if (len_op_count > 1) {
+                            ctx.error("multiple_operators",
+                                      "Multiple operators in length " + field_path + ".length", field_path);
+                        } else {
+                            f.length_op = parse_operator(length_node, DecWireType::uInt32, template_name,
+                                                         len_field.name, ctx, field_path + ".length");
+                        }
+                    } else if (!lname.empty()) {
+                        ctx.error("unknown_element",
+                                  "Unknown child <" + lname + "> in length " + field_path + ".length", field_path);
+                    }
                 }
             }
 
@@ -874,6 +978,15 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
 
         f.has_children = true;
         f.entry_has_pmap = true;
+
+        // Reject misplaced elements at sequence level
+        for (auto schild : node.children()) {
+            std::string sname(schild.name());
+            if (is_operator_element(sname) || sname == "exponent" || sname == "mantissa") {
+                ctx.error("unknown_element",
+                          "Misplaced <" + sname + "> in sequence " + field_path, field_path);
+            }
+        }
 
         std::vector<CompiledField> entry_fields;
         parse_fields(node, entry_fields, template_name, ctx, field_path, nesting_depth + 1, field_index);
@@ -895,6 +1008,24 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     }
 
     f.wire_type = element_to_wire_type(elem_name.c_str());
+
+    // Validate scalar field children: zero or one operator; no other element children
+    {
+        int scalar_op_count = 0;
+        for (auto sc : node.children()) {
+            std::string scname(sc.name());
+            if (is_operator_element(scname)) {
+                scalar_op_count++;
+                if (scalar_op_count > 1) {
+                    ctx.error("multiple_operators",
+                              "Multiple operators in scalar " + field_path, field_path);
+                }
+            } else if (!scname.empty()) {
+                ctx.error("unknown_element",
+                          "Unknown child <" + scname + "> in scalar " + field_path, field_path);
+            }
+        }
+    }
 
     f.op = parse_operator(node, f.wire_type, template_name, f.name, ctx, field_path);
 
@@ -924,7 +1055,21 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
     for (auto child : parent.children()) {
         std::string name(child.name());
 
-        if (is_operator_element(name)) continue;
+        if (is_operator_element(name)) {
+            ctx.error("unknown_element",
+                      "Misplaced operator <" + name + "> in " +
+                      (parent_path.empty() ? std::string("template") : parent_path), parent_path);
+            continue;
+        }
+
+        if (name == "exponent" || name == "mantissa") {
+            ctx.error("unknown_element",
+                      "Misplaced <" + name + "> in " +
+                      (parent_path.empty() ? std::string("template") : parent_path), parent_path);
+            continue;
+        }
+
+        if (name == "length") continue;
 
         if (!is_known_field_element(name) && !is_reference_element(name)) {
             ctx.error("unknown_element",
@@ -932,9 +1077,6 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
                       (parent_path.empty() ? std::string("template") : parent_path), parent_path);
             continue;
         }
-
-        if (name == "length") continue;
-        if (name == "exponent" || name == "mantissa") continue;
 
         // Handle reference elements (typeRef, templateRef, groupRef)
         if (is_reference_element(name)) {
@@ -998,6 +1140,15 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
         ctx.error("missing_root", "Missing root element <templates>");
         draft.issues = std::move(ctx.issues);
         return draft;
+    }
+
+    // Validate root children: only <template> allowed
+    for (auto rchild : root.children()) {
+        std::string rname(rchild.name());
+        if (rname != "template") {
+            ctx.error("unknown_element",
+                      "Unknown root child <" + rname + "> in <templates>");
+        }
     }
 
     for (auto tmpl : root.children("template")) {
