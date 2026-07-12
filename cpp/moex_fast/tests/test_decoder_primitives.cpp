@@ -1289,45 +1289,426 @@ static void test_decimal() {
 
 // --- Byte vector tests ---
 static void test_byte_vector() {
-    // Empty: length=0 -> 0x80
+    // --- Mandatory production tests ---
+    // Empty [80]: length=0
     {
         auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
         std::vector<std::uint8_t> val;
         CHECK(c.read_byte_vector(val) == DecodeStatus::Ok);
         CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
+        CHECK(c.at_end());
     }
-    // 3 bytes: length=3 -> 0x83, then 3 data bytes
+    // One zero byte [81 00]: length=1, body=0x00
+    {
+        auto bytes = make_bytes({0x81, 0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        CHECK(c.read_byte_vector(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 1u);
+        CHECK_EQ(val[0], 0x00u);
+        CHECK_EQ(c.position(), 2u);
+    }
+    // One 0xFF byte [81 FF]: length=1, body=0xFF
+    {
+        auto bytes = make_bytes({0x81, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        CHECK(c.read_byte_vector(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 1u);
+        CHECK_EQ(val[0], 0xFFu);
+        CHECK_EQ(c.position(), 2u);
+    }
+    // Mixed raw payload [84 00 FF 80 7F]: length=4
+    {
+        auto bytes = make_bytes({0x84, 0x00, 0xFF, 0x80, 0x7F});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        CHECK(c.read_byte_vector(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 4u);
+        CHECK_EQ(val[0], 0x00u);
+        CHECK_EQ(val[1], 0xFFu);
+        CHECK_EQ(val[2], 0x80u);
+        CHECK_EQ(val[3], 0x7Fu);
+        CHECK_EQ(c.position(), 5u);
+    }
+    // Exact cursor consumption [81 AA CC]: after decode value=[AA], position=2, next=CC
+    {
+        auto bytes = make_bytes({0x81, 0xAA, 0xCC});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        CHECK(c.read_byte_vector(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 1u);
+        CHECK_EQ(val[0], 0xAAu);
+        CHECK_EQ(c.position(), 2u);
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xCCu);
+    }
+    // Length boundary: len=127, literal prefix [FF], exactly 127 raw bytes
+    {
+        std::vector<std::uint8_t> bytes;
+        bytes.push_back(0xFF);  // stopbit(127)
+        for (int i = 0; i < 127; ++i) bytes.push_back(static_cast<std::uint8_t>(i));
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        CHECK(c.read_byte_vector(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 127u);
+        for (int i = 0; i < 127; ++i) CHECK_EQ(val[i], static_cast<std::uint8_t>(i));
+        CHECK_EQ(c.position(), 128u);
+    }
+    // Length boundary: len=128, literal prefix [01 80], exactly 128 raw bytes
+    {
+        std::vector<std::uint8_t> bytes;
+        bytes.push_back(0x01); bytes.push_back(0x80);  // stopbit(128)
+        for (int i = 0; i < 128; ++i) bytes.push_back(static_cast<std::uint8_t>(i & 0xFF));
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        CHECK(c.read_byte_vector(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 128u);
+        for (int i = 0; i < 128; ++i) CHECK_EQ(val[i], static_cast<std::uint8_t>(i & 0xFF));
+        CHECK_EQ(c.position(), 130u);
+    }
+
+    // --- Mandatory error tests ---
+    // Empty input -> NeedMoreData
+    {
+        WireCursor c(nullptr, 0);
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK_EQ(val[0], 0xDEu);
+        CHECK_EQ(val[1], 0xADu);
+    }
+    // Truncated prefix [01] -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x01});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK_EQ(val[0], 0xDEu);
+    }
+    // Non-canonical prefix [00 80] -> NonCanonicalEncoding
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // Overflowing uInt32 length [10 00 00 00 80] -> IntegerOverflow
+    {
+        auto bytes = make_bytes({0x10, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // Partial body [83 AA BB] -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x83, 0xAA, 0xBB});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+    }
+
+    // --- Mandatory limit tests ---
+    // Empty [80] at max_bytes=0 -> Ok
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val, 0) == DecodeStatus::Ok);
+        CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
+    }
+    // One byte [81 AA] at max_bytes=0 -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x81, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val, 0) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // len=3 at limit=3 -> Ok
     {
         auto bytes = make_bytes({0x83, 0xAA, 0xBB, 0xCC});
         WireCursor c(bytes.data(), bytes.size());
         std::vector<std::uint8_t> val;
-        CHECK(c.read_byte_vector(val) == DecodeStatus::Ok);
+        CHECK(c.read_byte_vector(val, 3) == DecodeStatus::Ok);
         CHECK_EQ(val.size(), 3u);
-        CHECK_EQ(val[0], 0xAA);
-        CHECK_EQ(val[1], 0xBB);
-        CHECK_EQ(val[2], 0xCC);
     }
-    // Nullable: null (wire [80] for nullable u32 null)
+    // len=3 at limit=2 -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x83, 0xAA, 0xBB, 0xCC});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val, 2) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // Truncated [83 AA] at limit=2 -> LimitExceeded (not NeedMoreData), limit precedence
+    {
+        auto bytes = make_bytes({0x83, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        CHECK(c.read_byte_vector(val, 2) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+    }
+
+    // --- Nullable production tests ---
+    // NULL [80]: is_null=true, output sentinel unchanged
     {
         auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
-        std::vector<std::uint8_t> val;
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
         bool is_null = false;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
         CHECK(is_null);
+        CHECK_EQ(val.size(), 2u);
+        CHECK_EQ(val[0], 0xDEu);
+        CHECK_EQ(c.position(), 1u);
     }
-    // Nullable: empty (length=1 encoded as nullable: stopbit(1+1)=0x82)
-    // Wait, for nullable byte vector, the length is nullable uInt32.
-    // Length 0 means empty. Nullable uInt32 encoding of 0: stopbit(0+1)=0x81.
+    // Empty [81]: is_null=false, empty vector
     {
         auto bytes = make_bytes({0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
+    }
+    // One zero byte [82 00]: length=1, body=0x00
+    {
+        auto bytes = make_bytes({0x82, 0x00});
         WireCursor c(bytes.data(), bytes.size());
         std::vector<std::uint8_t> val;
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
         CHECK(!is_null);
+        CHECK_EQ(val.size(), 1u);
+        CHECK_EQ(val[0], 0x00u);
+        CHECK_EQ(c.position(), 2u);
+    }
+    // One 0xFF byte [82 FF]: length=1, body=0xFF
+    {
+        auto bytes = make_bytes({0x82, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 1u);
+        CHECK_EQ(val[0], 0xFFu);
+        CHECK_EQ(c.position(), 2u);
+    }
+    // Mixed payload [85 00 FF 80 7F]: nullable len=4 (stopbit(5)=0x85)
+    {
+        auto bytes = make_bytes({0x85, 0x00, 0xFF, 0x80, 0x7F});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 4u);
+        CHECK_EQ(val[0], 0x00u);
+        CHECK_EQ(val[1], 0xFFu);
+        CHECK_EQ(val[2], 0x80u);
+        CHECK_EQ(val[3], 0x7Fu);
+        CHECK_EQ(c.position(), 5u);
+    }
+    // Exact cursor consumption [82 AA CC]: after decode value=[AA], is_null=false, position=2, next=CC
+    {
+        auto bytes = make_bytes({0x82, 0xAA, 0xCC});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 1u);
+        CHECK_EQ(val[0], 0xAAu);
+        CHECK_EQ(c.position(), 2u);
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xCCu);
+    }
+    // Nullable length boundary: len=127, prefix [01 80] (nullable stopbit(128)), exactly 127 raw bytes
+    {
+        std::vector<std::uint8_t> bytes;
+        bytes.push_back(0x01); bytes.push_back(0x80);  // nullable stopbit(128) -> len=127
+        for (int i = 0; i < 127; ++i) bytes.push_back(static_cast<std::uint8_t>(i));
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 127u);
+        for (int i = 0; i < 127; ++i) CHECK_EQ(val[i], static_cast<std::uint8_t>(i));
+        CHECK_EQ(c.position(), 129u);
+    }
+    // Nullable length boundary: len=128, prefix [01 81] (nullable stopbit(129)), exactly 128 raw bytes
+    {
+        std::vector<std::uint8_t> bytes;
+        bytes.push_back(0x01); bytes.push_back(0x81);  // nullable stopbit(129) -> len=128
+        for (int i = 0; i < 128; ++i) bytes.push_back(static_cast<std::uint8_t>(i & 0xFF));
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 128u);
+        for (int i = 0; i < 128; ++i) CHECK_EQ(val[i], static_cast<std::uint8_t>(i & 0xFF));
+        CHECK_EQ(c.position(), 130u);
+    }
+
+    // --- Nullable error tests ---
+    // Empty input -> NeedMoreData
+    {
+        WireCursor c(nullptr, 0);
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK_EQ(val[0], 0xDEu);
+        CHECK(is_null);
+    }
+    // Truncated prefix [01] -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x01});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK(is_null);
+    }
+    // Non-canonical prefix [00 80] -> NonCanonicalEncoding
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK(is_null);
+    }
+    // Partial body [84 AA BB] -> NeedMoreData (len=3, only 2 body bytes)
+    {
+        auto bytes = make_bytes({0x84, 0xAA, 0xBB});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK(is_null);
+    }
+    // Non-empty limit failure: [82 AA] at limit=0 -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x82, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK(is_null);
+    }
+
+    // --- Nullable limit tests ---
+    // NULL [80] at max_bytes=0 -> Ok, is_null=true
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = false;
+        CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // Empty [81] at max_bytes=0 -> Ok, is_null=false, empty vector
+    {
+        auto bytes = make_bytes({0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(!is_null);
         CHECK(val.empty());
+    }
+    // One byte [82 AA] at limit=0 -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x82, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK(is_null);
+    }
+    // len=3 at limit=3 -> Ok
+    {
+        auto bytes = make_bytes({0x84, 0xAA, 0xBB, 0xCC});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val;
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null, 3) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 3u);
+    }
+    // len=3 at limit=2 -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x84, 0xAA, 0xBB, 0xCC});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null, 2) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK(is_null);
+    }
+    // Truncated [84 AA] at limit=2 -> LimitExceeded (not NeedMoreData), limit before body
+    {
+        auto bytes = make_bytes({0x84, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null, 2) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK(is_null);
+    }
+
+    // --- Checked-length test ---
+    // Nullable prefix [10 00 00 00 80] = non-null length UINT32_MAX,
+    // default max_bytes should return LimitExceeded without allocation,
+    // with rollback and unchanged outputs.
+    {
+        auto bytes = make_bytes({0x10, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<std::uint8_t> val{0xDE, 0xAD};
+        bool is_null = true;
+        CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val.size(), 2u);
+        CHECK_EQ(val[0], 0xDEu);
+        CHECK(is_null);
     }
     TEST_PASS("byte_vector");
 }

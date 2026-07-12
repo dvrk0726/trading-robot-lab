@@ -860,16 +860,26 @@ DecodeStatus WireCursor::read_nullable_unicode(std::string& out, bool& is_null, 
 }
 
 // --- Byte vector (FIX FAST 1.1) ---
-// Length-prefixed stop-bit uInt32, then that many raw bytes.
-// Nullable: length encoded as nullable uInt32.
+// Mandatory: stop-bit uInt32 byte length, then exactly that many raw eight-bit bytes.
+// Raw body bytes are not stop-bit encoded.
+// Nullable: nullable uInt32 length; NULL=[80], non-null empty=[81], length 1 prefix=[82].
+// Null and empty remain distinct.
+// max_bytes limits raw body bytes.
+// Limit checked immediately after successful prefix decode, before body-availability.
+// No allocation or output publication before prefix, limit, and body-availability validation.
+// On NULL: Ok, is_null=true, cursor past prefix only, caller vector unchanged.
+// On non-null success: full vector published, is_null=false only after all checks.
+// On any error: cursor restored, out and is_null unchanged.
 DecodeStatus WireCursor::read_byte_vector(std::vector<std::uint8_t>& out, std::size_t max_bytes) {
     std::size_t start = pos_;
     std::uint32_t len = 0;
     auto st = read_stopbit_u32(len);
     if (st != DecodeStatus::Ok) { pos_ = start; return st; }
 
-    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
+    // Limit before body-availability: declared length above limit is
+    // LimitExceeded even when the supplied body is truncated.
     if (len > max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
+    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
 
     const std::uint8_t* ptr = nullptr;
     st = read_bytes(len, ptr);
@@ -889,16 +899,19 @@ DecodeStatus WireCursor::read_nullable_byte_vector(std::vector<std::uint8_t>& ou
         is_null = true;
         return DecodeStatus::Ok;
     }
-    is_null = false;
 
-    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
+    // Limit before body-availability: declared length above limit is
+    // LimitExceeded even when the supplied body is truncated.
     if (len > max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
+    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
 
     const std::uint8_t* ptr = nullptr;
     st = read_bytes(len, ptr);
     if (st != DecodeStatus::Ok) { pos_ = start; return st; }
 
+    // Publish result only after all validation succeeds.
     out.assign(ptr, ptr + len);
+    is_null = false;
     return DecodeStatus::Ok;
 }
 
