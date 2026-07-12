@@ -197,9 +197,9 @@ Presence-map bits are consumed only as follows:
 | Instruction | Mandatory | Optional |
 |---|---:|---:|
 | template identifier | first message-segment bit | first message-segment bit |
-| field without operator | no field bit | no field bit; nullable wire representation |
+| field without operator | no field bit; ordinary wire representation | no field bit; nullable wire representation |
 | `constant` | no field bit | one field bit |
-| optional sequence with no length operator | no sequence bit; nullable length | no sequence bit; nullable length |
+| sequence length without operator | no field bit; ordinary uInt32 | no field bit; nullable uInt32 |
 
 For optional `constant`, bit 1 means the constant value is present and bit 0 means the field is absent.
 
