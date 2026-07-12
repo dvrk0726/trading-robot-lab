@@ -179,6 +179,20 @@ bool is_xmlns_attr(const std::string& name) {
     return name == "xmlns" || (name.size() > 6 && name.substr(0, 6) == "xmlns:");
 }
 
+// Concatenate all direct PCDATA and CDATA child nodes of an operator in document order.
+// Comments and processing instructions are ignored; element children are not included
+// (they are governed by the existing unknown_element structural validation).
+std::string collect_operator_direct_text(pugi::xml_node op_node) {
+    std::string result;
+    for (auto child : op_node.children()) {
+        auto type = child.type();
+        if (type == pugi::node_pcdata || type == pugi::node_cdata) {
+            result += child.value();
+        }
+    }
+    return result;
+}
+
 void validate_element_attributes(pugi::xml_node node,
                                   const std::set<std::string>& allowed,
                                   CompileCtx& ctx, const std::string& desc) {
@@ -396,7 +410,7 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             op.kind = OpKind::Constant;
             op.has_constant = true;
             validate_element_attributes(child, {"value"}, ctx, field_path);
-            std::string val_text = child.text().get();
+            std::string val_text = collect_operator_direct_text(child);
             std::string val_attr_str;
             auto val_attr = child.attribute("value");
             if (val_attr) val_attr_str = val_attr.as_string("");
@@ -467,7 +481,7 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
         } else if (name == "default") {
             op.kind = OpKind::Default;
             validate_element_attributes(child, {"value", "key", "dictionary"}, ctx, field_path);
-            std::string val_text = child.text().get();
+            std::string val_text = collect_operator_direct_text(child);
             std::string val_attr_str;
             auto val_attr = child.attribute("value");
             if (val_attr) val_attr_str = val_attr.as_string("");
@@ -548,7 +562,7 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
         } else if (name == "copy") {
             op.kind = OpKind::Copy;
             validate_element_attributes(child, {"value", "key", "dictionary"}, ctx, field_path);
-            std::string val_text = child.text().get();
+            std::string val_text = collect_operator_direct_text(child);
             std::string val_attr_str;
             auto val_attr = child.attribute("value");
             if (val_attr) val_attr_str = val_attr.as_string("");
@@ -629,7 +643,7 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
         } else if (name == "increment") {
             op.kind = OpKind::Increment;
             validate_element_attributes(child, {"value", "key", "dictionary"}, ctx, field_path);
-            std::string val_text = child.text().get();
+            std::string val_text = collect_operator_direct_text(child);
             std::string val_attr_str;
             auto val_attr = child.attribute("value");
             if (val_attr) val_attr_str = val_attr.as_string("");

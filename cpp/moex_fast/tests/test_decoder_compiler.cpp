@@ -2067,6 +2067,65 @@ static void test_9B2_value_on_tail_unknown_attribute() {
     TEST_PASS("9B2_value_on_tail_unknown_attribute");
 }
 
+// Test 10a: Split direct CDATA/text content is concatenated in document order
+static void test_9B2_split_cdata_concatenation() {
+    // Two adjacent CDATA segments should be concatenated: 42, not 4
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant><![CDATA[4]]><![CDATA[2]]></constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 42u);
+    }
+    // CDATA followed by PCDATA in document order
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant><![CDATA[1]]>23</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 123u);
+    }
+    // PCDATA followed by CDATA
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>9<![CDATA[9]]></constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 99u);
+    }
+    TEST_PASS("9B2_split_cdata_concatenation");
+}
+
+// Test 10b: value attribute with non-empty content in a later PCDATA/CDATA segment returns ambiguous_operator_value
+static void test_9B2_value_with_later_cdata_ambiguous() {
+    // value attribute present, but there is also direct CDATA content (in a later segment)
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant value="42"><![CDATA[10]]></constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    }
+    // value attribute with trailing PCDATA
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant value="5">5</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    }
+    TEST_PASS("9B2_value_with_later_cdata_ambiguous");
+}
+
 // Test 10: xmlns and xmlns:prefix are not ordinary attributes
 static void test_9B2_xmlns_not_ordinary_attribute() {
     // xmlns on root
@@ -2208,6 +2267,8 @@ int main() {
     test_9B2_ambiguous_value_increment();
     test_9B2_value_on_delta_unknown_attribute();
     test_9B2_value_on_tail_unknown_attribute();
+    test_9B2_split_cdata_concatenation();
+    test_9B2_value_with_later_cdata_ambiguous();
     test_9B2_xmlns_not_ordinary_attribute();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
