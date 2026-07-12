@@ -617,6 +617,7 @@ DecodeStatus WireCursor::read_presence_map(std::size_t pmap_bits, std::vector<bo
     std::vector<bool> tmp;
     tmp.reserve(pmap_bits);
     std::size_t bytes_read = 0;
+    std::uint8_t terminating_byte = 0;
     bool terminated = false;
 
     while (!terminated) {
@@ -637,6 +638,7 @@ DecodeStatus WireCursor::read_presence_map(std::size_t pmap_bits, std::vector<bo
         }
 
         if (b & 0x80u) {
+            terminating_byte = b;
             terminated = true;
         }
     }
@@ -646,16 +648,12 @@ DecodeStatus WireCursor::read_presence_map(std::size_t pmap_bits, std::vector<bo
         tmp.push_back(false);
     }
 
-    // FAST 1.1 ERR R7: multi-byte map with zero terminating group is overlong.
-    // The canonical all-zero map is single byte [80].
-    if (bytes_read > 1) {
-        bool all_zero = true;
-        // Check the last 7 transmitted data bits (the terminating group).
-        std::size_t group_start = (bytes_read - 1) * 7;
-        for (std::size_t i = group_start; i < group_start + 7 && i < tmp.size(); ++i) {
-            if (tmp[i]) { all_zero = false; break; }
-        }
-        if (all_zero) { pos_ = start; return DecodeStatus::NonCanonicalEncoding; }
+    // FAST 1.1 ERR R7: multi-byte map whose terminating 7-bit group data
+    // bits are all zero is overlong.  Canonical all-zero is single byte [80].
+    // Check the actual terminating wire byte, not tmp (which may be truncated
+    // by pmap_bits and miss non-zero bits beyond the requested output prefix).
+    if (bytes_read > 1 && (terminating_byte & 0x7F) == 0) {
+        pos_ = start; return DecodeStatus::NonCanonicalEncoding;
     }
 
     // Success: commit result.

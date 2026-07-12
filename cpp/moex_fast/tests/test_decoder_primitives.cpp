@@ -962,14 +962,31 @@ static void test_presence_map() {
         CHECK_EQ(out.size(), 3u); // unchanged
         CHECK_EQ(out[0], true);
     }
-    // Default limit exhaustion: 65 continuation bytes (no stop) -> LimitExceeded
+    // ERR R7 regression: [00 A0] with pmap_bits=8. The terminating byte 0xA0
+    // has non-zero data bits (0x20) beyond the requested 8-bit output prefix.
+    // The decoder must accept this as canonical even though tmp[7]==false.
     {
-        std::vector<std::uint8_t> bytes(65, 0x00);
+        auto bytes = make_bytes({0x00, 0xA0, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::vector<bool> out;
+        CHECK(c.read_presence_map(8, out) == DecodeStatus::Ok);
+        CHECK_EQ(out.size(), 8u);
+        for (int i = 0; i < 8; ++i) CHECK_EQ(out[i], false);
+        CHECK_EQ(c.position(), 2u);
+        // Sentinel byte 0xAA still readable (output is atomic)
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xAAu);
+    }
+    // Default limit exhaustion: exactly 64 continuation bytes without stop bit
+    // -> LimitExceeded, cursor rollback, output unchanged
+    {
+        std::vector<std::uint8_t> bytes(64, 0x00);
         WireCursor c(bytes.data(), bytes.size());
         std::vector<bool> out{true};
-        CHECK(c.read_presence_map(1, out) == DecodeStatus::LimitExceeded);
+        CHECK(c.read_presence_map(1, out, 63) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(out.size(), 1u); // unchanged
+        CHECK_EQ(out.size(), 1u);
         CHECK_EQ(out[0], true);
     }
     TEST_PASS("presence_map");
