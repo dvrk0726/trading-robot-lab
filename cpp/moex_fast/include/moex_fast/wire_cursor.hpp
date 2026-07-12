@@ -81,8 +81,18 @@ public:
 
     // Unicode string: length-prefixed stop-bit uInt32, then that many bytes of UTF-8.
     // Strict UTF-8 validation (no overlong, no surrogates, no > U+10FFFF).
-    // Nullable: length encoded as nullable uInt32 (wire [0x80] => null, no body bytes).
+    // max_bytes limits UTF-8 wire bytes, not Unicode scalar count.
+    // Limit checked immediately after successful prefix decode, before body-availability.
+    // On failure cursor is unchanged (position restored); out unchanged.
     DecodeStatus read_unicode_string(std::string& out, std::size_t max_bytes = 1024 * 1024);
+
+    // Nullable Unicode (FIX FAST 1.1).
+    // Length encoded as nullable uInt32: wire [0x80] => NULL, no body bytes.
+    // Non-null empty: [81]; non-empty: same wire form as mandatory with +1 offset.
+    // max_bytes limits UTF-8 wire bytes, not Unicode scalar count.
+    // Limit checked immediately after successful prefix decode, before body-availability.
+    // On NULL: is_null=true, caller string unchanged.
+    // On any failure: cursor, out, and is_null unchanged.
     DecodeStatus read_nullable_unicode(std::string& out, bool& is_null, std::size_t max_bytes = 1024 * 1024);
 
     // Byte vector: length-prefixed stop-bit uInt32, then that many raw bytes.

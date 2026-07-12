@@ -255,6 +255,100 @@ static void test_signed_max_width() {
     TEST_PASS("signed_max_width");
 }
 
+// Test: Unicode string size limit (mandatory and nullable)
+static void test_unicode_limit() {
+    // Mandatory: empty [80] at limit=0 -> Ok
+    {
+        auto bytes = hex("80");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val, 0) == DecodeStatus::Ok);
+        CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
+    }
+    // Mandatory: U+00A2 [82 C2 A2] at limit=2 -> Ok
+    {
+        auto bytes = hex("82C2A2");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        CHECK(c.read_unicode_string(val, 2) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // Mandatory: U+00A2 [82 C2 A2] at limit=1 -> LimitExceeded, rollback
+    {
+        auto bytes = hex("82C2A2");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Mandatory: [82 C2] at limit=1 -> LimitExceeded (not NeedMoreData)
+    // Limit precedence: limit checked before body availability
+    {
+        auto bytes = hex("82C2");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Nullable: NULL [80] at limit=0 -> Ok, is_null=true
+    {
+        auto bytes = hex("80");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = false;
+        CHECK(c.read_nullable_unicode(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Nullable: empty [81] at limit=0 -> Ok, is_null=false, string empty
+    {
+        auto bytes = hex("81");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK(val.empty());
+    }
+    // Nullable: U+00A2 [83 C2 A2] at limit=2 -> Ok
+    {
+        auto bytes = hex("83C2A2");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 2) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // Nullable: U+00A2 [83 C2 A2] at limit=1 -> LimitExceeded
+    {
+        auto bytes = hex("83C2A2");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // Nullable: [83 C2] at limit=1 -> LimitExceeded (not NeedMoreData)
+    // Limit precedence: limit checked before body availability
+    {
+        auto bytes = hex("83C2");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    TEST_PASS("unicode_limit");
+}
+
 // Test: cursor restore on failure
 static void test_cursor_restore() {
     // Try to read a uInt32 from truncated data
@@ -312,6 +406,7 @@ int main() {
     test_hard_ceilings();
     test_pmap_limit();
     test_string_limit();
+    test_unicode_limit();
     test_nullable_u32_null_and_overlong();
     test_signed_max_width();
     test_cursor_restore();

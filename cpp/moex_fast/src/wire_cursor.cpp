@@ -776,12 +776,6 @@ bool validate_utf8(const std::uint8_t* data, std::size_t len) {
 
         if (i + static_cast<std::size_t>(seq_len) > len) return false;
 
-        bool overlong = false;
-        if (seq_len == 2 && cp < 0x02) overlong = true;
-        if (seq_len == 3 && cp == 0) overlong = true;
-        if (seq_len == 4 && cp == 0) overlong = true;
-        if (overlong) return false;
-
         for (int j = 1; j < seq_len; ++j) {
             std::uint8_t cb = data[i + static_cast<std::size_t>(j)];
             if ((cb & 0xC0u) != 0x80u) return false;
@@ -802,15 +796,20 @@ bool validate_utf8(const std::uint8_t* data, std::size_t len) {
 
 // --- Unicode string (FIX FAST 1.1) ---
 // Length-prefixed stop-bit uInt32, then that many bytes of UTF-8.
-// Nullable: length encoded as nullable uInt32.
+// Strict UTF-8 validation (no overlong, no surrogates, no > U+10FFFF).
+// max_bytes limits UTF-8 wire bytes, not Unicode scalar count.
+// Limit checked immediately after prefix decode, before body-availability.
+// On failure cursor is unchanged (position restored); out unchanged.
 DecodeStatus WireCursor::read_unicode_string(std::string& out, std::size_t max_bytes) {
     std::size_t start = pos_;
     std::uint32_t len = 0;
     auto st = read_stopbit_u32(len);
     if (st != DecodeStatus::Ok) { pos_ = start; return st; }
 
-    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
+    // Limit before body-availability: declared length above limit is
+    // LimitExceeded even when the supplied body is truncated.
     if (len > max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
+    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
 
     const std::uint8_t* ptr = nullptr;
     st = read_bytes(len, ptr);
@@ -824,9 +823,14 @@ DecodeStatus WireCursor::read_unicode_string(std::string& out, std::size_t max_b
     return DecodeStatus::Ok;
 }
 
+// --- Nullable Unicode (FIX FAST 1.1) ---
+// Length encoded as nullable uInt32: [80] => NULL, [81] => empty, etc.
+// Strict UTF-8 validation (no overlong, no surrogates, no > U+10FFFF).
+// max_bytes limits UTF-8 wire bytes, not Unicode scalar count.
+// Limit checked immediately after prefix decode, before body-availability.
+// Cursor, out, and is_null are atomic: on any error all remain unchanged.
 DecodeStatus WireCursor::read_nullable_unicode(std::string& out, bool& is_null, std::size_t max_bytes) {
     std::size_t start = pos_;
-    // Nullable unicode: length is nullable uInt32
     std::uint32_t len = 0;
     bool len_null = false;
     auto st = read_nullable_u32(len, len_null);
@@ -835,10 +839,11 @@ DecodeStatus WireCursor::read_nullable_unicode(std::string& out, bool& is_null, 
         is_null = true;
         return DecodeStatus::Ok;
     }
-    is_null = false;
 
-    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
+    // Limit before body-availability: declared length above limit is
+    // LimitExceeded even when the supplied body is truncated.
     if (len > max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
+    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
 
     const std::uint8_t* ptr = nullptr;
     st = read_bytes(len, ptr);
@@ -848,7 +853,9 @@ DecodeStatus WireCursor::read_nullable_unicode(std::string& out, bool& is_null, 
         pos_ = start; return DecodeStatus::InvalidEncoding;
     }
 
+    // Publish result only after all validation succeeds.
     out.assign(reinterpret_cast<const char*>(ptr), len);
+    is_null = false;
     return DecodeStatus::Ok;
 }
 

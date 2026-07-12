@@ -1332,44 +1332,404 @@ static void test_byte_vector() {
     TEST_PASS("byte_vector");
 }
 
-// --- Unicode string tests ---
-static void test_unicode_string() {
-    // Empty: length=0 -> 0x80
+// --- Mandatory Unicode string tests ---
+static void test_mandatory_unicode() {
+    // Empty [80]: length=0
     {
         auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
-        std::string val;
+        std::string val = "sentinel";
         CHECK(c.read_unicode_string(val) == DecodeStatus::Ok);
         CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
     }
-    // "A" (1 byte UTF-8): length=1 -> 0x81, then 0x41
+    // "A" [81 41]: length=1, byte 0x41
     {
         auto bytes = make_bytes({0x81, 0x41});
         WireCursor c(bytes.data(), bytes.size());
         std::string val;
         CHECK(c.read_unicode_string(val) == DecodeStatus::Ok);
         CHECK_EQ(val, "A");
+        CHECK_EQ(c.position(), 2u);
     }
-    // Nullable: null (length = nullable wire [80])
+    // U+00A2 [82 C2 A2]: 2-byte UTF-8
+    {
+        auto bytes = make_bytes({0x82, 0xC2, 0xA2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        CHECK(c.read_unicode_string(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 2u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[0]), 0xC2u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[1]), 0xA2u);
+        CHECK_EQ(c.position(), 3u);
+    }
+    // U+20AC [83 E2 82 AC]: 3-byte UTF-8
+    {
+        auto bytes = make_bytes({0x83, 0xE2, 0x82, 0xAC});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        CHECK(c.read_unicode_string(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 3u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[0]), 0xE2u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[1]), 0x82u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[2]), 0xACu);
+        CHECK_EQ(c.position(), 4u);
+    }
+    // U+1F600 [84 F0 9F 98 80]: 4-byte UTF-8
+    {
+        auto bytes = make_bytes({0x84, 0xF0, 0x9F, 0x98, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        CHECK(c.read_unicode_string(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 4u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[0]), 0xF0u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[1]), 0x9Fu);
+        CHECK_EQ(static_cast<std::uint8_t>(val[2]), 0x98u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[3]), 0x80u);
+        CHECK_EQ(c.position(), 5u);
+    }
+    // Exact cursor consumption: [81 41 AA] — after A, position=2, next byte AA
+    {
+        auto bytes = make_bytes({0x81, 0x41, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        CHECK(c.read_unicode_string(val) == DecodeStatus::Ok);
+        CHECK_EQ(val, "A");
+        CHECK_EQ(c.position(), 2u);
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xAAu);
+    }
+    // --- Mandatory Unicode error vectors ---
+    // Invalid continuation: [82 C2 41] — 41 is not a continuation byte
+    {
+        auto bytes = make_bytes({0x82, 0xC2, 0x41});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Overlong UTF-8: [82 C0 AF] — C0 AF is overlong encoding of '/'
+    {
+        auto bytes = make_bytes({0x82, 0xC0, 0xAF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Surrogate U+D800: [83 ED A0 80]
+    {
+        auto bytes = make_bytes({0x83, 0xED, 0xA0, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Code point > U+10FFFF: [84 F4 90 80 80] = U+110000
+    {
+        auto bytes = make_bytes({0x84, 0xF4, 0x90, 0x80, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Declared body truncation: [82 C2] — len=2 but only 1 byte present
+    {
+        auto bytes = make_bytes({0x82, 0xC2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // 1-byte body with truncated UTF-8 lead: [81 C2] — C2 is 2-byte lead
+    {
+        auto bytes = make_bytes({0x81, 0xC2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Truncated length prefix: [01] — no stop bit
+    {
+        auto bytes = make_bytes({0x01});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Non-canonical length prefix: [00 80] — raw 0 in 2 bytes
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Overflowing mandatory uInt32 length: [10 00 00 00 80] = 2^32
+    {
+        auto bytes = make_bytes({0x10, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Empty input
+    {
+        WireCursor c(nullptr, 0);
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // --- Mandatory Unicode limit tests ---
+    // [80] at max_bytes=0 -> Ok empty (empty has zero bytes)
     {
         auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val, 0) == DecodeStatus::Ok);
+        CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
+    }
+    // U+00A2 [82 C2 A2] at limit=2 -> Ok
+    {
+        auto bytes = make_bytes({0x82, 0xC2, 0xA2});
+        WireCursor c(bytes.data(), bytes.size());
         std::string val;
+        CHECK(c.read_unicode_string(val, 2) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // U+00A2 [82 C2 A2] at limit=1 -> LimitExceeded, rollback
+    {
+        auto bytes = make_bytes({0x82, 0xC2, 0xA2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // [82 C2] at limit=1 -> LimitExceeded (not NeedMoreData), limit precedence
+    {
+        auto bytes = make_bytes({0x82, 0xC2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_unicode_string(val, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    TEST_PASS("mandatory_unicode");
+}
+
+// --- Nullable Unicode string tests ---
+static void test_nullable_unicode() {
+    // NULL [80]: nullable u32 null
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
         bool is_null = false;
         CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::Ok);
         CHECK(is_null);
+        CHECK_EQ(val, "sentinel");
+        CHECK_EQ(c.position(), 1u);
     }
-    // Nullable: empty (length = nullable stopbit(0+1)=0x81, then 0 bytes)
+    // Empty [81]: nullable u32 len=0 (stopbit(1)), no body bytes
     {
         auto bytes = make_bytes({0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
+    }
+    // "A" [82 41]: nullable u32 len=1 (stopbit(2)), body 0x41
+    {
+        auto bytes = make_bytes({0x82, 0x41});
         WireCursor c(bytes.data(), bytes.size());
         std::string val;
         bool is_null = true;
         CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::Ok);
         CHECK(!is_null);
+        CHECK_EQ(val, "A");
+        CHECK_EQ(c.position(), 2u);
+    }
+    // U+00A2 [83 C2 A2]: nullable u32 len=2 (stopbit(3)), body C2 A2
+    {
+        auto bytes = make_bytes({0x83, 0xC2, 0xA2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 2u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[0]), 0xC2u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[1]), 0xA2u);
+        CHECK_EQ(c.position(), 3u);
+    }
+    // U+20AC [84 E2 82 AC]: nullable u32 len=3 (stopbit(4)), body E2 82 AC
+    {
+        auto bytes = make_bytes({0x84, 0xE2, 0x82, 0xAC});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 3u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[0]), 0xE2u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[1]), 0x82u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[2]), 0xACu);
+        CHECK_EQ(c.position(), 4u);
+    }
+    // U+1F600 [85 F0 9F 98 80]: nullable u32 len=4 (stopbit(5)), body F0 9F 98 80
+    {
+        auto bytes = make_bytes({0x85, 0xF0, 0x9F, 0x98, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 4u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[0]), 0xF0u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[1]), 0x9Fu);
+        CHECK_EQ(static_cast<std::uint8_t>(val[2]), 0x98u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[3]), 0x80u);
+        CHECK_EQ(c.position(), 5u);
+    }
+    // Exact cursor consumption: [82 41 AA] — after A, position=2, next byte AA
+    {
+        auto bytes = make_bytes({0x82, 0x41, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = false;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, "A");
+        CHECK_EQ(c.position(), 2u);
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xAAu);
+    }
+    // --- Nullable Unicode error/atomicity tests ---
+    // Body truncation: [83 C2] — len=2 but only 1 byte present -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x83, 0xC2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // Invalid continuation: [83 C2 41] — 41 not a continuation byte -> InvalidEncoding
+    {
+        auto bytes = make_bytes({0x83, 0xC2, 0x41});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // Truncated prefix: [01] — no stop bit -> NeedMoreData
+    {
+        auto bytes = make_bytes({0x01});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // Non-canonical nullable prefix: [00 80] — raw 0 in 2 bytes -> NonCanonicalEncoding
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // Limit failure: U+00A2 [83 C2 A2] at limit=1 -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x83, 0xC2, 0xA2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // --- Nullable Unicode limit tests ---
+    // NULL [80] at max_bytes=0 -> Ok, is_null=true
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = false;
+        CHECK(c.read_nullable_unicode(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Empty [81] at max_bytes=0 -> Ok, is_null=false, string empty
+    {
+        auto bytes = make_bytes({0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(!is_null);
         CHECK(val.empty());
     }
-    TEST_PASS("unicode_string");
+    // U+00A2 [83 C2 A2] at limit=2 -> Ok
+    {
+        auto bytes = make_bytes({0x83, 0xC2, 0xA2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 2) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val.size(), 2u);
+    }
+    // U+00A2 [83 C2 A2] at limit=1 -> LimitExceeded
+    {
+        auto bytes = make_bytes({0x83, 0xC2, 0xA2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // [83 C2] at limit=1 -> LimitExceeded (not NeedMoreData), limit-before-body precedence
+    {
+        auto bytes = make_bytes({0x83, 0xC2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_unicode(val, is_null, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    TEST_PASS("nullable_unicode");
 }
 
 // --- JSON escape tests ---
@@ -1400,7 +1760,8 @@ int main() {
     test_nullable_ascii();
     test_decimal();
     test_byte_vector();
-    test_unicode_string();
+    test_mandatory_unicode();
+    test_nullable_unicode();
     test_json_escape();
     std::cout << "All decoder primitive tests passed.\n";
     return 0;

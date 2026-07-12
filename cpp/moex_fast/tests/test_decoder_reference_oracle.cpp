@@ -497,7 +497,7 @@ static void test_nullable_ascii() {
     TEST_PASS("nullable_ascii");
 }
 
-// --- Unicode string ---
+// --- Mandatory Unicode string ---
 static void test_unicode_string() {
     // Empty -> length stopbit(0)=0x80
     {
@@ -509,6 +509,24 @@ static void test_unicode_string() {
     {
         byte_vec expected{0x81, 0x41};
         byte_vec actual; encode_unicode_string(actual, "A");
+        CHECK_BYTES(actual, expected);
+    }
+    // U+00A2 -> length stopbit(2)=0x82, then C2 A2
+    {
+        byte_vec expected{0x82, 0xC2, 0xA2};
+        byte_vec actual; encode_unicode_string(actual, "\xC2\xA2");
+        CHECK_BYTES(actual, expected);
+    }
+    // U+20AC -> length stopbit(3)=0x83, then E2 82 AC
+    {
+        byte_vec expected{0x83, 0xE2, 0x82, 0xAC};
+        byte_vec actual; encode_unicode_string(actual, "\xE2\x82\xAC");
+        CHECK_BYTES(actual, expected);
+    }
+    // U+1F600 -> length stopbit(4)=0x84, then F0 9F 98 80
+    {
+        byte_vec expected{0x84, 0xF0, 0x9F, 0x98, 0x80};
+        byte_vec actual; encode_unicode_string(actual, "\xF0\x9F\x98\x80");
         CHECK_BYTES(actual, expected);
     }
     // Nullable: null -> [80] (nullable u32 null)
@@ -527,6 +545,24 @@ static void test_unicode_string() {
     {
         byte_vec expected{0x82, 0x41};
         byte_vec actual; encode_nullable_unicode(actual, "A", false);
+        CHECK_BYTES(actual, expected);
+    }
+    // Nullable: U+00A2 -> length nullable(2)=stopbit(3)=0x83, then C2 A2
+    {
+        byte_vec expected{0x83, 0xC2, 0xA2};
+        byte_vec actual; encode_nullable_unicode(actual, "\xC2\xA2", false);
+        CHECK_BYTES(actual, expected);
+    }
+    // Nullable: U+20AC -> length nullable(3)=stopbit(4)=0x84, then E2 82 AC
+    {
+        byte_vec expected{0x84, 0xE2, 0x82, 0xAC};
+        byte_vec actual; encode_nullable_unicode(actual, "\xE2\x82\xAC", false);
+        CHECK_BYTES(actual, expected);
+    }
+    // Nullable: U+1F600 -> length nullable(4)=stopbit(5)=0x85, then F0 9F 98 80
+    {
+        byte_vec expected{0x85, 0xF0, 0x9F, 0x98, 0x80};
+        byte_vec actual; encode_nullable_unicode(actual, "\xF0\x9F\x98\x80", false);
         CHECK_BYTES(actual, expected);
     }
     TEST_PASS("unicode_string");
