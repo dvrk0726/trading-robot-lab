@@ -1,6 +1,6 @@
 # AI Agent Communication Protocol
 
-Дата обновления: 2026-07-10  
+Дата обновления: 2026-07-12  
 Статус: практический протокол
 
 ## Главный принцип
@@ -43,9 +43,11 @@ DRAFT
 
 MiMo не начинает `DRAFT`.
 
+Перед выдачей MiMo-команды задача должна пройти scope-freeze protocol (см. раздел ниже). Scope должен быть зафиксирован и утверждён владельцем до перехода в `READY_FOR_MIMO`.
+
 ## Ready handoff to MiMo
 
-Architecture/Review Agent переводит Issue в `READY_FOR_MIMO` только после проверки полноты спецификации и закрытия зависимостей.
+Architecture/Review Agent переводит Issue в `READY_FOR_MIMO` только после проверки полноты спецификации, закрытия зависимостей и завершения scope-freeze protocol. Scope-freeze checklist должен быть полностью закрыт; anti-overengineering check должен подтвердить минимality решения.
 
 Универсальная команда:
 
@@ -151,6 +153,106 @@ DRAFT
 ```
 
 Каждый Issue имеет ровно один status label. Дополнительные labels описывают область: `mimo`, `cpp`, `python`, `architecture`, `docs`, `security`, `risk`, `research`, `blocked`, `needs-owner-decision`, `no-live`.
+
+## Scope-freeze protocol
+
+Перед выдачей MiMo-команды задача должна пройти mandatory scope-freeze protocol. Этот протокол дополняет, но не заменяет существующие GitHub Issue status labels (`DRAFT`, `READY_FOR_MIMO`, `IN_PROGRESS` и остальные).
+
+### Preparation/execution states
+
+```text
+RESEARCH
+SCOPE_FROZEN
+OWNER_AUTHORIZED
+MIMO_RUNNING
+ARCHITECTURE_REVIEW
+ACCEPTED
+CHANGES_REQUIRED
+```
+
+- `RESEARCH` — активное исследование: defect/objective формулируется, evidence собирается, scope определяется.
+- `SCOPE_FROZEN` — все checklist-пункты закрыты, scope зафиксирован и не изменяется.
+- `OWNER_AUTHORIZED` — владелец утвердил frozen scope.
+- `MIMO_RUNNING` — MiMo выполняет утверждённую задачу.
+- `ARCHITECTURE_REVIEW` — PR создан, Architecture/Review Agent проверяет результат.
+- `ACCEPTED` / `CHANGES_REQUIRED` — итог проверки.
+
+**No MiMo command may be issued during `RESEARCH`.** Задача остаётся в `RESEARCH` до тех пор, пока все пункты scope-freeze checklist не закрыты.
+
+### Scope-freeze checklist
+
+Перед запросом owner authorization Architecture/Review Agent обязан подтвердить каждый пункт:
+
+```text
+[ ] defect/objective подтверждён кодом, тестами или authoritative sources
+[ ] proposed change является минимальным для текущего approved gate
+[ ] нет unresolved фактов, способных материально изменить реализацию
+[ ] перечислены exact allowed files
+[ ] перечислены exact acceptance checks/tests
+[ ] перечислены explicit non-goals
+[ ] задача является одной небольшой логической работой
+[ ] задача не поглощает следующий roadmap item
+[ ] reviewer выполнил финальную попытку уменьшить scope
+```
+
+**Любой незакрытый пункт удерживает задачу в `RESEARCH`.**
+
+### Anti-overengineering check
+
+Перед scope freeze необходимо ответить на три вопроса:
+
+```text
+1. Требуется ли это утверждёнными acceptance criteria?
+2. Подтверждено ли authoritative profile/code evidence?
+3. Можно ли исправить подтверждённый defect меньшим изменением?
+```
+
+Если существует меньшее compliant решение, необходимо выбрать его.
+
+### One active canonical MiMo task
+
+Текущая коррекция может иметь только одну активную authorization. Каноническая постановка должна содержать:
+
+```text
+base/full head SHA
+current gate
+allowed files
+required changes
+acceptance tests
+explicit non-goals
+owner authorization
+```
+
+Superseded authorization должна быть явно помечена как non-executable. Нельзя создавать цепочки неоднозначных активных prompts. Предпочтительна одна каноническая запись задачи вместо серии замещающих инструкций.
+
+### Scope lock after launch
+
+После запуска MiMo scope заблокирован. Нельзя:
+
+```text
+добавлять требования;
+переименовывать задачу;
+переразбивать задачу;
+просить MiMo импровизировать.
+```
+
+Если новая информация делает specification неверной:
+
+```text
+остановить выполнение или позволить bounded run завершиться без следующего этапа;
+проверить актуальное GitHub state;
+вернуть задачу в RESEARCH;
+заморозить новый scope;
+получить новое owner authorization.
+```
+
+### Stable roadmap naming
+
+Working phases могут декомпозировать approved gate, но должны быть представлены как стабильная иерархия. Нельзя представлять sub-phases как replacement roadmaps или вводить бесконечную вложенную нумерацию.
+
+### Owner is not the final specification safety barrier
+
+Owner approval остаётся обязательным, но Architecture/Review Agent отвечает за полноту scope, минимальность и evidence. Процесс не должен зависеть от того, что владелец заметит technical scope drift.
 
 ## Pull Request rules
 
