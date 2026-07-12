@@ -489,7 +489,6 @@ struct DecoderSession::Impl {
                 } else if (field.wire_type == DecWireType::uInt32 ||
                            field.wire_type == DecWireType::uInt64) {
                     dv.uint_val = field.op.initial_uint;
-                    dv.int_val = static_cast<std::int64_t>(field.op.initial_uint);
                 } else {
                     dv.int_val = field.op.initial_int;
                     dv.uint_val = static_cast<std::uint64_t>(field.op.initial_int);
@@ -575,7 +574,6 @@ struct DecoderSession::Impl {
                 if (field.wire_type == DecWireType::uInt32 ||
                     field.wire_type == DecWireType::uInt64) {
                     dv.uint_val = field.op.initial_uint;
-                    dv.int_val = static_cast<std::int64_t>(field.op.initial_uint);
                 } else {
                     dv.int_val = field.op.initial_int;
                     dv.uint_val = static_cast<std::uint64_t>(field.op.initial_int);

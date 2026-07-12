@@ -13,6 +13,17 @@ static bool has_issue(const CompileResult& r, const std::string& code) {
     return false;
 }
 
+static void check_invalid_compile_9B1(const CompileResult& r, const std::string& expected_code) {
+    CHECK(!r.ok);
+    CHECK(has_issue(r, expected_code));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+}
+
 // --- static_assert: template collection returns const ref only ---
 static_assert(std::is_same_v<
     decltype(std::declval<const CompiledTemplateSet&>().templates()),
@@ -487,9 +498,7 @@ static void test_template_id_zero() {
   <template id="0" name="Zero"><uInt32 name="F1"/></template>
 </templates>)";
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    CHECK(has_issue(result, "invalid_template_id"));
-    CHECK(!result.compiled.valid());
+    check_invalid_compile_9B1(result, "invalid_template_id");
     TEST_PASS("template_id_zero");
 }
 
@@ -500,9 +509,7 @@ static void test_template_id_non_decimal() {
   <template id="10abc" name="Bad"><uInt32 name="F1"/></template>
 </templates>)";
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    CHECK(has_issue(result, "non_numeric_template_id"));
-    CHECK(!result.compiled.valid());
+    check_invalid_compile_9B1(result, "non_numeric_template_id");
     TEST_PASS("template_id_non_decimal");
 }
 
@@ -513,9 +520,7 @@ static void test_template_id_out_of_range() {
   <template id="4294967296" name="BigTid"><uInt32 name="F1"/></template>
 </templates>)";
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    CHECK(has_issue(result, "template_id_out_of_range"));
-    CHECK(!result.compiled.valid());
+    check_invalid_compile_9B1(result, "template_id_out_of_range");
     TEST_PASS("template_id_out_of_range");
 }
 
@@ -569,9 +574,7 @@ static void test_fix_tag_zero() {
   <template id="1" name="Msg"><uInt32 name="F" id="0"/></template>
 </templates>)";
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    CHECK(has_issue(result, "invalid_fix_tag"));
-    CHECK(!result.compiled.valid());
+    check_invalid_compile_9B1(result, "invalid_fix_tag");
     TEST_PASS("fix_tag_zero");
 }
 
@@ -582,9 +585,7 @@ static void test_fix_tag_negative() {
   <template id="1" name="Msg"><uInt32 name="F" id="-5"/></template>
 </templates>)";
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    CHECK(has_issue(result, "invalid_fix_tag"));
-    CHECK(!result.compiled.valid());
+    check_invalid_compile_9B1(result, "invalid_fix_tag");
     TEST_PASS("fix_tag_negative");
 }
 
@@ -595,9 +596,7 @@ static void test_fix_tag_non_decimal() {
   <template id="1" name="Msg"><uInt32 name="F" id="abc"/></template>
 </templates>)";
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    CHECK(has_issue(result, "invalid_fix_tag"));
-    CHECK(!result.compiled.valid());
+    check_invalid_compile_9B1(result, "invalid_fix_tag");
     TEST_PASS("fix_tag_non_decimal");
 }
 
@@ -608,9 +607,7 @@ static void test_fix_tag_out_of_range() {
   <template id="1" name="Msg"><uInt32 name="F" id="2147483648"/></template>
 </templates>)";
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    CHECK(has_issue(result, "invalid_fix_tag"));
-    CHECK(!result.compiled.valid());
+    check_invalid_compile_9B1(result, "invalid_fix_tag");
     TEST_PASS("fix_tag_out_of_range");
 }
 
@@ -643,8 +640,7 @@ static void test_uint32_constant_range() {
   <template id="1" name="Msg"><uInt32 name="F"><constant>-1</constant></uInt32></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     // MAX+1 fails
     {
@@ -653,8 +649,7 @@ static void test_uint32_constant_range() {
   <template id="1" name="Msg"><uInt32 name="F"><constant>4294967296</constant></uInt32></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     TEST_PASS("uint32_constant_range");
 }
@@ -688,8 +683,7 @@ static void test_uint64_constant_range() {
   <template id="1" name="Msg"><uInt64 name="F"><constant>-1</constant></uInt64></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     // 18446744073709551616 fails
     {
@@ -698,8 +692,7 @@ static void test_uint64_constant_range() {
   <template id="1" name="Msg"><uInt64 name="F"><constant>18446744073709551616</constant></uInt64></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     TEST_PASS("uint64_constant_range");
 }
@@ -733,8 +726,7 @@ static void test_int32_constant_range() {
   <template id="1" name="Msg"><int32 name="F"><constant>2147483648</constant></int32></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     // MIN-1 fails
     {
@@ -743,8 +735,7 @@ static void test_int32_constant_range() {
   <template id="1" name="Msg"><int32 name="F"><constant>-2147483649</constant></int32></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     TEST_PASS("int32_constant_range");
 }
@@ -778,8 +769,7 @@ static void test_int64_constant_range() {
   <template id="1" name="Msg"><int64 name="F"><constant>9223372036854775808</constant></int64></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     // MIN-1 fails
     {
@@ -788,8 +778,7 @@ static void test_int64_constant_range() {
   <template id="1" name="Msg"><int64 name="F"><constant>-9223372036854775809</constant></int64></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     TEST_PASS("int64_constant_range");
 }
@@ -843,8 +832,7 @@ static void test_decimal_component_range() {
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     // Mantissa MAX+1 fails
     {
@@ -858,8 +846,7 @@ static void test_decimal_component_range() {
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     TEST_PASS("decimal_component_range");
 }
@@ -909,8 +896,7 @@ static void test_sequence_length_initial_range() {
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_default_value"));
+        check_invalid_compile_9B1(r, "invalid_default_value");
     }
     // MAX+1 fails
     {
@@ -924,8 +910,7 @@ static void test_sequence_length_initial_range() {
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_default_value"));
+        check_invalid_compile_9B1(r, "invalid_default_value");
     }
     TEST_PASS("sequence_length_initial_range");
 }
@@ -937,9 +922,7 @@ static void test_reject_hex_literal() {
   <template id="1" name="Msg"><uInt32 name="F"><constant>0xFF</constant></uInt32></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    CHECK(!r.ok);
-    CHECK(has_issue(r, "invalid_constant_value"));
-    CHECK(!r.compiled.valid());
+    check_invalid_compile_9B1(r, "invalid_constant_value");
     TEST_PASS("reject_hex_literal");
 }
 
@@ -1018,9 +1001,7 @@ static void test_non_ascii_in_ascii_field() {
             "<string name=\"F\"><constant>\xC2\xA2</constant></string>"
             "</template></templates>";
         auto r = compile_templates_from_string(xml);
-        CHECK(!r.ok);
-        CHECK(has_issue(r, "invalid_constant_value"));
-        CHECK(!r.compiled.valid());
+        check_invalid_compile_9B1(r, "invalid_constant_value");
     }
     TEST_PASS("non_ascii_in_ascii_field");
 }
@@ -1033,9 +1014,7 @@ static void test_invalid_unicode_surrogate() {
         "<unicode name=\"F\"><constant>\xED\xA0\x80</constant></unicode>"
         "</template></templates>";
     auto r = compile_templates_from_string(xml);
-    CHECK(!r.ok);
-    CHECK(has_issue(r, "invalid_constant_value"));
-    CHECK(!r.compiled.valid());
+    check_invalid_compile_9B1(r, "invalid_constant_value");
     TEST_PASS("invalid_unicode_surrogate");
 }
 
@@ -1048,9 +1027,7 @@ static void test_oversized_static_value() {
         "<string name=\"F\"><constant>" + big + "</constant></string>"
         "</template></templates>";
     auto r = compile_templates_from_string(xml);
-    CHECK(!r.ok);
-    CHECK(has_issue(r, "invalid_constant_value"));
-    CHECK(!r.compiled.valid());
+    check_invalid_compile_9B1(r, "invalid_constant_value");
     TEST_PASS("oversized_static_value");
 }
 
