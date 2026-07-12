@@ -2163,6 +2163,381 @@ static void test_9B2_xmlns_not_ordinary_attribute() {
     TEST_PASS("9B2_xmlns_not_ordinary_attribute");
 }
 
+// === 9B2 phase 3 tests ===
+
+// Test 1: Each caller limit above its hard ceiling returns compile_limit_exceeds_hard_ceiling
+static void test_hard_ceiling_max_templates() {
+    CompileLimits lim;
+    lim.max_templates = 4097;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    check_invalid_compile_9B2(r, "compile_limit_exceeds_hard_ceiling");
+    TEST_PASS("hard_ceiling_max_templates");
+}
+
+static void test_hard_ceiling_max_fields() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 65536;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    check_invalid_compile_9B2(r, "compile_limit_exceeds_hard_ceiling");
+    TEST_PASS("hard_ceiling_max_fields");
+}
+
+static void test_hard_ceiling_max_nesting() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 33;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    check_invalid_compile_9B2(r, "compile_limit_exceeds_hard_ceiling");
+    TEST_PASS("hard_ceiling_max_nesting");
+}
+
+// Test 2: Exact hard-ceiling values are accepted using small XML
+static void test_hard_ceiling_exact_templates() {
+    CompileLimits lim;
+    lim.max_templates = 4096;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    TEST_PASS("hard_ceiling_exact_templates");
+}
+
+static void test_hard_ceiling_exact_fields() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 65535;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    TEST_PASS("hard_ceiling_exact_fields");
+}
+
+static void test_hard_ceiling_exact_nesting() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 32;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G">
+      <uInt32 name="F1"/>
+    </group>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    TEST_PASS("hard_ceiling_exact_nesting");
+}
+
+// Test 3: max_templates boundary succeeds exactly at limit and fails on next
+static void test_max_templates_boundary() {
+    CompileLimits lim;
+    lim.max_templates = 1;
+    // Exactly 1 template succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.size(), 1u);
+    }
+    // 2 templates fails with excessive_templates
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg1"><uInt32 name="F1"/></template>
+  <template id="2" name="Msg2"><uInt32 name="F2"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_templates");
+    }
+    TEST_PASS("max_templates_boundary");
+}
+
+// Test 3b: max_templates counts encountered templates including invalid ones
+static void test_max_templates_includes_invalid() {
+    CompileLimits lim;
+    lim.max_templates = 1;
+    // First template is invalid (missing id), second exceeds budget
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template name="NoId"><uInt32 name="F1"/></template>
+  <template id="2" name="Msg"><uInt32 name="F2"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "excessive_templates"));
+    }
+    // First template invalid (duplicate id), second exceeds budget
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="A"><uInt32 name="F1"/></template>
+  <template id="1" name="B"><uInt32 name="F2"/></template>
+  <template id="3" name="C"><uInt32 name="F3"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(!r.ok);
+        CHECK(has_issue(r, "excessive_templates"));
+    }
+    TEST_PASS("max_templates_includes_invalid");
+}
+
+// Test 4: max_fields_per_template boundary succeeds at limit, fails on next scalar
+static void test_max_fields_boundary_scalar() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    // Exactly 1 field succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.templates()[0].fields.size(), 1u);
+    }
+    // 2 fields fails with excessive_fields
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <uInt32 name="F2"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    TEST_PASS("max_fields_boundary_scalar");
+}
+
+// Test 5: Field accounting includes nested group/sequence descendants and sequence <length>
+static void test_field_accounting_nested() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 3;
+    // sequence + length + 1 entry = 3 fields exactly
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // sequence + length + 2 entries = 4 fields exceeds limit
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E1"/>
+      <uInt32 name="E2"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    // group + 1 child = 2 fields, plus scalar = 3 exactly
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <group name="G">
+      <uInt32 name="G1"/>
+    </group>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // group + 2 children + scalar = 4 exceeds limit
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <group name="G">
+      <uInt32 name="G1"/>
+      <uInt32 name="G2"/>
+    </group>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    TEST_PASS("field_accounting_nested");
+}
+
+// Test 6: Prohibited composite node rejected before descending into subtree
+static void test_composite_rejected_before_subtree() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 1;
+    // Group at depth 1 (inside template at depth 0) with invalid child inside
+    // excessive_nesting should fire, NOT the unknown_element from the subtree
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G">
+      <group name="Inner">
+        <bogusWidget name="X"/>
+      </group>
+    </group>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "excessive_nesting"));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("composite_rejected_before_subtree");
+}
+
+// Test 7: Nesting succeeds at configured boundary, rejects first descendant beyond
+static void test_nesting_boundary() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 1;
+    // depth 0 (template) + depth 1 (group/sequence) = ok
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G">
+      <uInt32 name="F1"/>
+    </group>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // depth 0 + depth 1 + depth 2 (nested group) = excessive_nesting
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <group name="G">
+      <group name="Inner">
+        <uInt32 name="F1"/>
+      </group>
+    </group>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_nesting");
+    }
+    TEST_PASS("nesting_boundary");
+}
+
+// Test 8: Decimal counts as exactly one field for the budget
+static void test_decimal_field_budget_count() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 2;
+    // decimal + scalar = 2 fields exactly
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D"/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.templates()[0].fields.size(), 2u);
+        CHECK(r.compiled.templates()[0].fields[0].is_decimal);
+        CHECK_EQ(r.compiled.templates()[0].fields[1].name, "F1");
+    }
+    // decimal + 2 scalars = 3 fields exceeds limit
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D"/>
+    <uInt32 name="F1"/>
+    <uInt32 name="F2"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    TEST_PASS("decimal_field_budget_count");
+}
+
+// Test 9: Mixed scalar + decimal + group + sequence/length indices contiguous, no decimal gap
+static void test_mixed_field_index_contiguous() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="A"/>
+    <decimal name="B"/>
+    <group name="C">
+      <uInt32 name="C1"/>
+    </group>
+    <sequence name="D">
+      <length name="DL"/>
+      <uInt32 name="D1"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    const auto& fields = r.compiled.templates()[0].fields;
+    CHECK_EQ(fields.size(), 4u);
+    // Decimal now counts as 1 (no gap), indices are contiguous
+    CHECK_EQ(fields[0].index, 0u);  // uInt32 A
+    CHECK_EQ(fields[1].index, 1u);  // decimal B
+    CHECK_EQ(fields[2].index, 2u);  // group C
+    CHECK_EQ(fields[3].index, 4u);  // sequence D (after group child C1 at 3)
+    CHECK(fields[1].is_decimal);
+    CHECK(fields[2].has_children);
+    CHECK_EQ(fields[2].children.size(), 1u);
+    CHECK_EQ(fields[2].children[0].index, 3u);  // C1
+    CHECK(fields[3].is_sequence);
+    CHECK_EQ(fields[3].children.size(), 2u); // length + entry
+    CHECK_EQ(fields[3].children[0].index, 5u);  // DL (length)
+    CHECK_EQ(fields[3].children[1].index, 6u);  // D1 (entry)
+    TEST_PASS("mixed_field_index_contiguous");
+}
+
 int main() {
     test_valid_compile();
     test_duplicate_template_id();
@@ -2270,6 +2645,21 @@ int main() {
     test_9B2_split_cdata_concatenation();
     test_9B2_value_with_later_cdata_ambiguous();
     test_9B2_xmlns_not_ordinary_attribute();
+    // 9B2 phase 3 compiler accounting tests
+    test_hard_ceiling_max_templates();
+    test_hard_ceiling_max_fields();
+    test_hard_ceiling_max_nesting();
+    test_hard_ceiling_exact_templates();
+    test_hard_ceiling_exact_fields();
+    test_hard_ceiling_exact_nesting();
+    test_max_templates_boundary();
+    test_max_templates_includes_invalid();
+    test_max_fields_boundary_scalar();
+    test_field_accounting_nested();
+    test_composite_rejected_before_subtree();
+    test_nesting_boundary();
+    test_decimal_field_budget_count();
+    test_mixed_field_index_contiguous();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }

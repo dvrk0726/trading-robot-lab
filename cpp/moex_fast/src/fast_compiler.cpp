@@ -766,7 +766,7 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
                                   const std::string& template_name, CompileCtx& ctx,
                                   const std::string& parent_path, bool has_pmap_bit) {
     CompiledField f;
-    f.index = field_index++;
+    f.index = field_index;
     f.name = node.attribute("name").as_string("");
     f.wire_type = DecWireType::Decimal;
     f.is_decimal = true;
@@ -936,7 +936,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
                           const std::string& template_name, CompileCtx& ctx,
                           const std::string& parent_path, std::uint32_t nesting_depth) {
     CompiledField f;
-    f.index = field_index++;
+    f.index = field_index - 1;  // index already pre-allocated by caller
     f.name = node.attribute("name").as_string("");
     std::string elem_name = node.name();
 
@@ -980,7 +980,8 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     }
 
     if (elem_name == "decimal") {
-        return parse_decimal_field(node, field_index, template_name, ctx, parent_path, f.has_pmap_bit);
+        std::uint32_t decimal_index = field_index - 1;
+        return parse_decimal_field(node, decimal_index, template_name, ctx, parent_path, f.has_pmap_bit);
     }
 
     // Validate field attributes (non-decimal fields)
@@ -996,6 +997,13 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     }
 
     if (elem_name == "sequence") {
+        // D. Nesting accounting: reject before descending into subtree
+        if (nesting_depth + 1 > ctx.limits.max_nesting_depth) {
+            ctx.error("excessive_nesting",
+                      "Nesting depth exceeds limit at " + field_path, field_path);
+            return f;
+        }
+
         f.wire_type = DecWireType::Sequence;
         f.is_sequence = true;
         f.has_pmap_bit = true;
@@ -1019,6 +1027,13 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
             // Validate length attributes
             static const std::set<std::string> length_attrs = {"id", "name"};
             validate_element_attributes(length_node, length_attrs, ctx, field_path + ".length");
+
+            // C. Budget check for length child before allocation
+            if (field_index >= ctx.limits.max_fields_per_template) {
+                ctx.error("excessive_fields",
+                          "Field count exceeds limit in template " + template_name);
+                return f;
+            }
 
             f.length_op.kind = OpKind::None;
             f.length_field_index = field_index;
@@ -1088,6 +1103,13 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     }
 
     if (elem_name == "group") {
+        // D. Nesting accounting: reject before descending into subtree
+        if (nesting_depth + 1 > ctx.limits.max_nesting_depth) {
+            ctx.error("excessive_nesting",
+                      "Nesting depth exceeds limit at " + field_path, field_path);
+            return f;
+        }
+
         f.wire_type = DecWireType::Group;
         f.has_children = true;
         f.has_pmap_bit = !f.is_mandatory;
@@ -1205,13 +1227,17 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
             continue;
         }
 
-        if (nesting_depth > ctx.limits.max_nesting_depth) {
-            ctx.error("excessive_nesting",
-                      "Nesting depth exceeds limit at " + parent_path, parent_path);
+        // C. Early field/node accounting: check budget before allocating
+        if (field_index >= ctx.limits.max_fields_per_template) {
+            ctx.error("excessive_fields",
+                      "Field count exceeds limit in template " + template_name);
             return;
         }
+        field_index++;
 
-        fields.push_back(parse_field(child, field_index, template_name, ctx, parent_path, nesting_depth));
+        auto field = parse_field(child, field_index, template_name, ctx, parent_path, nesting_depth);
+        if (ctx.has_errors()) return;
+        fields.push_back(std::move(field));
     }
 }
 
@@ -1241,6 +1267,24 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
     CompileCtx ctx;
     ctx.limits = limits;
 
+    // A. Hard ceiling validation
+    if (limits.max_templates > 4096) {
+        ctx.error("compile_limit_exceeds_hard_ceiling",
+                  "max_templates exceeds hard ceiling of 4096");
+    }
+    if (limits.max_fields_per_template > 65535) {
+        ctx.error("compile_limit_exceeds_hard_ceiling",
+                  "max_fields_per_template exceeds hard ceiling of 65535");
+    }
+    if (limits.max_nesting_depth > 32) {
+        ctx.error("compile_limit_exceeds_hard_ceiling",
+                  "max_nesting_depth exceeds hard ceiling of 32");
+    }
+    if (ctx.has_errors()) {
+        draft.issues = std::move(ctx.issues);
+        return draft;
+    }
+
     draft.templates_sha256 = compute_sha256_bytes(
         reinterpret_cast<const std::uint8_t*>(xml_content.data()), xml_content.size());
     draft.templates_file_size = xml_content.size();
@@ -1265,11 +1309,13 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
         }
     }
 
+    std::uint32_t template_count = 0;
     for (auto tmpl : root.children("template")) {
-        if (draft.templates.size() >= limits.max_templates) {
+        if (template_count >= limits.max_templates) {
             ctx.error("excessive_templates", "Template count exceeds limit");
             break;
         }
+        template_count++;
 
         CompiledTemplate ct;
 
@@ -1323,11 +1369,6 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
 
         std::uint32_t field_index = 0;
         parse_fields(tmpl, ct.fields, ct.name, ctx, "", 0, field_index, false);
-
-        if (field_index > limits.max_fields_per_template) {
-            ctx.error("excessive_fields",
-                      "Field count exceeds limit in template " + std::to_string(ct.id));
-        }
 
         ct.total_pmap_bits = count_pmap_bits(ct.fields);
 
