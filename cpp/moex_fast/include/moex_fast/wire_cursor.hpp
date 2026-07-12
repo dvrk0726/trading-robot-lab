@@ -40,10 +40,11 @@ public:
     DecodeStatus read_stopbit_i64(std::int64_t& out);
 
     // Nullable integer forms (normative FIX FAST 1.1, section 6.3.2)
-    // 0x00 first byte => null (consuming 1 byte).
-    // Otherwise, stop-bit decode then value = decoded - 1 (offset encoding).
-    // For unsigned: decoded must be >= 1 (0x80 alone is non-canonical).
-    // For signed: decoded 0 => value -1 (valid).
+    // Nullable u32/i32: NULL wire is stop-bit 0 ([0x80]), not literal byte 0x00.
+    //   u32: raw 0 = NULL; raw 1..2^32 -> value = raw - 1; raw > 2^32 overflow.
+    //   i32: raw 0 = NULL; raw < 0 unchanged; raw > 0 -> value = raw - 1.
+    //   Only non-negative signed values use the +1 offset.
+    // Nullable u64/i64: 0x00 first byte => null (1 byte); otherwise offset encoding.
     DecodeStatus read_nullable_u32(std::uint32_t& out, bool& is_null);
     DecodeStatus read_nullable_u64(std::uint64_t& out, bool& is_null);
     DecodeStatus read_nullable_i32(std::int32_t& out, bool& is_null);
@@ -70,12 +71,12 @@ public:
 
     // Unicode string: length-prefixed stop-bit uInt32, then that many bytes of UTF-8.
     // Strict UTF-8 validation (no overlong, no surrogates, no > U+10FFFF).
-    // Nullable: length encoded as nullable uInt32 (0x00 => null, no body bytes).
+    // Nullable: length encoded as nullable uInt32 (wire [0x80] => null, no body bytes).
     DecodeStatus read_unicode_string(std::string& out, std::size_t max_bytes = 1024 * 1024);
     DecodeStatus read_nullable_unicode(std::string& out, bool& is_null, std::size_t max_bytes = 1024 * 1024);
 
     // Byte vector: length-prefixed stop-bit uInt32, then that many raw bytes.
-    // Nullable: length encoded as nullable uInt32 (0x00 => null, no body bytes).
+    // Nullable: length encoded as nullable uInt32 (wire [0x80] => null, no body bytes).
     DecodeStatus read_byte_vector(std::vector<std::uint8_t>& out, std::size_t max_bytes = 1024 * 1024);
     DecodeStatus read_nullable_byte_vector(std::vector<std::uint8_t>& out, bool& is_null, std::size_t max_bytes = 1024 * 1024);
 

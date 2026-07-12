@@ -229,10 +229,10 @@ static void test_stopbit_i32() {
         CHECK_BYTES(actual, expected);
     }
     // INT32_MIN (-2147483648 = 0x80000000) -> 5 bytes
-    // 33 bits 2's complement: 5 groups
-    // raw=0x80000000: g4=0x08, g3=0x00, g2=0x00, g1=0x00, g0=0x80
+    // 35-bit 2's complement sign-extended: groups MSB first
+    // raw=0x780000000: g4=0x78, g3=0x00, g2=0x00, g1=0x00, g0=0x80
     {
-        byte_vec expected{0x08, 0x00, 0x00, 0x00, 0x80};
+        byte_vec expected{0x78, 0x00, 0x00, 0x00, 0x80};
         byte_vec actual; encode_stopbit_i32(actual, -2147483647 - 1);
         CHECK_BYTES(actual, expected);
     }
@@ -258,9 +258,9 @@ static void test_stopbit_i64() {
 
 // --- Nullable uInt32 ---
 static void test_nullable_u32() {
-    // Null -> 0x00
+    // Null -> [80] (stop-bit 0)
     {
-        byte_vec expected{0x00};
+        byte_vec expected{0x80};
         byte_vec actual; encode_nullable_u32(actual, 0u, true);
         CHECK_BYTES(actual, expected);
     }
@@ -280,6 +280,12 @@ static void test_nullable_u32() {
     {
         byte_vec expected{0x01, 0x80};
         byte_vec actual; encode_nullable_u32(actual, 127u, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // UINT32_MAX -> stopbit(2^32) = 0x10 0x00 0x00 0x00 0x80
+    {
+        byte_vec expected{0x10, 0x00, 0x00, 0x00, 0x80};
+        byte_vec actual; encode_nullable_u32(actual, 0xFFFFFFFFu, false);
         CHECK_BYTES(actual, expected);
     }
     TEST_PASS("nullable_u32");
@@ -304,9 +310,9 @@ static void test_nullable_u64() {
 
 // --- Nullable int32 ---
 static void test_nullable_i32() {
-    // Null -> 0x00
+    // Null -> [80] (stop-bit 0)
     {
-        byte_vec expected{0x00};
+        byte_vec expected{0x80};
         byte_vec actual; encode_nullable_i32(actual, 0, true);
         CHECK_BYTES(actual, expected);
     }
@@ -316,16 +322,28 @@ static void test_nullable_i32() {
         byte_vec actual; encode_nullable_i32(actual, 0, false);
         CHECK_BYTES(actual, expected);
     }
-    // Value -1 -> stopbit(-1+1) = stopbit(0) = 0x80
+    // Value -1 -> negative, encoded unchanged as stopbit(-1) = 0xFF
     {
-        byte_vec expected{0x80};
+        byte_vec expected{0xFF};
         byte_vec actual; encode_nullable_i32(actual, -1, false);
         CHECK_BYTES(actual, expected);
     }
-    // Value 1 -> stopbit(2) = 0x82
+    // Value 1 -> stopbit(1+1) = stopbit(2) = 0x82
     {
         byte_vec expected{0x82};
         byte_vec actual; encode_nullable_i32(actual, 1, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // INT32_MIN -> negative, unchanged, stopbit(INT32_MIN) = [78 00 00 00 80]
+    {
+        byte_vec expected{0x78, 0x00, 0x00, 0x00, 0x80};
+        byte_vec actual; encode_nullable_i32(actual, -2147483647 - 1, false);
+        CHECK_BYTES(actual, expected);
+    }
+    // INT32_MAX -> non-negative, stopbit(INT32_MAX+1) = stopbit(2^31) = [08 00 00 00 80]
+    {
+        byte_vec expected{0x08, 0x00, 0x00, 0x00, 0x80};
+        byte_vec actual; encode_nullable_i32(actual, 2147483647, false);
         CHECK_BYTES(actual, expected);
     }
     TEST_PASS("nullable_i32");
@@ -403,9 +421,9 @@ static void test_unicode_string() {
         byte_vec actual; encode_unicode_string(actual, "A");
         CHECK_BYTES(actual, expected);
     }
-    // Nullable: null -> 0x00
+    // Nullable: null -> [80] (nullable u32 null)
     {
-        byte_vec expected{0x00};
+        byte_vec expected{0x80};
         byte_vec actual; encode_nullable_unicode(actual, "", true);
         CHECK_BYTES(actual, expected);
     }
@@ -439,9 +457,9 @@ static void test_byte_vector() {
         byte_vec actual; encode_byte_vector(actual, data);
         CHECK_BYTES(actual, expected);
     }
-    // Nullable: null -> 0x00
+    // Nullable: null -> [80] (nullable u32 null)
     {
-        byte_vec expected{0x00};
+        byte_vec expected{0x80};
         byte_vec actual; encode_nullable_byte_vector(actual, {}, true);
         CHECK_BYTES(actual, expected);
     }
@@ -486,9 +504,9 @@ static void test_decimal() {
         byte_vec actual; encode_decimal(actual, -2, 12345, false, false);
         CHECK_BYTES(actual, expected);
     }
-    // Null decimal (nullable exponent) -> 0x00
+    // Null decimal (nullable exponent) -> [80] (nullable i32 null, no mantissa)
     {
-        byte_vec expected{0x00};
+        byte_vec expected{0x80};
         byte_vec actual; encode_null_decimal(actual);
         CHECK_BYTES(actual, expected);
     }

@@ -98,6 +98,7 @@ inline void encode_stopbit_u64(std::vector<std::uint8_t>& buf, std::uint64_t val
 // 7-bit groups. A positive value whose top payload bit is 1 needs an extra
 // sign-extension group; a negative value whose top payload bits are all 1
 // also needs an extra group.
+// Uses int64_t accumulator for proper sign extension to 35 bits.
 inline void encode_stopbit_i32(std::vector<std::uint8_t>& buf, std::int32_t val) {
     // Number of bits needed to represent val in 2's complement.
     int nbits;
@@ -113,11 +114,8 @@ inline void encode_stopbit_i32(std::vector<std::uint8_t>& buf, std::int32_t val)
         while (v < -1) { nbits++; v >>= 1; }
     }
     int ngroups = (nbits + 6) / 7;
-    // Emit from MSB group to LSB group.
-    // We need the value in a wide enough unsigned type to extract groups.
-    // For i32, 5 groups max (35 bits).
-    std::uint32_t raw;
-    std::memcpy(&raw, &val, 4);
+    // Sign-extend to 64 bits for proper group extraction beyond 32 bits.
+    std::int64_t raw = static_cast<std::int64_t>(val);
     for (int g = ngroups - 1; g >= 0; --g) {
         std::uint8_t byte = static_cast<std::uint8_t>((raw >> (g * 7)) & 0x7F);
         if (g == 0) byte |= 0x80;
@@ -147,12 +145,14 @@ inline void encode_stopbit_i64(std::vector<std::uint8_t>& buf, std::int64_t val)
 }
 
 // ---------- Nullable integer (offset-by-1 encoding) ----------
-// Nullable uInt32: null = 0x00; non-null value V = stopbit(V+1).
+// Nullable uInt32: NULL = stop-bit 0 ([0x80]); non-null value V = stopbit(V+1).
+// Widened to uint64_t to avoid wrap on UINT32_MAX+1.
 inline void encode_nullable_u32(std::vector<std::uint8_t>& buf, std::uint32_t val, bool is_null) {
     if (is_null) {
-        buf.push_back(0x00);
+        buf.push_back(0x80);
     } else {
-        encode_stopbit_u32(buf, val + 1);
+        std::uint64_t widened = static_cast<std::uint64_t>(val) + 1;
+        encode_stopbit_u64(buf, widened);
     }
 }
 
@@ -165,18 +165,16 @@ inline void encode_nullable_u64(std::vector<std::uint8_t>& buf, std::uint64_t va
     }
 }
 
-// Nullable int32: null = 0x00; non-null value V = stopbit(V+1).
+// Nullable int32: NULL = stop-bit 0 ([0x80]); negative values encoded unchanged;
+// non-negative values widened by +1. No UB/wrap.
 inline void encode_nullable_i32(std::vector<std::uint8_t>& buf, std::int32_t val, bool is_null) {
     if (is_null) {
-        buf.push_back(0x00);
+        buf.push_back(0x80);
+    } else if (val < 0) {
+        encode_stopbit_i32(buf, val);
     } else {
-        // V+1 as signed. For i32, this wraps correctly for INT32_MAX -> UINT32-ish,
-        // but FAST spec says the offset is arithmetic on the signed value encoded
-        // as unsigned stop-bit. We use the i32 stop-bit encoder with (val+1).
-        // Cast through unsigned to avoid UB on INT32_MAX+1.
-        std::int32_t shifted = static_cast<std::int32_t>(
-            static_cast<std::uint32_t>(val) + 1u);
-        encode_stopbit_i32(buf, shifted);
+        // Non-negative: encode val+1 as signed using int64 to avoid overflow.
+        encode_stopbit_i64(buf, static_cast<std::int64_t>(val) + 1);
     }
 }
 
@@ -213,12 +211,11 @@ inline void encode_unicode_string(std::vector<std::uint8_t>& buf, const std::str
 }
 
 // Nullable Unicode: length is nullable uInt32.
+// NULL [80] / empty [81] via corrected nullable u32 semantics.
 inline void encode_nullable_unicode(std::vector<std::uint8_t>& buf,
                                     const std::string& s, bool is_null) {
-    if (is_null) {
-        buf.push_back(0x00);
-    } else {
-        encode_stopbit_u32(buf, static_cast<std::uint32_t>(s.size()) + 1);
+    encode_nullable_u32(buf, static_cast<std::uint32_t>(s.size()), is_null);
+    if (!is_null) {
         buf.insert(buf.end(), s.begin(), s.end());
     }
 }
@@ -232,13 +229,12 @@ inline void encode_byte_vector(std::vector<std::uint8_t>& buf,
 }
 
 // Nullable byte vector: length is nullable uInt32.
+// NULL [80] / empty [81] via corrected nullable u32 semantics.
 inline void encode_nullable_byte_vector(std::vector<std::uint8_t>& buf,
                                         const std::vector<std::uint8_t>& data,
                                         bool is_null) {
-    if (is_null) {
-        buf.push_back(0x00);
-    } else {
-        encode_stopbit_u32(buf, static_cast<std::uint32_t>(data.size()) + 1);
+    encode_nullable_u32(buf, static_cast<std::uint32_t>(data.size()), is_null);
+    if (!is_null) {
         buf.insert(buf.end(), data.begin(), data.end());
     }
 }
@@ -263,9 +259,9 @@ inline void encode_decimal(std::vector<std::uint8_t>& buf,
     }
 }
 
-// Null decimal (nullable exponent).
+// Null decimal (nullable exponent). Exponent NULL [80], no mantissa consumed.
 inline void encode_null_decimal(std::vector<std::uint8_t>& buf) {
-    buf.push_back(0x00);  // nullable exponent = null
+    encode_nullable_i32(buf, 0, true);
 }
 
 }  // namespace fast_oracle

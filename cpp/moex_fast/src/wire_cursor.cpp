@@ -224,23 +224,53 @@ DecodeStatus WireCursor::read_stopbit_i64(std::int64_t& out) {
 }
 
 // --- Nullable unsigned 32 (FIX FAST 1.1, section 6.3.2) ---
-// 0x00 => null (1 byte). Otherwise: stop-bit decode, value = decoded - 1.
-// Decoded 0 (wire 0x80) is non-canonical for nullable unsigned.
+// NULL wire is stop-bit 0 ([0x80]), not literal byte 0x00.
+// Dedicated widened 35-bit unsigned decoding (max 5 bytes).
+// Raw domain 0..2^32: raw 0 = NULL; raw 1..2^32 -> value = raw - 1.
+// Canonical: multi-byte encoding must not fit in fewer bytes.
+// Cursor fully restored on any error; out/is_null untouched until success.
 DecodeStatus WireCursor::read_nullable_u32(std::uint32_t& out, bool& is_null) {
     std::size_t start = pos_;
-    if (pos_ >= size_) return DecodeStatus::NeedMoreData;
-    if (data_[pos_] == 0x00) {
-        pos_++;
-        is_null = true;
-        return DecodeStatus::Ok;
+    std::uint64_t raw = 0;
+    int bytes_read = 0;
+
+    for (int i = 0; i < 5; ++i) {
+        if (pos_ >= size_) { pos_ = start; return DecodeStatus::NeedMoreData; }
+        std::uint8_t b = data_[pos_++];
+        ++bytes_read;
+
+        std::uint64_t data_bits = static_cast<std::uint64_t>(b & 0x7Fu);
+        raw = (raw << 7) | data_bits;
+
+        if (b & 0x80u) {
+            // Stop bit found
+            // Canonical: multi-byte must not fit in fewer bytes
+            if (bytes_read > 1) {
+                std::size_t prev_bits = static_cast<std::size_t>(bytes_read - 1) * 7;
+                if (raw <= (1ull << prev_bits) - 1) {
+                    pos_ = start; return DecodeStatus::NonCanonicalEncoding;
+                }
+            }
+
+            // NULL: raw == 0
+            if (raw == 0) {
+                is_null = true;
+                return DecodeStatus::Ok;
+            }
+
+            // Overflow: raw > 2^32
+            if (raw > 0x100000000ull) {
+                pos_ = start; return DecodeStatus::IntegerOverflow;
+            }
+
+            // Value = raw - 1
+            out = static_cast<std::uint32_t>(raw - 1);
+            is_null = false;
+            return DecodeStatus::Ok;
+        }
     }
-    is_null = false;
-    std::uint32_t raw = 0;
-    DecodeStatus st = read_stopbit_u32(raw);
-    if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-    if (raw == 0) { pos_ = start; return DecodeStatus::NonCanonicalEncoding; }
-    out = raw - 1;
-    return DecodeStatus::Ok;
+
+    pos_ = start; return DecodeStatus::InvalidEncoding;  // no stop bit in 5 bytes
 }
 
 DecodeStatus WireCursor::read_nullable_u64(std::uint64_t& out, bool& is_null) {
@@ -260,26 +290,91 @@ DecodeStatus WireCursor::read_nullable_u64(std::uint64_t& out, bool& is_null) {
     return DecodeStatus::Ok;
 }
 
-// --- Nullable signed 32 (FIX FAST 1.1) ---
-// 0x00 => null (1 byte). Otherwise: stop-bit decode, value = decoded - 1.
+// --- Nullable signed 32 (FIX FAST 1.1, section 6.3.2) ---
+// NULL wire is stop-bit 0 ([0x80]), not literal byte 0x00.
+// Dedicated widened 35-bit signed decoding (max 5 bytes).
+// Raw domain [-2^31, 2^31]: raw 0 = NULL; raw < 0 unchanged; raw > 0 -> raw - 1.
+// Only non-negative signed values use the +1 offset.
+// Canonical: multi-byte encoding must not fit in fewer bytes.
+// Cursor fully restored on any error; out/is_null untouched until success.
 DecodeStatus WireCursor::read_nullable_i32(std::int32_t& out, bool& is_null) {
     std::size_t start = pos_;
-    if (pos_ >= size_) return DecodeStatus::NeedMoreData;
-    if (data_[pos_] == 0x00) {
-        pos_++;
-        is_null = true;
-        return DecodeStatus::Ok;
+    std::uint64_t raw = 0;
+    int bytes_read = 0;
+
+    for (int i = 0; i < 5; ++i) {
+        if (pos_ >= size_) { pos_ = start; return DecodeStatus::NeedMoreData; }
+        std::uint8_t b = data_[pos_++];
+        ++bytes_read;
+
+        std::uint64_t data_bits = static_cast<std::uint64_t>(b & 0x7Fu);
+        raw = (raw << 7) | data_bits;
+
+        if (b & 0x80u) {
+            // Stop bit found
+            int sig_bits = bytes_read * 7;
+
+            // Sign extend to 35 bits
+            if (sig_bits < 35) {
+                std::uint64_t sign_bit = 1ull << (sig_bits - 1);
+                if (raw & sign_bit) {
+                    raw |= ~((1ull << sig_bits) - 1);
+                }
+            }
+            static constexpr std::uint64_t mask35 = (1ull << 35) - 1;
+            raw &= mask35;
+
+            // Canonical: value must not fit in fewer bytes
+            if (bytes_read > 1) {
+                int prev_bits = (bytes_read - 1) * 7;
+                if (prev_bits >= 1) {
+                    std::uint64_t truncated = raw & ((1ull << prev_bits) - 1);
+                    std::uint64_t sign_prev = 1ull << (prev_bits - 1);
+                    if (truncated & sign_prev) {
+                        truncated |= ~((1ull << prev_bits) - 1);
+                    }
+                    truncated &= mask35;
+                    if (truncated == raw) {
+                        pos_ = start; return DecodeStatus::NonCanonicalEncoding;
+                    }
+                }
+            }
+
+            // Interpret as 35-bit signed
+            std::int64_t signed_raw;
+            if (raw & (1ull << 34)) {
+                signed_raw = static_cast<std::int64_t>(raw | ~mask35);
+            } else {
+                signed_raw = static_cast<std::int64_t>(raw);
+            }
+
+            // NULL: raw == 0
+            if (signed_raw == 0) {
+                is_null = true;
+                return DecodeStatus::Ok;
+            }
+
+            // Domain check: [-2^31, 2^31]
+            std::int64_t value;
+            if (signed_raw < 0) {
+                if (signed_raw < -2147483648LL) {
+                    pos_ = start; return DecodeStatus::IntegerOverflow;
+                }
+                value = signed_raw;
+            } else {
+                if (signed_raw > 2147483648LL) {
+                    pos_ = start; return DecodeStatus::IntegerOverflow;
+                }
+                value = signed_raw - 1;
+            }
+
+            out = static_cast<std::int32_t>(value);
+            is_null = false;
+            return DecodeStatus::Ok;
+        }
     }
-    is_null = false;
-    std::int32_t raw = 0;
-    DecodeStatus st = read_stopbit_i32(raw);
-    if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-    // value = decoded - 1 (signed). raw == INT32_MIN would underflow.
-    if (raw == std::numeric_limits<std::int32_t>::min()) {
-        pos_ = start; return DecodeStatus::IntegerOverflow;
-    }
-    out = raw - 1;
-    return DecodeStatus::Ok;
+
+    pos_ = start; return DecodeStatus::InvalidEncoding;  // no stop bit in 5 bytes
 }
 
 DecodeStatus WireCursor::read_nullable_i64(std::int64_t& out, bool& is_null) {

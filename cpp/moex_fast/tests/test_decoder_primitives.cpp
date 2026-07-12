@@ -2,6 +2,7 @@
 #include "test_check.hpp"
 #include <vector>
 #include <cstring>
+#include <limits>
 
 using namespace moex_fast;
 
@@ -219,9 +220,9 @@ static void test_stopbit_i64() {
 
 // --- Nullable integer tests (FIX FAST 1.1 offset encoding) ---
 static void test_nullable_u32() {
-    // Null: 0x00 byte
+    // Null: wire [80] (stop-bit 0)
     {
-        auto bytes = make_bytes({0x00});
+        auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
         std::uint32_t val = 999;
         bool is_null = false;
@@ -259,23 +260,59 @@ static void test_nullable_u32() {
         CHECK(!is_null);
         CHECK_EQ(val, 127u);
     }
-    // Non-canonical: 0x80 alone (stopbit(0)) for unsigned nullable
-    // This would mean value = 0 - 1 = UINT32_MAX, which is non-canonical
+    // UINT32_MAX: raw = 2^32, encoded as [10 00 00 00 80]
     {
-        auto bytes = make_bytes({0x80});
+        auto bytes = make_bytes({0x10, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u32(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, 0xFFFFFFFFu);
+    }
+    // Overflow: raw = 2^32+1 = [10 00 00 00 81]
+    {
+        auto bytes = make_bytes({0x10, 0x00, 0x00, 0x00, 0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u32(val, is_null) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overlong NULL: [00 80] (2 bytes for value that fits in 1)
+    {
+        auto bytes = make_bytes({0x00, 0x80});
         WireCursor c(bytes.data(), bytes.size());
         std::uint32_t val = 0;
         bool is_null = false;
         CHECK(c.read_nullable_u32(val, is_null) == DecodeStatus::NonCanonicalEncoding);
-        CHECK_EQ(c.position(), 0u); // cursor restored
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overlong raw 1: [00 81] (2 bytes for value that fits in 1)
+    {
+        auto bytes = make_bytes({0x00, 0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u32(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Truncated: [00] (no stop bit, NeedMoreData, cursor restored)
+    {
+        auto bytes = make_bytes({0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u32(val, is_null) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
     }
     TEST_PASS("nullable_u32");
 }
 
 static void test_nullable_i32() {
-    // Null: 0x00 byte
+    // Null: wire [80] (stop-bit 0)
     {
-        auto bytes = make_bytes({0x00});
+        auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
         std::int32_t val = 999;
         bool is_null = false;
@@ -292,16 +329,6 @@ static void test_nullable_i32() {
         CHECK(!is_null);
         CHECK_EQ(val, 0);
     }
-    // Non-null value -1: encoded as stopbit(-1+1) = stopbit(0) = 0x80
-    {
-        auto bytes = make_bytes({0x80});
-        WireCursor c(bytes.data(), bytes.size());
-        std::int32_t val = 999;
-        bool is_null = true;
-        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::Ok);
-        CHECK(!is_null);
-        CHECK_EQ(val, -1);
-    }
     // Non-null value 1: encoded as stopbit(2) = 0x82
     {
         auto bytes = make_bytes({0x82});
@@ -311,6 +338,90 @@ static void test_nullable_i32() {
         CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::Ok);
         CHECK(!is_null);
         CHECK_EQ(val, 1);
+    }
+    // Non-null value -1: negative, encoded unchanged as stopbit(-1) = 0xFF
+    {
+        auto bytes = make_bytes({0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 999;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, -1);
+    }
+    // INT32_MIN: raw = -2^31, encoded as [78 00 00 00 80]
+    {
+        auto bytes = make_bytes({0x78, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, std::numeric_limits<std::int32_t>::min());
+    }
+    // INT32_MAX: raw = 2^31, encoded as [08 00 00 00 80]
+    {
+        auto bytes = make_bytes({0x08, 0x00, 0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, std::numeric_limits<std::int32_t>::max());
+    }
+    // Overflow: raw = 2^31+1 = [08 00 00 00 81]
+    {
+        auto bytes = make_bytes({0x08, 0x00, 0x00, 0x00, 0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overflow: below INT32_MIN = [77 7F 7F 7F FF]
+    {
+        auto bytes = make_bytes({0x77, 0x7F, 0x7F, 0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::IntegerOverflow);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overlong NULL: [00 80] (2 bytes for value that fits in 1)
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overlong raw 1: [00 81]
+    {
+        auto bytes = make_bytes({0x00, 0x81});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Overlong signed -1: [7F FF] (fits in 1 byte as [FF])
+    {
+        auto bytes = make_bytes({0x7F, 0xFF});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
+    // Truncated: [00] (no stop bit, NeedMoreData, cursor restored)
+    {
+        auto bytes = make_bytes({0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::int32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_i32(val, is_null) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
     }
     TEST_PASS("nullable_i32");
 }
@@ -453,9 +564,9 @@ static void test_decimal() {
         CHECK_EQ(exp, 2);
         CHECK_EQ(man, 5000);
     }
-    // Null decimal: exponent starts with 0x00 (nullable exponent)
+    // Null decimal: exponent starts with wire [80] (nullable i32 null)
     {
-        auto bytes = make_bytes({0x00});
+        auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
         std::int32_t exp = 99;
         std::int64_t man = 99;
@@ -489,9 +600,9 @@ static void test_byte_vector() {
         CHECK_EQ(val[1], 0xBB);
         CHECK_EQ(val[2], 0xCC);
     }
-    // Nullable: null (0x00 length)
+    // Nullable: null (wire [80] for nullable u32 null)
     {
-        auto bytes = make_bytes({0x00});
+        auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
         std::vector<std::uint8_t> val;
         bool is_null = false;
@@ -531,9 +642,9 @@ static void test_unicode_string() {
         CHECK(c.read_unicode_string(val) == DecodeStatus::Ok);
         CHECK_EQ(val, "A");
     }
-    // Nullable: null (length = nullable 0x00)
+    // Nullable: null (length = nullable wire [80])
     {
-        auto bytes = make_bytes({0x00});
+        auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
         std::string val;
         bool is_null = false;

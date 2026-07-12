@@ -128,16 +128,29 @@ static void test_string_limit() {
     TEST_PASS("string_limit");
 }
 
-// Test: nullable unsigned overflow (0x80 alone is non-canonical for nullable)
-static void test_nullable_u32_non_canonical() {
-    auto bytes = hex("80");
-    WireCursor c(bytes.data(), bytes.size());
-    std::uint32_t val = 0;
-    bool is_null = false;
-    CHECK(c.read_nullable_u32(val, is_null) == DecodeStatus::NonCanonicalEncoding);
-    CHECK_EQ(c.position(), 0u);  // cursor restored
+// Test: nullable u32 NULL [80] and overlong [00 80]
+static void test_nullable_u32_null_and_overlong() {
+    // [80] is NULL (stop-bit 0)
+    {
+        auto bytes = hex("80");
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u32(val, is_null) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(c.position(), 1u);
+    }
+    // [00 80] is non-canonical (2-byte encoding of raw=0, fits in 1 byte)
+    {
+        auto bytes = hex("0080");
+        WireCursor c(bytes.data(), bytes.size());
+        std::uint32_t val = 0;
+        bool is_null = false;
+        CHECK(c.read_nullable_u32(val, is_null) == DecodeStatus::NonCanonicalEncoding);
+        CHECK_EQ(c.position(), 0u);
+    }
 
-    TEST_PASS("nullable_u32_non_canonical");
+    TEST_PASS("nullable_u32_null_and_overlong");
 }
 
 // Test: signed integer max-width validation
@@ -224,7 +237,7 @@ int main() {
     test_hard_ceilings();
     test_pmap_limit();
     test_string_limit();
-    test_nullable_u32_non_canonical();
+    test_nullable_u32_null_and_overlong();
     test_signed_max_width();
     test_cursor_restore();
     test_session_independence();
