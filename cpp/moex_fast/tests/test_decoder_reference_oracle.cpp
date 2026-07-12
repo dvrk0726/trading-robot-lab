@@ -17,6 +17,7 @@ using fast_oracle::encode_nullable_u64;
 using fast_oracle::encode_nullable_i32;
 using fast_oracle::encode_nullable_i64;
 using fast_oracle::encode_ascii_string;
+using fast_oracle::encode_nullable_ascii;
 using fast_oracle::encode_unicode_string;
 using fast_oracle::encode_nullable_unicode;
 using fast_oracle::encode_byte_vector;
@@ -467,6 +468,35 @@ static void test_ascii_string() {
     TEST_PASS("ascii_string");
 }
 
+// --- Nullable ASCII ---
+static void test_nullable_ascii() {
+    // NULL -> [80]
+    {
+        byte_vec expected{0x80};
+        byte_vec actual; encode_nullable_ascii(actual, "", true);
+        CHECK_BYTES(actual, expected);
+    }
+    // Empty (non-null) -> [00 80]
+    {
+        byte_vec expected{0x00, 0x80};
+        byte_vec actual; encode_nullable_ascii(actual, "", false);
+        CHECK_BYTES(actual, expected);
+    }
+    // "A" -> [C1]
+    {
+        byte_vec expected{0xC1};
+        byte_vec actual; encode_nullable_ascii(actual, "A", false);
+        CHECK_BYTES(actual, expected);
+    }
+    // "AB" -> [41 C2]
+    {
+        byte_vec expected{0x41, 0xC2};
+        byte_vec actual; encode_nullable_ascii(actual, "AB", false);
+        CHECK_BYTES(actual, expected);
+    }
+    TEST_PASS("nullable_ascii");
+}
+
 // --- Unicode string ---
 static void test_unicode_string() {
     // Empty -> length stopbit(0)=0x80
@@ -688,6 +718,7 @@ int main() {
     test_nullable_i32();
     test_nullable_i64();
     test_ascii_string();
+    test_nullable_ascii();
     test_unicode_string();
     test_byte_vector();
     test_decimal();

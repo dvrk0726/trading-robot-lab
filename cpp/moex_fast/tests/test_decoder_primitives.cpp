@@ -994,46 +994,91 @@ static void test_presence_map() {
 
 // --- ASCII string tests (FIX FAST 1.1 stop-bit encoding) ---
 static void test_ascii_string() {
-    // Empty string: 0x80 (stop bit, data=0)
+    // Mandatory empty: [80]
     {
         auto bytes = make_bytes({0x80});
         WireCursor c(bytes.data(), bytes.size());
-        std::string val;
+        std::string val = "sentinel";
         CHECK(c.read_ascii_string(val) == DecodeStatus::Ok);
         CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
         CHECK(c.at_end());
     }
-    // "A" -> 0xC1 (data=0x41, stop=1)
+    // "A" -> [C1]
     {
         auto bytes = make_bytes({0xC1});
         WireCursor c(bytes.data(), bytes.size());
         std::string val;
         CHECK(c.read_ascii_string(val) == DecodeStatus::Ok);
         CHECK_EQ(val, "A");
+        CHECK_EQ(c.position(), 1u);
     }
-    // "Hi" -> 0x48 0xE9 (data='H', stop=0; data='i'=0x69, stop=1)
-    {
-        auto bytes = make_bytes({0x48, 0xE9});
-        WireCursor c(bytes.data(), bytes.size());
-        std::string val;
-        CHECK(c.read_ascii_string(val) == DecodeStatus::Ok);
-        CHECK_EQ(val, "Hi");
-    }
-    // "AB" -> 0x41 0xC2 (data='A', stop=0; data='B'=0x42, stop=1)
+    // "AB" -> [41 C2]
     {
         auto bytes = make_bytes({0x41, 0xC2});
         WireCursor c(bytes.data(), bytes.size());
         std::string val;
         CHECK(c.read_ascii_string(val) == DecodeStatus::Ok);
         CHECK_EQ(val, "AB");
+        CHECK_EQ(c.position(), 2u);
     }
-    // Unterminated: no stop bit
+    // 0x7F payload -> [FF] (max ASCII character)
     {
-        auto bytes = make_bytes({0x48, 0x69});
+        auto bytes = make_bytes({0xFF});
         WireCursor c(bytes.data(), bytes.size());
         std::string val;
+        CHECK(c.read_ascii_string(val) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 1u);
+        CHECK_EQ(static_cast<std::uint8_t>(val[0]), 0x7Fu);
+        CHECK_EQ(c.position(), 1u);
+    }
+    // Exact cursor consumption: [C1] then sentinel byte 0xAA
+    {
+        auto bytes = make_bytes({0xC1, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        CHECK(c.read_ascii_string(val) == DecodeStatus::Ok);
+        CHECK_EQ(val, "A");
+        CHECK_EQ(c.position(), 1u);
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xAAu);
+    }
+    // Invalid: [00 80] - zero payload in continuation position
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Invalid: [00 C1] - zero payload in continuation position
+    {
+        auto bytes = make_bytes({0x00, 0xC1});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Invalid: [41 80] - zero payload on stop byte after characters
+    {
+        auto bytes = make_bytes({0x41, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Unterminated: no stop bit [41]
+    {
+        auto bytes = make_bytes({0x41});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
         CHECK(c.read_ascii_string(val) == DecodeStatus::NeedMoreData);
-        CHECK_EQ(c.position(), 0u); // cursor restored
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
     }
     // Empty input
     {
@@ -1041,7 +1086,169 @@ static void test_ascii_string() {
         std::string val;
         CHECK(c.read_ascii_string(val) == DecodeStatus::NeedMoreData);
     }
+    // Limit=0: empty succeeds
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val, 0) == DecodeStatus::Ok);
+        CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
+    }
+    // Limit=0: non-empty returns LimitExceeded
+    {
+        auto bytes = make_bytes({0xC1});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val, 0) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Limit=1: "A" succeeds
+    {
+        auto bytes = make_bytes({0xC1});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        CHECK(c.read_ascii_string(val, 1) == DecodeStatus::Ok);
+        CHECK_EQ(val, "A");
+    }
+    // Limit=1: "AB" returns LimitExceeded
+    {
+        auto bytes = make_bytes({0x41, 0xC2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val, 1) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
     TEST_PASS("ascii_string");
+}
+
+// --- Nullable ASCII tests ---
+static void test_nullable_ascii() {
+    // NULL: [80]
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = false;
+        CHECK(c.read_nullable_ascii(val, is_null) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(val, "sentinel");
+        CHECK_EQ(c.position(), 1u);
+    }
+    // Empty: [00 80]
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK(val.empty());
+        CHECK_EQ(c.position(), 2u);
+    }
+    // "A": [C1]
+    {
+        auto bytes = make_bytes({0xC1});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, "A");
+        CHECK_EQ(c.position(), 1u);
+    }
+    // "AB": [41 C2]
+    {
+        auto bytes = make_bytes({0x41, 0xC2});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, "AB");
+        CHECK_EQ(c.position(), 2u);
+    }
+    // Exact cursor consumption: "A" [C1] then sentinel 0xAA
+    {
+        auto bytes = make_bytes({0xC1, 0xAA});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        bool is_null = false;
+        CHECK(c.read_nullable_ascii(val, is_null) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK_EQ(val, "A");
+        CHECK_EQ(c.position(), 1u);
+        std::uint8_t sentinel = 0;
+        CHECK(c.read_byte(sentinel) == DecodeStatus::Ok);
+        CHECK_EQ(sentinel, 0xAAu);
+    }
+    // Truncated: [00] - NeedMoreData
+    {
+        auto bytes = make_bytes({0x00});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null) == DecodeStatus::NeedMoreData);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // Invalid: [00 C1] - malformed preamble
+    {
+        auto bytes = make_bytes({0x00, 0xC1});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // Invalid: [00 00 80] - malformed preamble
+    {
+        auto bytes = make_bytes({0x00, 0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null) == DecodeStatus::InvalidEncoding);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    // Limit=0: NULL succeeds
+    {
+        auto bytes = make_bytes({0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = false;
+        CHECK(c.read_nullable_ascii(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Limit=0: empty succeeds
+    {
+        auto bytes = make_bytes({0x00, 0x80});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK(val.empty());
+    }
+    // Limit=0: non-empty returns LimitExceeded
+    {
+        auto bytes = make_bytes({0xC1});
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null, 0) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
+    TEST_PASS("nullable_ascii");
 }
 
 // --- Decimal tests ---
@@ -1188,6 +1395,7 @@ int main() {
     test_nullable_i64();
     test_presence_map();
     test_ascii_string();
+    test_nullable_ascii();
     test_decimal();
     test_byte_vector();
     test_unicode_string();

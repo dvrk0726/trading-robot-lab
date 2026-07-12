@@ -663,40 +663,91 @@ DecodeStatus WireCursor::read_presence_map(std::size_t pmap_bits, std::vector<bo
 
 // --- ASCII string (FIX FAST 1.1, section 6.3.6) ---
 // Stop-bit encoded: each byte bit 7 = stop (1 = last), bits 6-0 = character.
-// Valid characters: 0x01..0x7F. Empty string: 0x80 (stop, data=0).
-// NOT null-terminated. Cursor restored on failure.
+// Valid characters: 0x01..0x7F (7-bit ASCII without NUL).
+// Empty string: exactly [80] (stop bit, data=0).
+// Zero payload is not a character and is valid only as the single-byte
+// mandatory empty representation. [00 80], [00 C1], [41 80] are InvalidEncoding.
+// max_bytes limits decoded characters, not wire bytes.
+// Cursor and output are atomic: on any failure both remain unchanged.
 DecodeStatus WireCursor::read_ascii_string(std::string& out, std::size_t max_bytes) {
     std::size_t start = pos_;
-    out.clear();
+    std::string tmp;
+    bool has_chars = false;
     while (pos_ < size_) {
         std::uint8_t b = data_[pos_++];
         std::uint8_t data_bits = b & 0x7Fu;
         bool stop = (b & 0x80u) != 0;
 
         if (stop) {
-            // Last byte: data bits are either a final character or empty terminator
             if (data_bits == 0) {
-                // Empty string or end after previous characters
+                if (has_chars) {
+                    // [41 80]: zero payload after characters is invalid
+                    pos_ = start; return DecodeStatus::InvalidEncoding;
+                }
+                // Empty string: [80]
+                out.clear();
                 return DecodeStatus::Ok;
             }
-            // Valid final character
-            if (out.size() >= max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
-            out.push_back(static_cast<char>(data_bits));
+            // Final character
+            if (tmp.size() >= max_bytes) {
+                pos_ = start; return DecodeStatus::LimitExceeded;
+            }
+            tmp.push_back(static_cast<char>(data_bits));
+            out = std::move(tmp);
             return DecodeStatus::Ok;
         }
 
-        // Continuation byte: data bits must be a valid character
+        // Continuation byte: zero data is not a valid character
         if (data_bits == 0) { pos_ = start; return DecodeStatus::InvalidEncoding; }
-        if (out.size() >= max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
-        out.push_back(static_cast<char>(data_bits));
+        if (tmp.size() >= max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
+        tmp.push_back(static_cast<char>(data_bits));
+        has_chars = true;
     }
     pos_ = start; return DecodeStatus::NeedMoreData;
 }
 
-// Nullable ASCII: same wire encoding. Null handled by operator/pmap.
+// --- Nullable ASCII (FIX FAST 1.1, section 6.3.6) ---
+// NULL=[80], empty=[00 80], non-empty same wire form as mandatory.
+// [00] is truncated nullable-empty preamble (NeedMoreData).
+// [00 C1] and [00 00 80] are InvalidEncoding.
+// NULL/empty consume zero characters; max_bytes=0 allows both.
+// On NULL: is_null=true, caller string unchanged.
+// On failure: cursor, out, and is_null unchanged.
 DecodeStatus WireCursor::read_nullable_ascii(std::string& out, bool& is_null, std::size_t max_bytes) {
+    std::size_t start = pos_;
+
+    if (pos_ >= size_) return DecodeStatus::NeedMoreData;
+
+    std::uint8_t first = data_[pos_++];
+
+    if (first == 0x80u) {
+        // NULL
+        is_null = true;
+        return DecodeStatus::Ok;
+    }
+
+    if (first == 0x00u) {
+        // Preamble for empty: need [00 80]
+        if (pos_ >= size_) { pos_ = start; return DecodeStatus::NeedMoreData; }
+        std::uint8_t second = data_[pos_++];
+        if (second == 0x80u) {
+            // Empty
+            out.clear();
+            is_null = false;
+            return DecodeStatus::Ok;
+        }
+        // [00 C1] or [00 00 80]: invalid
+        pos_ = start; return DecodeStatus::InvalidEncoding;
+    }
+
+    // Non-empty: rewind to start and delegate to mandatory reader
+    pos_ = start;
+    std::string tmp;
+    DecodeStatus st = read_ascii_string(tmp, max_bytes);
+    if (st != DecodeStatus::Ok) return st;
+    out = std::move(tmp);
     is_null = false;
-    return read_ascii_string(out, max_bytes);
+    return DecodeStatus::Ok;
 }
 
 // --- UTF-8 validation ---

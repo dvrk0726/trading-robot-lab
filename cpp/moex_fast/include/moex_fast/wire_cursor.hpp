@@ -64,13 +64,19 @@ public:
 
     // ASCII string: stop-bit encoded (FIX FAST 1.1, section 6.3.6).
     // Each byte: bit 7 = stop (1 = last), bits 6..0 = character (0x01..0x7F).
-    // Empty string: single byte 0x80 (stop bit, data=0).
-    // NOT null-terminated. 0x00 in data position is invalid except empty.
+    // Empty string: single byte [80] (stop bit, data=0).
+    // NOT null-terminated. 0x00 in data position is invalid except as the
+    // sole byte [80] for mandatory empty. [00 80], [00 C1], [41 80] invalid.
+    // max_bytes limits decoded characters, not wire bytes.
     // On failure cursor is unchanged (position restored).
     DecodeStatus read_ascii_string(std::string& out, std::size_t max_bytes = 1024 * 1024);
 
-    // Nullable ASCII: same wire encoding as mandatory.
-    // Null vs empty distinction handled at operator/pmap level.
+    // Nullable ASCII (FIX FAST 1.1, section 6.3.6).
+    // NULL=[80], empty=[00 80], non-empty same wire form as mandatory (A=[C1], AB=[41 C2]).
+    // [00 C1] and [00 00 80] are InvalidEncoding. [00] is truncated (NeedMoreData).
+    // NULL/empty consume zero characters and work at max_bytes=0.
+    // On NULL: is_null=true, caller string unchanged.
+    // On any failure: cursor, out, and is_null unchanged.
     DecodeStatus read_nullable_ascii(std::string& out, bool& is_null, std::size_t max_bytes = 1024 * 1024);
 
     // Unicode string: length-prefixed stop-bit uInt32, then that many bytes of UTF-8.

@@ -109,22 +109,76 @@ static void test_pmap_limit() {
     TEST_PASS("pmap_limit");
 }
 
-// Test: string size limit
+// Test: string size limit (mandatory and nullable ASCII)
 static void test_string_limit() {
-    WireCursor c(nullptr, 0);
-    // Test that max_bytes parameter is respected
-    std::string val;
-    // A 100-byte ASCII string with stop bit
-    std::vector<std::uint8_t> bytes(100, 0x41);
-    bytes.back() = 0xC1;  // stop bit on last byte
-
-    WireCursor c2(bytes.data(), bytes.size());
-    CHECK(c2.read_ascii_string(val, 50) == DecodeStatus::LimitExceeded);
-
-    WireCursor c3(bytes.data(), bytes.size());
-    CHECK(c3.read_ascii_string(val, 100) == DecodeStatus::Ok);
-    CHECK_EQ(val.size(), 100u);
-
+    // Mandatory: 100-char string, limit=50 -> LimitExceeded
+    {
+        std::vector<std::uint8_t> bytes(100, 0x41);
+        bytes.back() = 0xC1;  // stop bit on last byte
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val, 50) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Mandatory: 100-char string, limit=100 -> Ok
+    {
+        std::vector<std::uint8_t> bytes(100, 0x41);
+        bytes.back() = 0xC1;
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val;
+        CHECK(c.read_ascii_string(val, 100) == DecodeStatus::Ok);
+        CHECK_EQ(val.size(), 100u);
+    }
+    // Mandatory: limit=0, empty -> Ok
+    {
+        auto bytes = hex("80");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val, 0) == DecodeStatus::Ok);
+        CHECK(val.empty());
+        CHECK_EQ(c.position(), 1u);
+    }
+    // Mandatory: limit=0, non-empty -> LimitExceeded
+    {
+        auto bytes = hex("C1");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        CHECK(c.read_ascii_string(val, 0) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Nullable: NULL at limit=0 -> Ok, is_null=true
+    {
+        auto bytes = hex("80");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = false;
+        CHECK(c.read_nullable_ascii(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(is_null);
+        CHECK_EQ(val, "sentinel");
+    }
+    // Nullable: empty at limit=0 -> Ok, is_null=false
+    {
+        auto bytes = hex("0080");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null, 0) == DecodeStatus::Ok);
+        CHECK(!is_null);
+        CHECK(val.empty());
+    }
+    // Nullable: non-empty at limit=0 -> LimitExceeded
+    {
+        auto bytes = hex("C1");
+        WireCursor c(bytes.data(), bytes.size());
+        std::string val = "sentinel";
+        bool is_null = true;
+        CHECK(c.read_nullable_ascii(val, is_null, 0) == DecodeStatus::LimitExceeded);
+        CHECK_EQ(c.position(), 0u);
+        CHECK_EQ(val, "sentinel");
+        CHECK(is_null);
+    }
     TEST_PASS("string_limit");
 }
 

@@ -251,6 +251,20 @@ inline void encode_ascii_string(std::vector<std::uint8_t>& buf, const std::strin
     }
 }
 
+// ---------- Nullable ASCII ----------
+// NULL -> [80]; non-null empty -> [00 80]; non-empty -> same wire as mandatory.
+inline void encode_nullable_ascii(std::vector<std::uint8_t>& buf,
+                                  const std::string& s, bool is_null) {
+    if (is_null) {
+        buf.push_back(0x80);
+    } else if (s.empty()) {
+        buf.push_back(0x00);
+        buf.push_back(0x80);
+    } else {
+        encode_ascii_string(buf, s);
+    }
+}
+
 // ---------- Unicode string (length-prefixed) ----------
 // Length is encoded as stopbit uInt32, followed by raw UTF-8 bytes.
 inline void encode_unicode_string(std::vector<std::uint8_t>& buf, const std::string& s) {
