@@ -10,6 +10,12 @@ static std::vector<std::uint8_t> make_bytes(std::initializer_list<std::uint8_t> 
     return std::vector<std::uint8_t>(init);
 }
 
+static void check_sentinel_unchanged(const std::vector<std::uint8_t>& v) {
+    CHECK_EQ(v.size(), 2u);
+    CHECK_EQ(v[0], 0xDEu);
+    CHECK_EQ(v[1], 0xADu);
+}
+
 // --- Unsigned stop-bit integer tests ---
 static void test_stopbit_u32() {
     // 0 -> 0x80
@@ -1389,8 +1395,7 @@ static void test_byte_vector() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val) == DecodeStatus::NeedMoreData);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
-        CHECK_EQ(val[0], 0xDEu);
+        check_sentinel_unchanged(val);
     }
     // Non-canonical prefix [00 80] -> NonCanonicalEncoding
     {
@@ -1399,7 +1404,7 @@ static void test_byte_vector() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val) == DecodeStatus::NonCanonicalEncoding);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // Overflowing uInt32 length [10 00 00 00 80] -> IntegerOverflow
     {
@@ -1408,7 +1413,7 @@ static void test_byte_vector() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val) == DecodeStatus::IntegerOverflow);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // Partial body [83 AA BB] -> NeedMoreData
     {
@@ -1417,7 +1422,7 @@ static void test_byte_vector() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val) == DecodeStatus::NeedMoreData);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
 
     // --- Mandatory limit tests ---
@@ -1437,7 +1442,7 @@ static void test_byte_vector() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val, 0) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // len=3 at limit=3 -> Ok
     {
@@ -1454,7 +1459,7 @@ static void test_byte_vector() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val, 2) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // Truncated [83 AA] at limit=2 -> LimitExceeded (not NeedMoreData), limit precedence
     {
@@ -1463,7 +1468,7 @@ static void test_byte_vector() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val, 2) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
 
     // --- Nullable production tests ---
@@ -1475,8 +1480,7 @@ static void test_byte_vector() {
         bool is_null = false;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::Ok);
         CHECK(is_null);
-        CHECK_EQ(val.size(), 2u);
-        CHECK_EQ(val[0], 0xDEu);
+        check_sentinel_unchanged(val);
         CHECK_EQ(c.position(), 1u);
     }
     // Empty [81]: is_null=false, empty vector
@@ -1581,8 +1585,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::NeedMoreData);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
-        CHECK_EQ(val[0], 0xDEu);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // Truncated prefix [01] -> NeedMoreData
@@ -1593,7 +1596,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::NeedMoreData);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // Non-canonical prefix [00 80] -> NonCanonicalEncoding
@@ -1604,7 +1607,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::NonCanonicalEncoding);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // Partial body [84 AA BB] -> NeedMoreData (len=3, only 2 body bytes)
@@ -1615,7 +1618,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::NeedMoreData);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // Non-empty limit failure: [82 AA] at limit=0 -> LimitExceeded
@@ -1626,7 +1629,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
 
@@ -1639,7 +1642,7 @@ static void test_byte_vector() {
         bool is_null = false;
         CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::Ok);
         CHECK(is_null);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // Empty [81] at max_bytes=0 -> Ok, is_null=false, empty vector
     {
@@ -1659,7 +1662,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // len=3 at limit=3 -> Ok
@@ -1680,7 +1683,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null, 2) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // Truncated [84 AA] at limit=2 -> LimitExceeded (not NeedMoreData), limit before body
@@ -1691,7 +1694,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null, 2) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
 
@@ -1706,8 +1709,7 @@ static void test_byte_vector() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
-        CHECK_EQ(val[0], 0xDEu);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     TEST_PASS("byte_vector");

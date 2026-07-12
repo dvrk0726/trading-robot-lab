@@ -28,6 +28,12 @@ static CompiledTemplateSet compile(const char* xml) {
     return r.compiled;
 }
 
+static void check_sentinel_unchanged(const std::vector<std::uint8_t>& v) {
+    CHECK_EQ(v.size(), 2u);
+    CHECK_EQ(v[0], 0xDEu);
+    CHECK_EQ(v[1], 0xADu);
+}
+
 // Test: max_message_bytes enforcement
 static void test_max_message_bytes() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
@@ -367,7 +373,7 @@ static void test_byte_vector_limit() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val, 0) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // Mandatory: len=3 at limit=3 -> Ok
     {
@@ -384,7 +390,7 @@ static void test_byte_vector_limit() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val, 2) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // Mandatory: truncated [83 AA] at limit=2 -> LimitExceeded (not NeedMoreData)
     {
@@ -393,7 +399,7 @@ static void test_byte_vector_limit() {
         std::vector<std::uint8_t> val{0xDE, 0xAD};
         CHECK(c.read_byte_vector(val, 2) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // Nullable: NULL [80] at limit=0 -> Ok, is_null=true
     {
@@ -403,7 +409,7 @@ static void test_byte_vector_limit() {
         bool is_null = false;
         CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::Ok);
         CHECK(is_null);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
     }
     // Nullable: empty [81] at limit=0 -> Ok, is_null=false, empty vector
     {
@@ -423,7 +429,7 @@ static void test_byte_vector_limit() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null, 0) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // Nullable: len=3 at limit=3 -> Ok
@@ -444,7 +450,7 @@ static void test_byte_vector_limit() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null, 2) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // Nullable: truncated [84 AA] at limit=2 -> LimitExceeded (not NeedMoreData)
@@ -455,7 +461,7 @@ static void test_byte_vector_limit() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null, 2) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     // Checked-length: nullable prefix [10 00 00 00 80] = non-null length UINT32_MAX,
@@ -467,8 +473,7 @@ static void test_byte_vector_limit() {
         bool is_null = true;
         CHECK(c.read_nullable_byte_vector(val, is_null) == DecodeStatus::LimitExceeded);
         CHECK_EQ(c.position(), 0u);
-        CHECK_EQ(val.size(), 2u);
-        CHECK_EQ(val[0], 0xDEu);
+        check_sentinel_unchanged(val);
         CHECK(is_null);
     }
     TEST_PASS("byte_vector_limit");
