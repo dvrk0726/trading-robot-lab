@@ -527,29 +527,26 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
                   "Decimal field in " + parent_path + " has empty name", parent_path);
     }
 
-    auto exponent_node = node.child("exponent");
-    auto mantissa_node = node.child("mantissa");
-
     // Preflight: reject any operator directly inside decimal <exponent> or <mantissa>.
-    // Scans component nodes in XML document order; reports the first recognized operator
-    // and returns immediately. This runs before component attribute validation,
-    // operator attribute/value parsing, nested operator-child validation,
-    // component operator-count diagnostics, parse_operator invocation,
-    // or component operator metadata construction.
+    // Iterates every direct child of the decimal node in actual XML document order.
+    // For each child whose element name is exponent or mantissa, scans all of that
+    // component node's direct children in their XML document order. At the first child
+    // recognized by is_operator_element, emits exactly one CompileIssue and returns
+    // immediately. This runs before component attribute validation, operator
+    // attribute/value parsing, nested operator-child validation, duplicate diagnostics,
+    // unknown-child diagnostics, parse_operator invocation, or component operator
+    // metadata construction. Covers every exponent and mantissa node, including second
+    // or later duplicate component nodes; does not use node.child() to drive the scan.
     {
-        struct CompScan { pugi::xml_node node; const char* name; };
-        CompScan scans[] = {
-            {exponent_node, "exponent"},
-            {mantissa_node, "mantissa"}
-        };
-        for (auto& cs : scans) {
-            if (!cs.node) continue;
-            for (auto child : cs.node.children()) {
+        for (auto dchild : node.children()) {
+            std::string dname(dchild.name());
+            if (dname != "exponent" && dname != "mantissa") continue;
+            for (auto child : dchild.children()) {
                 std::string cname(child.name());
                 if (is_operator_element(cname)) {
-                    std::string comp_path = field_path + "." + cs.name;
+                    std::string comp_path = field_path + "." + dname;
                     ctx.error("unsupported_decimal_component_operator",
-                              "Operator <" + cname + "> on decimal component <" + cs.name +
+                              "Operator <" + cname + "> on decimal component <" + dname +
                               "> is outside the accepted MOEX SPECTRA T0/T1 profile (" + comp_path + ")",
                               comp_path);
                     return f;
@@ -587,6 +584,9 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
             }
         }
     }
+
+    auto exponent_node = node.child("exponent");
+    auto mantissa_node = node.child("mantissa");
 
     if (exponent_node) {
         // Validate exponent attributes (no ordinary attributes)

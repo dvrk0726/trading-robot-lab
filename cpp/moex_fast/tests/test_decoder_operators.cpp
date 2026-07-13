@@ -278,6 +278,49 @@ static void test_decimal_compile_reject_copy_in_mantissa() {
     TEST_PASS("decimal_compile_reject_copy_in_mantissa");
 }
 
+// Test: mantissa-before-exponent XML order — proves actual document-order scan
+static void test_decimal_mantissa_before_exponent_order() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="DecimalMsg">
+    <decimal name="Price" id="1">
+      <mantissa bad_attr="x"><copy/><nested/></mantissa>
+      <exponent bad_attr="y"><constant>5</constant><nested/></exponent>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_single_issue_rejection(r, "unsupported_decimal_component_operator",
+                                 "Price.mantissa",
+                                 "Operator <copy> on decimal component <mantissa> "
+                                 "is outside the accepted MOEX SPECTRA T0/T1 profile (Price.mantissa)");
+
+    TEST_PASS("decimal_mantissa_before_exponent_order");
+}
+
+// Test: operator in second duplicate exponent — proves scanning of later duplicate nodes
+static void test_decimal_operator_in_second_duplicate_exponent() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="DecimalMsg">
+    <decimal name="Price" id="1">
+      <exponent/>
+      <exponent bad_attr="x"><delta/><nested/></exponent>
+      <mantissa/>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_single_issue_rejection(r, "unsupported_decimal_component_operator",
+                                 "Price.exponent",
+                                 "Operator <delta> on decimal component <exponent> "
+                                 "is outside the accepted MOEX SPECTRA T0/T1 profile (Price.exponent)");
+
+    TEST_PASS("decimal_operator_in_second_duplicate_exponent");
+}
+
 int main() {
     test_constant_operator();
     test_excluded_operator_default();
@@ -288,6 +331,8 @@ int main() {
     test_optional_decimal_null_no_mantissa();
     test_decimal_compile_reject_constant_in_exponent();
     test_decimal_compile_reject_copy_in_mantissa();
+    test_decimal_mantissa_before_exponent_order();
+    test_decimal_operator_in_second_duplicate_exponent();
     std::cout << "All decoder operator tests passed.\n";
     return 0;
 }
