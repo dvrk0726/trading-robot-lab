@@ -73,8 +73,9 @@ namespace group_absence_check {
     template<typename, typename = void> struct has_children_decoded : std::false_type {};
     template<typename T> struct has_children_decoded<T, std::void_t<decltype(T::children)>> : std::true_type {};
 
-    // DecWireType::Group absence proven at compile time: if the enumerator existed,
-    // this constexpr function's switch would be non-exhaustive and fail to compile.
+    // DecWireType::Group and DecWireType::ByteVector absence proven at compile time:
+    // if either enumerator existed, this constexpr function's switch would be
+    // non-exhaustive and fail to compile.
     constexpr bool all_wire_types_covered(DecWireType wt) {
         switch (wt) {
             case DecWireType::uInt32:
@@ -83,14 +84,13 @@ namespace group_absence_check {
             case DecWireType::Int64:
             case DecWireType::AsciiString:
             case DecWireType::UnicodeString:
-            case DecWireType::ByteVector:
             case DecWireType::Decimal:
             case DecWireType::Sequence:
                 return true;
         }
     }
     static_assert(all_wire_types_covered(DecWireType::uInt32),
-                  "DecWireType must not have Group enumerator (switch exhaustive without it)");
+                  "DecWireType must not have Group or ByteVector enumerator (switch exhaustive without them)");
 
     static_assert(!has_has_children<CompiledField>::value,
                   "CompiledField must not have has_children member");
@@ -98,6 +98,26 @@ namespace group_absence_check {
                   "DecodedField must not have is_group member");
     static_assert(!has_children_decoded<DecodedField>::value,
                   "DecodedField must not have children member");
+}
+
+// --- Compile-time: DecodedScalar has exactly five alternatives, no byteVector ---
+namespace decoded_scalar_check {
+    static_assert(std::variant_size_v<DecodedScalar> == 5,
+                  "DecodedScalar must have exactly five alternatives");
+    static_assert(std::is_same_v<std::variant_alternative_t<0, DecodedScalar>, std::monostate>,
+                  "DecodedScalar[0] must be std::monostate");
+    static_assert(std::is_same_v<std::variant_alternative_t<1, DecodedScalar>, std::uint64_t>,
+                  "DecodedScalar[1] must be std::uint64_t");
+    static_assert(std::is_same_v<std::variant_alternative_t<2, DecodedScalar>, std::int64_t>,
+                  "DecodedScalar[2] must be std::int64_t");
+    static_assert(std::is_same_v<std::variant_alternative_t<3, DecodedScalar>, std::string>,
+                  "DecodedScalar[3] must be std::string");
+    static_assert(std::is_same_v<std::variant_alternative_t<4, DecodedScalar>, DecodedDecimal>,
+                  "DecodedScalar[4] must be DecodedDecimal");
+    static_assert(!std::is_constructible_v<DecodedScalar, std::vector<std::uint8_t>>,
+                  "DecodedScalar must not be constructible from std::vector<uint8_t>");
+    static_assert(!std::is_assignable_v<DecodedScalar&, std::vector<std::uint8_t>>,
+                  "DecodedScalar must not be assignable from std::vector<uint8_t>");
 }
 
 static void test_valid_compile() {

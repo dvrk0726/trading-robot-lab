@@ -30,12 +30,6 @@ void write_decoded_scalar(std::ostringstream& oss, const DecodedScalar& val, boo
         oss << std::get<std::int64_t>(val);
     } else if (std::holds_alternative<std::string>(val)) {
         oss << "\"" << std::get<std::string>(val) << "\"";
-    } else if (std::holds_alternative<std::vector<std::uint8_t>>(val)) {
-        oss << "0x";
-        for (auto b : std::get<std::vector<std::uint8_t>>(val)) {
-            oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
-        }
-        oss << std::dec;
     } else if (std::holds_alternative<DecodedDecimal>(val)) {
         const auto& d = std::get<DecodedDecimal>(val);
         oss << "{exp:" << d.exponent << ",man:" << d.mantissa << "}";
@@ -82,14 +76,6 @@ void write_scalar_json(std::ostringstream& oss, const DecodedScalar& val, bool i
         oss << std::get<std::int64_t>(val);
     } else if (std::holds_alternative<std::string>(val)) {
         oss << "\"" << json_escape_string(std::get<std::string>(val)) << "\"";
-    } else if (std::holds_alternative<std::vector<std::uint8_t>>(val)) {
-        oss << "\"";
-        // Lowercase hex for byte vectors
-        oss << std::hex << std::nouppercase << std::setfill('0');
-        for (auto b : std::get<std::vector<std::uint8_t>>(val)) {
-            oss << std::setw(2) << static_cast<int>(b);
-        }
-        oss << "\"" << std::dec;
     } else if (std::holds_alternative<DecodedDecimal>(val)) {
         const auto& d = std::get<DecodedDecimal>(val);
         oss << "{\"exponent\":" << d.exponent << ",\"mantissa\":" << d.mantissa << "}";
@@ -101,7 +87,6 @@ std::string wire_type_for_field(const DecodedField& field) {
     if (std::holds_alternative<std::uint64_t>(field.value)) return "uInt";
     if (std::holds_alternative<std::int64_t>(field.value)) return "int";
     if (std::holds_alternative<std::string>(field.value)) return "string";
-    if (std::holds_alternative<std::vector<std::uint8_t>>(field.value)) return "byteVector";
     if (std::holds_alternative<DecodedDecimal>(field.value)) return "decimal";
     return "null";
 }

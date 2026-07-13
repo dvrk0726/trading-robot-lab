@@ -213,13 +213,6 @@ struct DecoderSession::Impl {
                 }
                 break;
             }
-            case DecWireType::ByteVector: {
-                std::vector<std::uint8_t> val;
-                DecodeStatus st = ctx.cursor.read_byte_vector(val);
-                if (st != DecodeStatus::Ok) return st;
-                out.value = val;
-                break;
-            }
             case DecWireType::Decimal: {
                 std::int32_t exp = 0;
                 std::int64_t man = 0;

@@ -218,12 +218,12 @@ bool is_supported_op_type(OpKind op, DecWireType wire_type, bool is_mandatory) {
             return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
                    wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64 ||
                    wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString ||
-                   wire_type == DecWireType::ByteVector || wire_type == DecWireType::Decimal;
+                   wire_type == DecWireType::Decimal;
         case OpKind::Copy:
             return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
                    wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64 ||
                    wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString ||
-                   wire_type == DecWireType::ByteVector || wire_type == DecWireType::Decimal;
+                   wire_type == DecWireType::Decimal;
         case OpKind::Increment:
             return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
                    wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64;
@@ -231,10 +231,9 @@ bool is_supported_op_type(OpKind op, DecWireType wire_type, bool is_mandatory) {
             return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
                    wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64 ||
                    wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString ||
-                   wire_type == DecWireType::ByteVector || wire_type == DecWireType::Decimal;
+                   wire_type == DecWireType::Decimal;
         case OpKind::Tail:
-            return wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString ||
-                   wire_type == DecWireType::ByteVector;
+            return wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString;
     }
     return false;
 }
@@ -410,12 +409,7 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
             } else if (val_text.empty() && !val_attr) {
                 val_text = "";
             }
-            if (wire_type == DecWireType::ByteVector) {
-                if (!val_text.empty()) {
-                    ctx.error("invalid_constant_value",
-                              "Non-empty byte-vector constant not supported for " + field_path, field_path);
-                }
-            } else if (wire_type == DecWireType::AsciiString) {
+            if (wire_type == DecWireType::AsciiString) {
                 op.constant_str = val_text;
                 if (!validate_ascii_static(val_text)) {
                     ctx.error("invalid_constant_value",

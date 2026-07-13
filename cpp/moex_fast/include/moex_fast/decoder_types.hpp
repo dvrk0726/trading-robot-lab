@@ -28,7 +28,7 @@ struct DecodeLimits {
 // --- Wire types ---
 enum class DecWireType : std::uint8_t {
     uInt32, uInt64, Int32, Int64,
-    AsciiString, UnicodeString, ByteVector,
+    AsciiString, UnicodeString,
     Decimal, Sequence
 };
 
@@ -216,7 +216,6 @@ using DecodedScalar = std::variant<
     std::uint64_t,
     std::int64_t,
     std::string,
-    std::vector<std::uint8_t>,
     DecodedDecimal
 >;
 
