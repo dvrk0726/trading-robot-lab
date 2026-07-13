@@ -3,7 +3,7 @@
 #include <vector>
 #include <cstring>
 #include <limits>
-#include <type_traits>
+#include <cstddef>
 
 using namespace moex_fast;
 
@@ -1509,28 +1509,22 @@ static void test_decimal() {
 }
 
 // --- Compile-time proof that byte-vector wire primitives are absent ---
-// SFINAE detection: these traits are true_type only when WireCursor
-// exposes the method. static_assert passes when the method is absent
-// and fails when it is restored.
-template<typename T, typename = void>
-struct has_read_byte_vector : std::false_type {};
+// C++20 concept detection: these concepts are satisfied only when the cursor
+// type exposes the method with the complete explicit callable form.
+// static_assert passes when the method is absent and fails when restored.
 template<typename T>
-struct has_read_byte_vector<T, std::void_t<decltype(
-    std::declval<T&>().read_byte_vector(std::declval<std::vector<std::uint8_t>&>()))>>
-    : std::true_type {};
+concept has_read_byte_vector = requires(T& cursor, std::vector<std::uint8_t>& out, std::size_t max_bytes) {
+    cursor.read_byte_vector(out, max_bytes);
+};
 
-template<typename T, typename = void>
-struct has_read_nullable_byte_vector : std::false_type {};
 template<typename T>
-struct has_read_nullable_byte_vector<T, std::void_t<decltype(
-    std::declval<T&>().read_nullable_byte_vector(
-        std::declval<std::vector<std::uint8_t>&>(),
-        std::declval<bool&>()))>>
-    : std::true_type {};
+concept has_read_nullable_byte_vector = requires(T& cursor, std::vector<std::uint8_t>& out, bool& is_null, std::size_t max_bytes) {
+    cursor.read_nullable_byte_vector(out, is_null, max_bytes);
+};
 
-static_assert(!has_read_byte_vector<WireCursor>::value,
+static_assert(!has_read_byte_vector<WireCursor>,
               "WireCursor must not expose read_byte_vector");
-static_assert(!has_read_nullable_byte_vector<WireCursor>::value,
+static_assert(!has_read_nullable_byte_vector<WireCursor>,
               "WireCursor must not expose read_nullable_byte_vector");
 
 // --- Mandatory Unicode string tests ---
