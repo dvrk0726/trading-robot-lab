@@ -3185,30 +3185,17 @@ static void test_bytevector_reject_top_level_precedence() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
-    <byteVector name="Payload" id="99"><bogusChild/></byteVector>
+    <byteVector name="Payload" unknown="x"><bogusChild/></byteVector>
   </template>
 </templates>)";
     auto r = compile_templates_from_string(xml, lim);
     CHECK(!r.ok);
-    // Exactly unsupported_byte_vector with field_path Payload
-    bool found = false;
-    for (const auto& issue : r.issues) {
-        if (issue.code == "unsupported_byte_vector" &&
-            issue.field_path == "Payload" &&
-            issue.message.find("byteVector") != std::string::npos &&
-            issue.message.find("outside the accepted MOEX SPECTRA T0/T1 profile") != std::string::npos &&
-            issue.message.find("(Payload)") != std::string::npos) {
-            found = true;
-        }
-    }
-    CHECK(found);
-    // No secondary errors
-    CHECK(!has_issue(r, "excessive_fields"));
-    CHECK(!has_issue(r, "excessive_nesting"));
-    CHECK(!has_issue(r, "unknown_attribute"));
-    CHECK(!has_issue(r, "unknown_element"));
-    CHECK(!has_issue(r, "unsupported_operator"));
-    CHECK(!has_issue(r, "unsupported_operator_type"));
+    // Exactly one issue: unsupported_byte_vector takes precedence over
+    // unknown_attribute, unknown_element, and excessive_fields
+    CHECK_EQ(r.issues.size(), 1u);
+    CHECK_EQ(r.issues[0].code, "unsupported_byte_vector");
+    CHECK_EQ(r.issues[0].field_path, "Payload");
+    CHECK_EQ(r.issues[0].message, "<byteVector> is outside the accepted MOEX SPECTRA T0/T1 profile (Payload)");
     // Complete invalid/empty CompiledTemplateSet invariant
     CHECK(!r.compiled.valid());
     CHECK(r.compiled.empty());
@@ -3235,22 +3222,11 @@ static void test_bytevector_reject_inside_sequence() {
 </templates>)";
     auto r = compile_templates_from_string(xml);
     CHECK(!r.ok);
-    // Exactly unsupported_byte_vector with field_path Entries.Raw and byte-vector spelling
-    bool found = false;
-    for (const auto& issue : r.issues) {
-        if (issue.code == "unsupported_byte_vector" &&
-            issue.field_path == "Entries.Raw" &&
-            issue.message.find("byte-vector") != std::string::npos &&
-            issue.message.find("outside the accepted MOEX SPECTRA T0/T1 profile") != std::string::npos &&
-            issue.message.find("(Entries.Raw)") != std::string::npos) {
-            found = true;
-        }
-    }
-    CHECK(found);
-    // No child-derived issue
-    CHECK(!has_issue(r, "unknown_element"));
-    CHECK(!has_issue(r, "excessive_nesting"));
-    CHECK(!has_issue(r, "excessive_fields"));
+    // Exactly one issue: unsupported_byte_vector
+    CHECK_EQ(r.issues.size(), 1u);
+    CHECK_EQ(r.issues[0].code, "unsupported_byte_vector");
+    CHECK_EQ(r.issues[0].field_path, "Entries.Raw");
+    CHECK_EQ(r.issues[0].message, "<byte-vector> is outside the accepted MOEX SPECTRA T0/T1 profile (Entries.Raw)");
     // Complete invalid/empty handle invariant
     CHECK(!r.compiled.valid());
     CHECK(r.compiled.empty());
