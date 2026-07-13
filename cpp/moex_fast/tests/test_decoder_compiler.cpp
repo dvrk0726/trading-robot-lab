@@ -3172,6 +3172,95 @@ static void test_excessive_fields_sequence_length_diag() {
     TEST_PASS("excessive_fields_sequence_length_diag");
 }
 
+// === RT-3 byteVector compile-time closure ===
+
+// Focused top-level precedence test: named <byteVector name='Payload'> with invalid attribute
+// and invalid child while max_fields_per_template is zero.
+// Verify unsupported_byte_vector, exact field_path Payload, exact accepted-profile message,
+// no excessive_fields, excessive_nesting, unknown_attribute, unknown_element or operator-derived issue,
+// and complete invalid/empty CompiledTemplateSet invariant.
+static void test_bytevector_reject_top_level_precedence() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 0;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <byteVector name="Payload" id="99"><bogusChild/></byteVector>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    // Exactly unsupported_byte_vector with field_path Payload
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "unsupported_byte_vector" &&
+            issue.field_path == "Payload" &&
+            issue.message.find("byteVector") != std::string::npos &&
+            issue.message.find("outside the accepted MOEX SPECTRA T0/T1 profile") != std::string::npos &&
+            issue.message.find("(Payload)") != std::string::npos) {
+            found = true;
+        }
+    }
+    CHECK(found);
+    // No secondary errors
+    CHECK(!has_issue(r, "excessive_fields"));
+    CHECK(!has_issue(r, "excessive_nesting"));
+    CHECK(!has_issue(r, "unknown_attribute"));
+    CHECK(!has_issue(r, "unknown_element"));
+    CHECK(!has_issue(r, "unsupported_operator"));
+    CHECK(!has_issue(r, "unsupported_operator_type"));
+    // Complete invalid/empty CompiledTemplateSet invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("bytevector_reject_top_level_precedence");
+}
+
+// Focused nested test: named <byte-vector name='Raw'> inside accepted sequence Entries
+// with a valid single length instruction and invalid content inside Raw.
+// Verify unsupported_byte_vector, exact field_path Entries.Raw, exact message using byte-vector spelling,
+// no child-derived issue, and complete invalid/empty handle invariant.
+static void test_bytevector_reject_inside_sequence() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="L"/>
+      <byte-vector name="Raw"><bogusContent/></byte-vector>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    // Exactly unsupported_byte_vector with field_path Entries.Raw and byte-vector spelling
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "unsupported_byte_vector" &&
+            issue.field_path == "Entries.Raw" &&
+            issue.message.find("byte-vector") != std::string::npos &&
+            issue.message.find("outside the accepted MOEX SPECTRA T0/T1 profile") != std::string::npos &&
+            issue.message.find("(Entries.Raw)") != std::string::npos) {
+            found = true;
+        }
+    }
+    CHECK(found);
+    // No child-derived issue
+    CHECK(!has_issue(r, "unknown_element"));
+    CHECK(!has_issue(r, "excessive_nesting"));
+    CHECK(!has_issue(r, "excessive_fields"));
+    // Complete invalid/empty handle invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("bytevector_reject_inside_sequence");
+}
+
 int main() {
     test_valid_compile();
     test_duplicate_template_id();
@@ -3321,6 +3410,9 @@ int main() {
     // RT-3 generic group compile-time closure
     test_group_reject_top_level_precedence();
     test_group_reject_inside_sequence();
+    // RT-3 byteVector compile-time closure
+    test_bytevector_reject_top_level_precedence();
+    test_bytevector_reject_inside_sequence();
     // RT-3 excessive_fields diagnostics regression
     test_excessive_fields_top_level_diag();
     test_excessive_fields_sequence_length_diag();

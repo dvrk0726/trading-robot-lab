@@ -149,7 +149,6 @@ DecWireType element_to_wire_type(const char* name) {
     if (n == "int64") return DecWireType::Int64;
     if (n == "string") return DecWireType::AsciiString;
     if (n == "unicode") return DecWireType::UnicodeString;
-    if (n == "byteVector" || n == "byte-vector") return DecWireType::ByteVector;
     if (n == "decimal") return DecWireType::Decimal;
     if (n == "sequence") return DecWireType::Sequence;
     return DecWireType::uInt32;
@@ -159,7 +158,6 @@ bool is_known_field_element(const std::string& n) {
     return n == "string" || n == "uInt32" || n == "uint32" ||
            n == "uInt64" || n == "uint64" || n == "int32" ||
            n == "int64" || n == "decimal" || n == "unicode" ||
-           n == "byteVector" || n == "byte-vector" ||
            n == "sequence" || n == "length" ||
            n == "exponent" || n == "mantissa";
 }
@@ -890,6 +888,20 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
                       "Misplaced <length> in " +
                       (parent_path.empty() ? std::string("template") : parent_path), parent_path);
             continue;
+        }
+
+        // Reject <byteVector> and <byte-vector> immediately — outside the accepted MOEX SPECTRA T0/T1 profile.
+        // This fires before field-budget, index reservation, nesting-depth, attribute validation,
+        // child validation, operator parsing, wire-type mapping, or subtree traversal.
+        if (name == "byteVector" || name == "byte-vector") {
+            std::string bv_name = child.attribute("name").as_string("");
+            std::string bv_path = bv_name.empty() ? std::string("")
+                : (parent_path.empty() ? bv_name : parent_path + "." + bv_name);
+            ctx.error("unsupported_byte_vector",
+                      "<" + name + "> is outside the accepted MOEX SPECTRA T0/T1 profile" +
+                      (bv_path.empty() ? std::string("") : " (" + bv_path + ")"),
+                      bv_path);
+            return;
         }
 
         // Reject <group> immediately — outside the accepted MOEX SPECTRA T0/T1 profile.
