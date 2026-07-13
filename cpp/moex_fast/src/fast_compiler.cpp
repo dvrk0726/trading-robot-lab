@@ -999,7 +999,9 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     if (elem_name == "sequence") {
         f.wire_type = DecWireType::Sequence;
         f.is_sequence = true;
-        f.has_pmap_bit = true;
+        // A sequence itself never receives a separate presence-map bit.
+        // Optionality is conveyed through the sequence length wire form.
+        f.has_pmap_bit = false;
 
         auto length_node = node.child("length");
         if (!length_node) {
@@ -1034,7 +1036,9 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
             len_field.index = field_index++;
             len_field.name = length_node.attribute("name").as_string("");
             len_field.wire_type = DecWireType::uInt32;
-            len_field.is_mandatory = true;
+            // Mandatory sequence: length is ordinary uInt32.
+            // Optional sequence: length is nullable uInt32 (NULL = absent).
+            len_field.is_mandatory = f.is_mandatory;
             len_field.has_pmap_bit = false;
             auto len_fix = length_node.attribute("id");
             if (len_fix) {
@@ -1140,20 +1144,26 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
 
     f.op = parse_operator(node, f.wire_type, template_name, f.name, ctx, field_path);
 
-    if (f.is_mandatory) {
-        switch (f.op.kind) {
-            case OpKind::None:
-            case OpKind::Constant:
-                f.has_pmap_bit = false;
-                break;
-            case OpKind::Default:
-            case OpKind::Copy:
-            case OpKind::Increment:
-            case OpKind::Delta:
-            case OpKind::Tail:
-                f.has_pmap_bit = true;
-                break;
-        }
+    // Presence-map matrix for the accepted MOEX SPECTRA profile:
+    // - mandatory field without operator: no field bit
+    // - optional field without operator: one field bit (pmap-controlled absence; nullable wire when present)
+    // - mandatory constant: no field bit
+    // - optional constant: one field bit
+    // - other operators (default/copy/increment/delta/tail): one field bit
+    switch (f.op.kind) {
+        case OpKind::None:
+            f.has_pmap_bit = !f.is_mandatory;
+            break;
+        case OpKind::Constant:
+            f.has_pmap_bit = !f.is_mandatory;
+            break;
+        case OpKind::Default:
+        case OpKind::Copy:
+        case OpKind::Increment:
+        case OpKind::Delta:
+        case OpKind::Tail:
+            f.has_pmap_bit = true;
+            break;
     }
 
     return f;

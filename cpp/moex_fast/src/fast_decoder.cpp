@@ -374,7 +374,7 @@ struct DecoderSession::Impl {
     }
 
     // --- Operator: none ---
-    // Mandatory: no pmap, always wire. Optional: pmap consumed, 0=absent/null, 1=wire.
+    // Mandatory: no pmap, always wire. Optional: pmap consumed, 0=absent/null, 1=nullable wire.
     DecodeStatus decode_none_op(DecodeCtx& ctx, const CompiledField& field,
                                  DecodedField& out, bool pmap_present) {
         if (!field.is_mandatory && !pmap_present) {
@@ -993,21 +993,23 @@ struct DecoderSession::Impl {
         out.is_sequence = true;
         out.sequence_is_null = false;
 
-        // Consume pmap bit for optional sequence
-        bool pmap_present = true;
-        if (field.has_pmap_bit) {
-            pmap_present = consume_pmap_bit(ctx);
-        }
-
-        if (!field.is_mandatory && !pmap_present) {
-            out.sequence_is_null = true;
-            out.is_present = false;
-            return DecodeStatus::Ok;
-        }
-
-        // Read sequence length
+        // A sequence itself never receives a separate presence-map bit.
+        // Optionality is conveyed through the sequence length wire form.
+        // Read sequence length: mandatory = ordinary uInt32, optional = nullable uInt32.
         std::uint32_t length = 0;
-        DecodeStatus st = ctx.cursor.read_sequence_length(length);
+        DecodeStatus st;
+        if (field.is_mandatory) {
+            st = ctx.cursor.read_sequence_length(length);
+        } else {
+            bool is_null = false;
+            st = ctx.cursor.read_nullable_u32(length, is_null);
+            if (st != DecodeStatus::Ok) return st;
+            if (is_null) {
+                out.sequence_is_null = true;
+                out.is_present = false;
+                return DecodeStatus::Ok;
+            }
+        }
         if (st != DecodeStatus::Ok) return st;
 
         if (length > limits.max_sequence_entries) {
@@ -1022,12 +1024,10 @@ struct DecoderSession::Impl {
             entry_fields.push_back(field.children[i]);
         }
 
-        // Compute entry pmap size
+        // Derive entry pmap from compiled entry instructions that actually allocate bits.
         std::uint32_t entry_pmap_bits = 0;
-        if (field.entry_has_pmap) {
-            for (const auto& ef : entry_fields) {
-                if (ef.has_pmap_bit) entry_pmap_bits++;
-            }
+        for (const auto& ef : entry_fields) {
+            if (ef.has_pmap_bit) entry_pmap_bits++;
         }
 
         out.entries.reserve(length);
