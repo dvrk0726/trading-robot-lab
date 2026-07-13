@@ -26,46 +26,49 @@ static CompiledTemplateSet compile(const char* xml) {
     return r.compiled;
 }
 
-// Test: failed decode does not change session state (copy operator)
-static void test_rollback_copy_state() {
+// Test: failed decode does not commit session state (transactional rollback)
+static void test_rollback_session_state() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="10" name="Msg10">
-    <uInt32 name="Val" id="1"><copy/></uInt32>
+    <uInt32 name="F1" id="1"/>
+    <uInt32 name="F2" id="2"/>
   </template>
 </templates>)";
 
     auto ts = compile(xml);
     DecoderSession session(ts);
 
-    // Message 1: set Val=55 via wire
-    auto msg1 = hex("E0" "8A" "B7");
+    // Message 1: establish template 10, F1=55, F2=77
+    auto msg1 = hex("C0" "8A" "B7" "CD");
     auto r1 = session.decode_exact(msg1.data(), msg1.size());
     CHECK(r1.status == DecodeStatus::Ok);
+    CHECK_EQ(r1.message.template_id, 10u);
 
     // Snapshot state
     auto fp1 = session.fingerprint();
 
-    // Message 2: truncated (should fail)
-    auto msg2 = hex("E0");  // pmap says Val present, but no value bytes
+    // Message 2: reuse template 10, F1=30 consumed, then truncated (no F2)
+    auto msg2 = hex("80" "9E");
     auto r2 = session.decode_one(msg2.data(), msg2.size());
     CHECK(r2.status != DecodeStatus::Ok);
 
-    // Verify state unchanged
+    // Verify state unchanged after failed decode
     auto fp2 = session.fingerprint();
     CHECK_EQ(fp1.has_template_id, fp2.has_template_id);
     CHECK_EQ(fp1.template_id, fp2.template_id);
     CHECK_EQ(fp1.dict_entry_count, fp2.dict_entry_count);
     CHECK_EQ(fp1.dict_hash, fp2.dict_hash);
 
-    // Message 3: decode with Val absent (should copy previous=55)
-    auto msg3 = hex("80");
+    // Message 3: reuse template 10 successfully, F1=40, F2=50
+    auto msg3 = hex("80" "A8" "B2");
     auto r3 = session.decode_exact(msg3.data(), msg3.size());
     CHECK(r3.status == DecodeStatus::Ok);
-    CHECK(r3.message.fields[0].source == ValueSource::Copy);
-    CHECK_EQ(std::get<std::uint64_t>(r3.message.fields[0].value), 55u);
+    CHECK_EQ(r3.message.template_id, 10u);
+    CHECK_EQ(std::get<std::uint64_t>(r3.message.fields[0].value), 40u);
+    CHECK_EQ(std::get<std::uint64_t>(r3.message.fields[1].value), 50u);
 
-    TEST_PASS("rollback_copy_state");
+    TEST_PASS("rollback_session_state");
 }
 
 // Test: failed decode preserves template-id state
@@ -111,7 +114,7 @@ static void test_fingerprint_deterministic() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="10" name="Msg10">
-    <uInt32 name="Val" id="1"><copy/></uInt32>
+    <uInt32 name="Val" id="1"/>
   </template>
 </templates>)";
 
@@ -123,10 +126,17 @@ static void test_fingerprint_deterministic() {
     // Both sessions start with same state
     CHECK_EQ(s1.fingerprint().dict_hash, s2.fingerprint().dict_hash);
 
-    // Decode same message in both
-    auto msg = hex("E0" "8A" "B7");
-    s1.decode_exact(msg.data(), msg.size());
-    s2.decode_exact(msg.data(), msg.size());
+    // Decode same message in both (template present)
+    auto msg1 = hex("C0" "8A" "81");
+    s1.decode_exact(msg1.data(), msg1.size());
+    s2.decode_exact(msg1.data(), msg1.size());
+
+    CHECK_EQ(s1.fingerprint().dict_hash, s2.fingerprint().dict_hash);
+
+    // Reuse previous template ID in both
+    auto msg2 = hex("80" "82");
+    s1.decode_exact(msg2.data(), msg2.size());
+    s2.decode_exact(msg2.data(), msg2.size());
 
     CHECK_EQ(s1.fingerprint().dict_hash, s2.fingerprint().dict_hash);
 
@@ -134,7 +144,7 @@ static void test_fingerprint_deterministic() {
 }
 
 int main() {
-    test_rollback_copy_state();
+    test_rollback_session_state();
     test_rollback_template_id();
     test_fingerprint_deterministic();
     std::cout << "All decoder rollback tests passed.\n";
