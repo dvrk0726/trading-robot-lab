@@ -613,13 +613,6 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
         }
     }
 
-    if (!exponent_node) {
-        f.exponent_op.kind = OpKind::None;
-    }
-    if (!mantissa_node) {
-        f.mantissa_op.kind = OpKind::None;
-    }
-
     return f;
 }
 

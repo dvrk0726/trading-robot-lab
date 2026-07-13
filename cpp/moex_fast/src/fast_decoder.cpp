@@ -309,8 +309,9 @@ struct DecoderSession::Impl {
     }
 
     // --- Decimal field decode ---
-    // Only no-operator exponent and no-operator mantissa are supported.
-    // If exponent null => whole decimal null, mantissa NOT consumed.
+    // Decimal component operators are rejected by the compiler and are not
+    // represented in CompiledField. If exponent null => whole decimal null,
+    // mantissa NOT consumed.
     DecodeStatus decode_decimal_field(DecodeCtx& ctx, const CompiledField& field,
                                        DecodedField& out, const std::string& field_path) {
         out.name = field.name;
@@ -319,26 +320,6 @@ struct DecoderSession::Impl {
         out.field_path = field_path;
         out.is_null = false;
         out.is_present = true;
-
-        // Preflight: validate both decimal component operators before
-        // consuming any decimal field presence-map bit or decimal wire bytes.
-        if (field.exponent_op.kind != OpKind::None) {
-            ctx.set_error(DecodeStatus::UnsupportedTemplateFeature,
-                          "unsupported_operator_runtime",
-                          "Excluded decimal exponent operator " +
-                          std::string(op_kind_name(field.exponent_op.kind)) +
-                          " reached runtime on field " + field_path);
-            return DecodeStatus::UnsupportedTemplateFeature;
-        }
-
-        if (field.mantissa_op.kind != OpKind::None) {
-            ctx.set_error(DecodeStatus::UnsupportedTemplateFeature,
-                          "unsupported_operator_runtime",
-                          "Excluded decimal mantissa operator " +
-                          std::string(op_kind_name(field.mantissa_op.kind)) +
-                          " reached runtime on field " + field_path);
-            return DecodeStatus::UnsupportedTemplateFeature;
-        }
 
         // Consume the field-level pmap bit
         bool pmap_present = true;

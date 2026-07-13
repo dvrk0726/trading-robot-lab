@@ -2,6 +2,7 @@
 #include "moex_fast/fast_decoder.hpp"
 #include "test_check.hpp"
 #include <iostream>
+#include <concepts>
 #include <vector>
 
 using namespace moex_fast;
@@ -156,6 +157,23 @@ static void test_excluded_operator_multiple() {
     TEST_PASS("excluded_operator_multiple");
 }
 
+// Compile-time absence concepts: decimal component operator metadata removed
+template<typename T>
+concept has_is_decimal_component = requires { &T::is_decimal_component; };
+
+template<typename T>
+concept has_exponent_op = requires { &T::exponent_op; };
+
+template<typename T>
+concept has_mantissa_op = requires { &T::mantissa_op; };
+
+static_assert(!has_is_decimal_component<OpInstruction>,
+              "OpInstruction must not have is_decimal_component member");
+static_assert(!has_exponent_op<CompiledField>,
+              "CompiledField must not have exponent_op member");
+static_assert(!has_mantissa_op<CompiledField>,
+              "CompiledField must not have mantissa_op member");
+
 // Test: optional decimal non-null - no field pmap bit, ordinary mantissa
 static void test_optional_decimal_non_null_no_field_bit() {
     // Decimal fields never consume a field-level pmap bit.
@@ -177,8 +195,6 @@ static void test_optional_decimal_non_null_no_field_bit() {
         CHECK(f.is_decimal);
         CHECK(!f.is_mandatory);
         CHECK(!f.has_pmap_bit);  // decimal: no field-level pmap bit
-        CHECK(f.exponent_op.kind == OpKind::None);
-        CHECK(f.mantissa_op.kind == OpKind::None);
     }
 
     auto msg = hex("C0" "8A" "81" "81");

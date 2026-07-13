@@ -62,8 +62,6 @@ struct OpInstruction {
     std::int64_t constant_int = 0;
     std::uint64_t constant_uint = 0;
     std::string constant_str;
-
-    bool is_decimal_component = false;
 };
 
 // --- Compiled field ---
@@ -79,8 +77,6 @@ struct CompiledField {
     OpInstruction op;
 
     bool is_decimal = false;
-    OpInstruction exponent_op;
-    OpInstruction mantissa_op;
 
     bool is_sequence = false;
     OpInstruction length_op;

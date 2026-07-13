@@ -2910,8 +2910,6 @@ static void test_optional_decimal_no_pmap_bit() {
     CHECK(f.is_decimal);
     CHECK(!f.is_mandatory);
     CHECK(!f.has_pmap_bit);  // decimal: never a field-level pmap bit
-    CHECK(f.exponent_op.kind == OpKind::None);
-    CHECK(f.mantissa_op.kind == OpKind::None);
     CHECK(f.wire_type == DecWireType::Decimal);
     TEST_PASS("optional_decimal_no_pmap_bit");
 }
@@ -2931,8 +2929,6 @@ static void test_mandatory_decimal_no_pmap_bit() {
     CHECK(f.is_decimal);
     CHECK(f.is_mandatory);
     CHECK(!f.has_pmap_bit);  // decimal: never a field-level pmap bit
-    CHECK(f.exponent_op.kind == OpKind::None);
-    CHECK(f.mantissa_op.kind == OpKind::None);
     TEST_PASS("mandatory_decimal_no_pmap_bit");
 }
 
