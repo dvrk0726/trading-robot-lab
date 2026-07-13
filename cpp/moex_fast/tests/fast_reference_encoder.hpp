@@ -284,25 +284,6 @@ inline void encode_nullable_unicode(std::vector<std::uint8_t>& buf,
     }
 }
 
-// ---------- Byte vector (length-prefixed) ----------
-// Length is encoded as stopbit uInt32, followed by raw bytes.
-inline void encode_byte_vector(std::vector<std::uint8_t>& buf,
-                               const std::vector<std::uint8_t>& data) {
-    encode_stopbit_u32(buf, static_cast<std::uint32_t>(data.size()));
-    buf.insert(buf.end(), data.begin(), data.end());
-}
-
-// Nullable byte vector: length is nullable uInt32.
-// NULL [80] / empty [81] via corrected nullable u32 semantics.
-inline void encode_nullable_byte_vector(std::vector<std::uint8_t>& buf,
-                                        const std::vector<std::uint8_t>& data,
-                                        bool is_null) {
-    encode_nullable_u32(buf, static_cast<std::uint32_t>(data.size()), is_null);
-    if (!is_null) {
-        buf.insert(buf.end(), data.begin(), data.end());
-    }
-}
-
 // ---------- Decimal ----------
 // Non-nullable decimal: exponent as non-nullable stopbit i32, mantissa as non-nullable stopbit i64.
 // Nullable decimal: exponent as nullable i32 (null = whole decimal is null, no mantissa consumed).

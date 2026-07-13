@@ -859,62 +859,6 @@ DecodeStatus WireCursor::read_nullable_unicode(std::string& out, bool& is_null, 
     return DecodeStatus::Ok;
 }
 
-// --- Byte vector (FIX FAST 1.1) ---
-// Mandatory: stop-bit uInt32 byte length, then exactly that many raw eight-bit bytes.
-// Raw body bytes are not stop-bit encoded.
-// Nullable: nullable uInt32 length; NULL=[80], non-null empty=[81], length 1 prefix=[82].
-// Null and empty remain distinct.
-// max_bytes limits raw body bytes.
-// Limit checked immediately after successful prefix decode, before body-availability.
-// No allocation or output publication before prefix, limit, and body-availability validation.
-// On NULL: Ok, is_null=true, cursor past prefix only, caller vector unchanged.
-// On non-null success: full vector published, is_null=false only after all checks.
-// On any error: cursor restored, out and is_null unchanged.
-DecodeStatus WireCursor::read_byte_vector(std::vector<std::uint8_t>& out, std::size_t max_bytes) {
-    std::size_t start = pos_;
-    std::uint32_t len = 0;
-    auto st = read_stopbit_u32(len);
-    if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-
-    // Limit before body-availability: declared length above limit is
-    // LimitExceeded even when the supplied body is truncated.
-    if (len > max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
-    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
-
-    const std::uint8_t* ptr = nullptr;
-    st = read_bytes(len, ptr);
-    if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-
-    out.assign(ptr, ptr + len);
-    return DecodeStatus::Ok;
-}
-
-DecodeStatus WireCursor::read_nullable_byte_vector(std::vector<std::uint8_t>& out, bool& is_null, std::size_t max_bytes) {
-    std::size_t start = pos_;
-    std::uint32_t len = 0;
-    bool len_null = false;
-    auto st = read_nullable_u32(len, len_null);
-    if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-    if (len_null) {
-        is_null = true;
-        return DecodeStatus::Ok;
-    }
-
-    // Limit before body-availability: declared length above limit is
-    // LimitExceeded even when the supplied body is truncated.
-    if (len > max_bytes) { pos_ = start; return DecodeStatus::LimitExceeded; }
-    if (len > remaining()) { pos_ = start; return DecodeStatus::NeedMoreData; }
-
-    const std::uint8_t* ptr = nullptr;
-    st = read_bytes(len, ptr);
-    if (st != DecodeStatus::Ok) { pos_ = start; return st; }
-
-    // Publish result only after all validation succeeds.
-    out.assign(ptr, ptr + len);
-    is_null = false;
-    return DecodeStatus::Ok;
-}
-
 // --- Decimal (FIX FAST 1.1, section 6.3.7) ---
 // Exponent (i32) then mantissa (i64), each with own operator.
 // If exponent nullable and null => whole decimal null, mantissa NOT consumed.

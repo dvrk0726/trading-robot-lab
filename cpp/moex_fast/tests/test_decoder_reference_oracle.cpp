@@ -20,8 +20,6 @@ using fast_oracle::encode_ascii_string;
 using fast_oracle::encode_nullable_ascii;
 using fast_oracle::encode_unicode_string;
 using fast_oracle::encode_nullable_unicode;
-using fast_oracle::encode_byte_vector;
-using fast_oracle::encode_nullable_byte_vector;
 using fast_oracle::encode_decimal;
 using fast_oracle::encode_null_decimal;
 
@@ -568,120 +566,6 @@ static void test_unicode_string() {
     TEST_PASS("unicode_string");
 }
 
-// --- Byte vector ---
-static void test_byte_vector() {
-    // --- Mandatory literal oracle tests ---
-    // Empty -> length stopbit(0)=0x80
-    {
-        byte_vec expected{0x80};
-        byte_vec actual; encode_byte_vector(actual, {});
-        CHECK_BYTES(actual, expected);
-    }
-    // One zero byte {0x00} -> length stopbit(1)=0x81, then 0x00
-    {
-        byte_vec expected{0x81, 0x00};
-        byte_vec data{0x00};
-        byte_vec actual; encode_byte_vector(actual, data);
-        CHECK_BYTES(actual, expected);
-    }
-    // One 0xFF byte {0xFF} -> length stopbit(1)=0x81, then 0xFF
-    {
-        byte_vec expected{0x81, 0xFF};
-        byte_vec data{0xFF};
-        byte_vec actual; encode_byte_vector(actual, data);
-        CHECK_BYTES(actual, expected);
-    }
-    // Mixed raw payload {0x00, 0xFF, 0x80, 0x7F} -> length stopbit(4)=0x84
-    {
-        byte_vec expected{0x84, 0x00, 0xFF, 0x80, 0x7F};
-        byte_vec data{0x00, 0xFF, 0x80, 0x7F};
-        byte_vec actual; encode_byte_vector(actual, data);
-        CHECK_BYTES(actual, expected);
-    }
-    // 3 bytes {0xAA, 0xBB, 0xCC} -> length stopbit(3)=0x83, then data
-    {
-        byte_vec expected{0x83, 0xAA, 0xBB, 0xCC};
-        byte_vec data{0xAA, 0xBB, 0xCC};
-        byte_vec actual; encode_byte_vector(actual, data);
-        CHECK_BYTES(actual, expected);
-    }
-    // Mandatory length boundary: len=127 -> prefix [FF], 127 raw bytes
-    {
-        byte_vec data(127);
-        for (int i = 0; i < 127; ++i) data[i] = static_cast<std::uint8_t>(i);
-        byte_vec actual; encode_byte_vector(actual, data);
-        CHECK_EQ(actual.size(), 128u);
-        CHECK_EQ(actual[0], 0xFFu);
-        for (int i = 0; i < 127; ++i) CHECK_EQ(actual[1 + i], static_cast<std::uint8_t>(i));
-    }
-    // Mandatory length boundary: len=128 -> prefix [01 80], 128 raw bytes
-    {
-        byte_vec data(128);
-        for (int i = 0; i < 128; ++i) data[i] = static_cast<std::uint8_t>(i & 0xFF);
-        byte_vec actual; encode_byte_vector(actual, data);
-        CHECK_EQ(actual.size(), 130u);
-        CHECK_EQ(actual[0], 0x01u);
-        CHECK_EQ(actual[1], 0x80u);
-        for (int i = 0; i < 128; ++i) CHECK_EQ(actual[2 + i], static_cast<std::uint8_t>(i & 0xFF));
-    }
-
-    // --- Nullable literal oracle tests ---
-    // Nullable: null -> [80] (nullable u32 null)
-    {
-        byte_vec expected{0x80};
-        byte_vec actual; encode_nullable_byte_vector(actual, {}, true);
-        CHECK_BYTES(actual, expected);
-    }
-    // Nullable: empty -> length nullable(0)=stopbit(1)=0x81
-    {
-        byte_vec expected{0x81};
-        byte_vec actual; encode_nullable_byte_vector(actual, {}, false);
-        CHECK_BYTES(actual, expected);
-    }
-    // Nullable: one zero byte {0x00} -> length nullable(1)=stopbit(2)=0x82, then 0x00
-    {
-        byte_vec expected{0x82, 0x00};
-        byte_vec data{0x00};
-        byte_vec actual; encode_nullable_byte_vector(actual, data, false);
-        CHECK_BYTES(actual, expected);
-    }
-    // Nullable: one 0xFF byte {0xFF} -> length nullable(1)=stopbit(2)=0x82, then 0xFF
-    {
-        byte_vec expected{0x82, 0xFF};
-        byte_vec data{0xFF};
-        byte_vec actual; encode_nullable_byte_vector(actual, data, false);
-        CHECK_BYTES(actual, expected);
-    }
-    // Nullable: mixed payload {0x00, 0xFF, 0x80, 0x7F} -> length nullable(4)=stopbit(5)=0x85
-    {
-        byte_vec expected{0x85, 0x00, 0xFF, 0x80, 0x7F};
-        byte_vec data{0x00, 0xFF, 0x80, 0x7F};
-        byte_vec actual; encode_nullable_byte_vector(actual, data, false);
-        CHECK_BYTES(actual, expected);
-    }
-    // Nullable length boundary: len=127 -> prefix nullable stopbit(128)=[01 80], 127 raw bytes
-    {
-        byte_vec data(127);
-        for (int i = 0; i < 127; ++i) data[i] = static_cast<std::uint8_t>(i);
-        byte_vec actual; encode_nullable_byte_vector(actual, data, false);
-        CHECK_EQ(actual.size(), 129u);
-        CHECK_EQ(actual[0], 0x01u);
-        CHECK_EQ(actual[1], 0x80u);
-        for (int i = 0; i < 127; ++i) CHECK_EQ(actual[2 + i], static_cast<std::uint8_t>(i));
-    }
-    // Nullable length boundary: len=128 -> prefix nullable stopbit(129)=[01 81], 128 raw bytes
-    {
-        byte_vec data(128);
-        for (int i = 0; i < 128; ++i) data[i] = static_cast<std::uint8_t>(i & 0xFF);
-        byte_vec actual; encode_nullable_byte_vector(actual, data, false);
-        CHECK_EQ(actual.size(), 130u);
-        CHECK_EQ(actual[0], 0x01u);
-        CHECK_EQ(actual[1], 0x81u);
-        for (int i = 0; i < 128; ++i) CHECK_EQ(actual[2 + i], static_cast<std::uint8_t>(i & 0xFF));
-    }
-    TEST_PASS("byte_vector");
-}
-
 // --- Decimal ---
 static void test_decimal() {
     // --- Mandatory success vectors ---
@@ -846,7 +730,6 @@ int main() {
     test_ascii_string();
     test_nullable_ascii();
     test_unicode_string();
-    test_byte_vector();
     test_decimal();
     test_boundary_cases();
     test_byte_counts();

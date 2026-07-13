@@ -95,24 +95,6 @@ public:
     // On any failure: cursor, out, and is_null unchanged.
     DecodeStatus read_nullable_unicode(std::string& out, bool& is_null, std::size_t max_bytes = 1024 * 1024);
 
-    // Byte vector: stop-bit uInt32 byte length, then exactly that many raw
-    // eight-bit bytes (not stop-bit encoded).
-    // max_bytes limits raw body bytes.
-    // Limit checked immediately after successful prefix decode, before body-availability.
-    // On failure cursor is unchanged (position restored); out unchanged.
-    DecodeStatus read_byte_vector(std::vector<std::uint8_t>& out, std::size_t max_bytes = 1024 * 1024);
-
-    // Nullable byte vector: nullable uInt32 length.
-    // NULL=[80]; non-null empty=[81]; length 1 prefix=[82].
-    // Null and empty remain distinct.
-    // Raw body bytes are eight-bit, not stop-bit encoded.
-    // max_bytes limits raw body bytes.
-    // Limit checked immediately after successful prefix decode, before body-availability.
-    // On NULL: is_null=true, cursor past prefix only, caller vector unchanged.
-    // On non-null success: full vector published, is_null=false only after all checks.
-    // On any failure: cursor, out, and is_null unchanged.
-    DecodeStatus read_nullable_byte_vector(std::vector<std::uint8_t>& out, bool& is_null, std::size_t max_bytes = 1024 * 1024);
-
     // Decimal: exponent (i32) then mantissa (i64).
     // If exponent nullable and null => whole decimal null, mantissa NOT consumed.
     DecodeStatus read_decimal(std::int32_t& exponent, std::int64_t& mantissa, bool& is_null,
