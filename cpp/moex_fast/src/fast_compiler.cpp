@@ -981,7 +981,9 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
 
     if (elem_name == "decimal") {
         std::uint32_t decimal_index = field_index - 1;
-        return parse_decimal_field(node, decimal_index, template_name, ctx, parent_path, f.has_pmap_bit);
+        // Decimal fields never consume a field-level presence-map bit.
+        // Optionality is conveyed through nullable exponent wire form.
+        return parse_decimal_field(node, decimal_index, template_name, ctx, parent_path, false);
     }
 
     // Validate field attributes (non-decimal fields)

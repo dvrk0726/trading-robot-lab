@@ -209,14 +209,12 @@ static void test_uint64_max_integration() {
     TEST_PASS("uint64_max_integration");
 }
 
-// Test: optional decimal field - proves Decimal call site uses ordinary i64 mantissa
-static void test_optional_decimal_regression() {
-    // Template id 10, one optional decimal field (exponent + mantissa).
-    // Message: E0 8A 81 81
-    // pmap E0 = 11100000: tmpl-id present, decimal field present
-    // tmpl-id = 10 = 0x8A
-    // decimal: nullable exponent [81] = non-null 0, ordinary mantissa [81] = 1
-    // Before the fix, mantissa was decoded as nullable i64, so [81] -> value 0 (not 1).
+// Test: optional decimal non-null - no field pmap bit, ordinary mantissa
+static void test_optional_decimal_non_null_no_field_bit() {
+    // Decimal fields never consume a field-level pmap bit.
+    // pmap: [tmpl-id=1] -> 0xC0
+    // tmpl-id=10 -> 0x8A
+    // optional decimal: nullable exponent [81] = non-null 0, ordinary mantissa [81] = 1
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="10" name="DecimalMsg">
@@ -225,7 +223,18 @@ static void test_optional_decimal_regression() {
 </templates>)";
 
     auto ts = compile(xml);
-    auto msg = hex("E0" "8A" "81" "81");
+
+    // Verify compiler metadata: optional decimal has NO field pmap bit
+    {
+        const auto& f = ts.find(10)->fields[0];
+        CHECK(f.is_decimal);
+        CHECK(!f.is_mandatory);
+        CHECK(!f.has_pmap_bit);  // decimal: no field-level pmap bit
+        CHECK(f.exponent_op.kind == OpKind::None);
+        CHECK(f.mantissa_op.kind == OpKind::None);
+    }
+
+    auto msg = hex("C0" "8A" "81" "81");
 
     DecoderSession session(ts);
     auto r = session.decode_exact(msg.data(), msg.size());
@@ -235,11 +244,46 @@ static void test_optional_decimal_regression() {
 
     auto& field = r.message.fields[0];
     CHECK(!field.is_null);
+    CHECK(field.is_present);
     auto& dd = std::get<DecodedDecimal>(field.value);
     CHECK_EQ(dd.exponent, 0);
     CHECK_EQ(dd.mantissa, 1);
 
-    TEST_PASS("optional_decimal_regression");
+    TEST_PASS("optional_decimal_non_null_no_field_bit");
+}
+
+// Test: optional decimal NULL - no field pmap bit, no mantissa consumed
+static void test_optional_decimal_null_no_mantissa() {
+    // Decimal NULL: nullable exponent NULL [80], mantissa NOT consumed.
+    // pmap: [tmpl-id=1] -> 0xC0
+    // tmpl-id=10 -> 0x8A
+    // nullable exponent NULL -> [80]
+    // trailing byte FF is NOT consumed (mantissa omitted)
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="DecimalMsg">
+    <decimal name="Price" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+    auto msg = hex("C0" "8A" "80" "FF");
+
+    DecoderSession session(ts);
+    auto r = session.decode_one(msg.data(), msg.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.template_id, 10u);
+    CHECK_EQ(r.message.fields.size(), 1u);
+
+    auto& field = r.message.fields[0];
+    CHECK(field.is_null);
+    CHECK(!field.is_present);
+    CHECK(std::holds_alternative<std::monostate>(field.value));
+
+    // Verify mantissa was NOT consumed: 2 bytes consumed (pmap + tmpl-id + exponent)
+    CHECK_EQ(r.bytes_consumed, 3u);  // C0 + 8A + 80
+
+    TEST_PASS("optional_decimal_null_no_mantissa");
 }
 
 int main() {
@@ -248,7 +292,8 @@ int main() {
     test_increment_operator();
     test_constant_operator();
     test_uint64_max_integration();
-    test_optional_decimal_regression();
+    test_optional_decimal_non_null_no_field_bit();
+    test_optional_decimal_null_no_mantissa();
     std::cout << "All decoder operator tests passed.\n";
     return 0;
 }

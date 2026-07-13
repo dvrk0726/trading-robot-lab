@@ -2995,6 +2995,118 @@ static void test_pmap_sequence_optional_none_then_constant_one_entry_bit() {
     TEST_PASS("pmap_sequence_optional_none_then_constant_one_entry_bit");
 }
 
+// === RT-3 accepted-profile optional no-operator wire semantics ===
+
+// Optional decimal compiler metadata: no field pmap bit
+static void test_optional_decimal_no_pmap_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="Price" id="270" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f = r.compiled.templates()[0].fields[0];
+    CHECK(f.is_decimal);
+    CHECK(!f.is_mandatory);
+    CHECK(!f.has_pmap_bit);  // decimal: never a field-level pmap bit
+    CHECK(f.exponent_op.kind == OpKind::None);
+    CHECK(f.mantissa_op.kind == OpKind::None);
+    CHECK(f.wire_type == DecWireType::Decimal);
+    TEST_PASS("optional_decimal_no_pmap_bit");
+}
+
+// Mandatory decimal compiler metadata: no field pmap bit
+static void test_mandatory_decimal_no_pmap_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="Price" id="270"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f = r.compiled.templates()[0].fields[0];
+    CHECK(f.is_decimal);
+    CHECK(f.is_mandatory);
+    CHECK(!f.has_pmap_bit);  // decimal: never a field-level pmap bit
+    CHECK(f.exponent_op.kind == OpKind::None);
+    CHECK(f.mantissa_op.kind == OpKind::None);
+    TEST_PASS("mandatory_decimal_no_pmap_bit");
+}
+
+// Optional constant absent: is_present=false, is_null=true
+static void test_optional_constant_absent_flags() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="C" id="1" presence="optional"><constant>42</constant></uInt32>
+    <uInt32 name="V" id="2"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // pmap: [tmpl-id=1, C=0] -> C0 (stop=1, tmpl=1, C=0)
+    // pmap byte 0xC0 = 11000000: stop=1, data=1000000
+    // pmap[0]=1 (tmpl present), pmap[1]=0 (C absent)
+    // tmpl-id=1 -> 0x81
+    // V=7 -> 0x87
+    auto data = hex("C0" "81" "87");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 2u);
+    // C: optional constant absent
+    CHECK(r.message.fields[0].is_null);
+    CHECK(!r.message.fields[0].is_present);
+    CHECK(r.message.fields[0].source == ValueSource::Constant);
+    CHECK(std::holds_alternative<std::monostate>(r.message.fields[0].value));
+    // V: mandatory wire
+    CHECK(!r.message.fields[1].is_null);
+    CHECK(r.message.fields[1].is_present);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[1].value), 7u);
+    TEST_PASS("optional_constant_absent_flags");
+}
+
+// Optional constant present: is_present=true, is_null=false
+static void test_optional_constant_present_flags() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="C" id="1" presence="optional"><constant>42</constant></uInt32>
+    <uInt32 name="V" id="2"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // pmap: [tmpl-id=1, C=1] -> E0 (stop=1, tmpl=1, C=1)
+    // pmap byte 0xE0 = 11100000: stop=1, data=1100000
+    // pmap[0]=1 (tmpl present), pmap[1]=1 (C present)
+    // tmpl-id=1 -> 0x81
+    // V=7 -> 0x87
+    auto data = hex("E0" "81" "87");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 2u);
+    // C: optional constant present
+    CHECK(!r.message.fields[0].is_null);
+    CHECK(r.message.fields[0].is_present);
+    CHECK(r.message.fields[0].source == ValueSource::Constant);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[0].value), 42u);
+    // V: mandatory wire
+    CHECK(!r.message.fields[1].is_null);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[1].value), 7u);
+    TEST_PASS("optional_constant_present_flags");
+}
+
 int main() {
     test_valid_compile();
     test_duplicate_template_id();
@@ -3136,6 +3248,11 @@ int main() {
     test_pmap_optional_none_then_optional_constant_only_constant_bit();
     test_pmap_sequence_optional_none_no_entry_pmap();
     test_pmap_sequence_optional_none_then_constant_one_entry_bit();
+    // RT-3 accepted-profile optional no-operator wire semantics
+    test_optional_decimal_no_pmap_bit();
+    test_mandatory_decimal_no_pmap_bit();
+    test_optional_constant_absent_flags();
+    test_optional_constant_present_flags();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }

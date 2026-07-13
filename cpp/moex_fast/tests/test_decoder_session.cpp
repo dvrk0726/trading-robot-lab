@@ -211,7 +211,7 @@ static void test_reset() {
     TEST_PASS("reset");
 }
 
-// Test: optional null field
+// Test: optional null field via nullable wire NULL (no pmap field bit)
 static void test_optional_null() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -222,9 +222,11 @@ static void test_optional_null() {
 
     auto ts = compile_minimal(xml);
 
-    // pmap: bit0=1 (tmpl-id), bit1=0 (Val absent/null)
-    // Byte: bit6=1, bit5=0 -> 0x40 | 0x80 = 0xC0
-    auto data = hex("C0" "8A");  // tmpl-id=10, Val absent (null)
+    // Optional field without operator: no pmap field bit, nullable wire.
+    // pmap: bit0=1 (tmpl-id only) -> 0xC0
+    // tmpl-id=10 -> 0x8A
+    // Val nullable uInt32 NULL -> 0x80
+    auto data = hex("C0" "8A" "80");
 
     DecoderSession session(ts);
     auto r = session.decode_exact(data.data(), data.size());
@@ -232,8 +234,144 @@ static void test_optional_null() {
     CHECK_EQ(r.message.fields.size(), 1u);
     CHECK(r.message.fields[0].is_null);
     CHECK(!r.message.fields[0].is_present);
+    CHECK(std::holds_alternative<std::monostate>(r.message.fields[0].value));
 
     TEST_PASS("optional_null");
+}
+
+// Test: optional non-null field via nullable wire (no pmap field bit)
+static void test_optional_non_null() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg10">
+    <uInt32 name="Val" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto ts = compile_minimal(xml);
+
+    // pmap: tmpl-id present -> 0xC0
+    // tmpl-id=10 -> 0x8A
+    // Val nullable uInt32 value 5: raw 6 -> 0x86
+    auto data = hex("C0" "8A" "86");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 1u);
+    CHECK(!r.message.fields[0].is_null);
+    CHECK(r.message.fields[0].is_present);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[0].value), 5u);
+
+    TEST_PASS("optional_non_null");
+}
+
+// Test: optional ASCII NULL via nullable wire (no pmap field bit)
+static void test_optional_ascii_null() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="S" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto ts = compile_minimal(xml);
+
+    // pmap: tmpl-id present -> 0xC0
+    // tmpl-id=1 -> 0x81
+    // Optional ASCII NULL: [80]
+    auto data = hex("C0" "81" "80");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 1u);
+    CHECK(r.message.fields[0].is_null);
+    CHECK(!r.message.fields[0].is_present);
+    CHECK(std::holds_alternative<std::monostate>(r.message.fields[0].value));
+
+    TEST_PASS("optional_ascii_null");
+}
+
+// Test: optional ASCII empty via nullable wire (no pmap field bit)
+static void test_optional_ascii_empty() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="S" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto ts = compile_minimal(xml);
+
+    // pmap: tmpl-id present -> 0xC0
+    // tmpl-id=1 -> 0x81
+    // Optional ASCII empty: [00 80]
+    auto data = hex("C0" "81" "0080");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 1u);
+    CHECK(!r.message.fields[0].is_null);
+    CHECK(r.message.fields[0].is_present);
+    CHECK_EQ(std::get<std::string>(r.message.fields[0].value), "");
+
+    TEST_PASS("optional_ascii_empty");
+}
+
+// Test: optional Unicode NULL via nullable wire (no pmap field bit)
+static void test_optional_unicode_null() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="S" id="1" presence="optional" charset="unicode"/>
+  </template>
+</templates>)";
+
+    auto ts = compile_minimal(xml);
+
+    // pmap: tmpl-id present -> 0xC0
+    // tmpl-id=1 -> 0x81
+    // Optional Unicode NULL: length nullable uInt32 NULL = [80]
+    auto data = hex("C0" "81" "80");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 1u);
+    CHECK(r.message.fields[0].is_null);
+    CHECK(!r.message.fields[0].is_present);
+    CHECK(std::holds_alternative<std::monostate>(r.message.fields[0].value));
+
+    TEST_PASS("optional_unicode_null");
+}
+
+// Test: optional Unicode empty via nullable wire (no pmap field bit)
+static void test_optional_unicode_empty() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="S" id="1" presence="optional" charset="unicode"/>
+  </template>
+</templates>)";
+
+    auto ts = compile_minimal(xml);
+
+    // pmap: tmpl-id present -> 0xC0
+    // tmpl-id=1 -> 0x81
+    // Optional Unicode empty: length nullable raw 1 (0 empty + 1 offset) -> [81]
+    auto data = hex("C0" "81" "81");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 1u);
+    CHECK(!r.message.fields[0].is_null);
+    CHECK(r.message.fields[0].is_present);
+    CHECK_EQ(std::get<std::string>(r.message.fields[0].value), "");
+
+    TEST_PASS("optional_unicode_empty");
 }
 
 // --- New tests for round 9A ---
@@ -358,6 +496,11 @@ int main() {
     test_bytes_consumed();
     test_reset();
     test_optional_null();
+    test_optional_non_null();
+    test_optional_ascii_null();
+    test_optional_ascii_empty();
+    test_optional_unicode_null();
+    test_optional_unicode_empty();
     test_session_templates_accessor();
     test_session_lifetime();
     test_invalid_handle_session();

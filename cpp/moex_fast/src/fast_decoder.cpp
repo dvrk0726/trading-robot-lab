@@ -224,6 +224,7 @@ struct DecoderSession::Impl {
                     if (st != DecodeStatus::Ok) return st;
                     if (is_null) {
                         out.is_null = true;
+                        out.is_present = false;
                         out.value = std::monostate{};
                     } else {
                         out.value = static_cast<std::uint64_t>(val);
@@ -244,6 +245,7 @@ struct DecoderSession::Impl {
                     if (st != DecodeStatus::Ok) return st;
                     if (is_null) {
                         out.is_null = true;
+                        out.is_present = false;
                         out.value = std::monostate{};
                     } else {
                         out.value = val;
@@ -264,6 +266,7 @@ struct DecoderSession::Impl {
                     if (st != DecodeStatus::Ok) return st;
                     if (is_null) {
                         out.is_null = true;
+                        out.is_present = false;
                         out.value = std::monostate{};
                     } else {
                         out.value = static_cast<std::int64_t>(val);
@@ -284,6 +287,7 @@ struct DecoderSession::Impl {
                     if (st != DecodeStatus::Ok) return st;
                     if (is_null) {
                         out.is_null = true;
+                        out.is_present = false;
                         out.value = std::monostate{};
                     } else {
                         out.value = val;
@@ -293,16 +297,42 @@ struct DecoderSession::Impl {
             }
             case DecWireType::AsciiString: {
                 std::string val;
-                DecodeStatus st = ctx.cursor.read_ascii_string(val);
-                if (st != DecodeStatus::Ok) return st;
-                out.value = val;
+                if (!is_mandatory) {
+                    bool str_null = false;
+                    DecodeStatus st = ctx.cursor.read_nullable_ascii(val, str_null, limits.max_string_bytes);
+                    if (st != DecodeStatus::Ok) return st;
+                    if (str_null) {
+                        out.is_null = true;
+                        out.is_present = false;
+                        out.value = std::monostate{};
+                    } else {
+                        out.value = val;
+                    }
+                } else {
+                    DecodeStatus st = ctx.cursor.read_ascii_string(val, limits.max_string_bytes);
+                    if (st != DecodeStatus::Ok) return st;
+                    out.value = val;
+                }
                 break;
             }
             case DecWireType::UnicodeString: {
                 std::string val;
-                DecodeStatus st = ctx.cursor.read_unicode_string(val);
-                if (st != DecodeStatus::Ok) return st;
-                out.value = val;
+                if (!is_mandatory) {
+                    bool str_null = false;
+                    DecodeStatus st = ctx.cursor.read_nullable_unicode(val, str_null, limits.max_string_bytes);
+                    if (st != DecodeStatus::Ok) return st;
+                    if (str_null) {
+                        out.is_null = true;
+                        out.is_present = false;
+                        out.value = std::monostate{};
+                    } else {
+                        out.value = val;
+                    }
+                } else {
+                    DecodeStatus st = ctx.cursor.read_unicode_string(val, limits.max_string_bytes);
+                    if (st != DecodeStatus::Ok) return st;
+                    out.value = val;
+                }
                 break;
             }
             case DecWireType::ByteVector: {
@@ -389,6 +419,7 @@ struct DecoderSession::Impl {
 
         if (!field.is_mandatory && !pmap_present) {
             out.is_null = true;
+            out.is_present = false;
             out.value = std::monostate{};
             return DecodeStatus::Ok;
         }
@@ -937,6 +968,7 @@ struct DecoderSession::Impl {
 
         if (dec_null) {
             out.is_null = true;
+            out.is_present = false;
             out.value = std::monostate{};
             return DecodeStatus::Ok;
         }
