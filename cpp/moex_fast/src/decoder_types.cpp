@@ -31,16 +31,6 @@ const char* op_kind_name(OpKind ok) {
     return "unknown";
 }
 
-const char* dict_scope_name(DictScope ds) {
-    switch (ds) {
-        case DictScope::Global:       return "global";
-        case DictScope::TemplateType: return "templateType";
-        case DictScope::TypeRef:      return "typeRef";
-        case DictScope::ExplicitKey:  return "explicitKey";
-    }
-    return "unknown";
-}
-
 const char* decode_status_name(DecodeStatus s) {
     switch (s) {
         case DecodeStatus::Ok:                      return "ok";

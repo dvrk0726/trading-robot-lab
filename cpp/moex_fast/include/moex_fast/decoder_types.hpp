@@ -47,16 +47,6 @@ enum class OpKind : std::uint8_t {
 
 const char* op_kind_name(OpKind ok);
 
-// --- Dictionary scope ---
-enum class DictScope : std::uint8_t {
-    Global,
-    TemplateType,
-    TypeRef,
-    ExplicitKey
-};
-
-const char* dict_scope_name(DictScope ds);
-
 // --- Compile issue ---
 struct CompileIssue {
     std::string code;
@@ -67,14 +57,6 @@ struct CompileIssue {
 // --- Operator instruction ---
 struct OpInstruction {
     OpKind kind = OpKind::None;
-    DictScope scope = DictScope::Global;
-    std::string dict_key;
-    std::string explicit_key;
-
-    bool has_initial = false;
-    std::int64_t initial_int = 0;
-    std::uint64_t initial_uint = 0;
-    std::string initial_str;
 
     bool has_constant = false;
     std::int64_t constant_int = 0;
@@ -285,18 +267,6 @@ struct DecodeResult {
     std::size_t bytes_consumed = 0;
     DecodedMessage message;
     std::vector<DecodeIssue> issues;
-};
-
-// --- Dictionary entry for deterministic fingerprint ---
-struct DictEntry {
-    std::string key;
-    bool defined = false;
-    bool is_null = false;
-    std::uint64_t uint_val = 0;
-    std::int64_t int_val = 0;
-    std::string str_val;
-    std::vector<std::uint8_t> bytes_val;
-    DecWireType wire_type = DecWireType::uInt32;
 };
 
 // --- Session fingerprint for rollback testing (deterministic) ---

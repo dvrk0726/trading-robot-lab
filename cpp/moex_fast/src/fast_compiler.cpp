@@ -126,7 +126,6 @@ struct CompileCtx {
     CompileLimits limits{};
     std::vector<CompileIssue> issues{};
     std::set<std::uint32_t> seen_ids{};
-    std::map<std::string, std::string> dict_key_to_path{};
 
     void error(const std::string& code, const std::string& msg, const std::string& path = "") {
         issues.push_back({code, msg, path});
@@ -371,24 +370,7 @@ bool validate_unicode_static(const std::string& val) {
     return true;
 }
 
-std::string build_dict_key(DictScope scope, const std::string& template_name,
-                           const std::string& field_name, DecWireType wire_type,
-                           const std::string& explicit_key, bool is_exponent, bool is_mantissa) {
-    std::ostringstream oss;
-    oss << dict_scope_name(scope) << ":";
-    if (!explicit_key.empty()) {
-        oss << explicit_key;
-    } else {
-        oss << template_name << "." << field_name;
-        if (is_exponent) oss << ".exponent";
-        if (is_mantissa) oss << ".mantissa";
-    }
-    oss << ":" << dec_wire_type_name(wire_type);
-    return oss.str();
-}
-
 OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
-                             const std::string& template_name, const std::string& field_name,
                              CompileCtx& ctx, const std::string& field_path) {
     OpInstruction op;
     op.kind = OpKind::None;
@@ -495,21 +477,6 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
         break;  // one operator per field
     }
 
-    // Build dictionary key and register for collision detection
-    if (op.kind != OpKind::None && op.kind != OpKind::Constant) {
-        op.dict_key = build_dict_key(op.scope, template_name, field_name, wire_type,
-                                      op.explicit_key, false, false);
-        // Register dictionary key for collision detection
-        auto it = ctx.dict_key_to_path.find(op.dict_key);
-        if (it != ctx.dict_key_to_path.end() && it->second != field_path) {
-            ctx.error("duplicate_dictionary_key",
-                      "Dictionary key collision: '" + op.dict_key + "' used by both " +
-                      it->second + " and " + field_path, field_path);
-        } else {
-            ctx.dict_key_to_path[op.dict_key] = field_path;
-        }
-    }
-
     // Validate operator/type combination
     if (op.kind != OpKind::None && !is_supported_op_type(op.kind, wire_type, true)) {
         ctx.error("unsupported_operator_type",
@@ -521,7 +488,7 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
 }
 
 CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_index,
-                                  const std::string& template_name, CompileCtx& ctx,
+                                  CompileCtx& ctx,
                                   const std::string& parent_path, bool has_pmap_bit) {
     CompiledField f;
     f.index = field_index;
@@ -620,8 +587,8 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
                           "Unknown child <" + ename + "> in exponent " + field_path + ".exponent", field_path);
             }
         }
-        f.exponent_op = parse_operator(exponent_node, DecWireType::Int32, template_name,
-                                        f.name + ".exponent", ctx, field_path + ".exponent");
+        f.exponent_op = parse_operator(exponent_node, DecWireType::Int32,
+                                        ctx, field_path + ".exponent");
         f.exponent_op.is_decimal_component = true;
     }
     if (mantissa_node) {
@@ -642,56 +609,28 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
                           "Unknown child <" + mname + "> in mantissa " + field_path + ".mantissa", field_path);
             }
         }
-        f.mantissa_op = parse_operator(mantissa_node, DecWireType::Int64, template_name,
-                                        f.name + ".mantissa", ctx, field_path + ".mantissa");
+        f.mantissa_op = parse_operator(mantissa_node, DecWireType::Int64,
+                                        ctx, field_path + ".mantissa");
         f.mantissa_op.is_decimal_component = true;
     }
 
     if (!exponent_node) {
         f.exponent_op.kind = OpKind::None;
-        f.exponent_op.dict_key = build_dict_key(DictScope::Global, template_name,
-                                                 f.name + ".exponent", DecWireType::Int32, "", true, false);
     }
     if (!mantissa_node) {
         f.mantissa_op.kind = OpKind::None;
-        f.mantissa_op.dict_key = build_dict_key(DictScope::Global, template_name,
-                                                 f.name + ".mantissa", DecWireType::Int64, "", false, true);
-    }
-
-    // Register decimal component keys for collision detection (skip empty keys from Constant/None)
-    std::string exp_path = field_path + ".exponent";
-    std::string man_path = field_path + ".mantissa";
-    if (!f.exponent_op.dict_key.empty()) {
-        auto exp_it = ctx.dict_key_to_path.find(f.exponent_op.dict_key);
-        if (exp_it != ctx.dict_key_to_path.end() && exp_it->second != exp_path) {
-            ctx.error("duplicate_dictionary_key",
-                      "Dictionary key collision: exponent key '" + f.exponent_op.dict_key +
-                      "' used by both " + exp_it->second + " and " + exp_path, field_path);
-        } else {
-            ctx.dict_key_to_path[f.exponent_op.dict_key] = exp_path;
-        }
-    }
-    if (!f.mantissa_op.dict_key.empty()) {
-        auto man_it = ctx.dict_key_to_path.find(f.mantissa_op.dict_key);
-        if (man_it != ctx.dict_key_to_path.end() && man_it->second != man_path) {
-            ctx.error("duplicate_dictionary_key",
-                      "Dictionary key collision: mantissa key '" + f.mantissa_op.dict_key +
-                      "' used by both " + man_it->second + " and " + man_path, field_path);
-        } else {
-            ctx.dict_key_to_path[f.mantissa_op.dict_key] = man_path;
-        }
     }
 
     return f;
 }
 
 void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
-                  const std::string& template_name, CompileCtx& ctx,
+                  CompileCtx& ctx,
                   const std::string& parent_path, std::uint32_t nesting_depth,
                   std::uint32_t& field_index, bool parent_is_sequence);
 
 CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
-                          const std::string& template_name, CompileCtx& ctx,
+                          CompileCtx& ctx,
                           const std::string& parent_path, std::uint32_t nesting_depth) {
     CompiledField f;
     f.index = field_index - 1;  // index already pre-allocated by caller
@@ -741,7 +680,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         std::uint32_t decimal_index = field_index - 1;
         // Decimal fields never consume a field-level presence-map bit.
         // Optionality is conveyed through nullable exponent wire form.
-        return parse_decimal_field(node, decimal_index, template_name, ctx, parent_path, false);
+        return parse_decimal_field(node, decimal_index, ctx, parent_path, false);
     }
 
     // Validate field attributes (non-decimal fields)
@@ -786,7 +725,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
             // C. Budget check for length child before allocation
             if (field_index >= ctx.limits.max_fields_per_template) {
                 ctx.error("excessive_fields",
-                          "Field count exceeds limit in template " + template_name);
+                          "Field count exceeds limit in template " + field_path);
                 return f;
             }
 
@@ -824,8 +763,8 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
                             ctx.error("multiple_operators",
                                       "Multiple operators in length " + field_path + ".length", field_path);
                         } else {
-                            f.length_op = parse_operator(length_node, DecWireType::uInt32, template_name,
-                                                         len_field.name, ctx, field_path + ".length");
+                            f.length_op = parse_operator(length_node, DecWireType::uInt32,
+                                                         ctx, field_path + ".length");
                         }
                     } else if (!lname.empty()) {
                         ctx.error("unknown_element",
@@ -850,7 +789,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         }
 
         std::vector<CompiledField> entry_fields;
-        parse_fields(node, entry_fields, template_name, ctx, field_path, nesting_depth + 1, field_index, true);
+        parse_fields(node, entry_fields, ctx, field_path, nesting_depth + 1, field_index, true);
 
         for (auto& ef : entry_fields) {
             f.children.push_back(std::move(ef));
@@ -864,7 +803,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         f.has_children = true;
         f.has_pmap_bit = !f.is_mandatory;
 
-        parse_fields(node, f.children, template_name, ctx, field_path, nesting_depth + 1, field_index, false);
+        parse_fields(node, f.children, ctx, field_path, nesting_depth + 1, field_index, false);
         return f;
     }
 
@@ -902,7 +841,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         }
     }
 
-    f.op = parse_operator(node, f.wire_type, template_name, f.name, ctx, field_path);
+    f.op = parse_operator(node, f.wire_type, ctx, field_path);
 
     // Presence-map matrix for the accepted MOEX SPECTRA profile:
     // - mandatory field without operator: no field bit
@@ -930,7 +869,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
 }
 
 void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
-                  const std::string& template_name, CompileCtx& ctx,
+                  CompileCtx& ctx,
                   const std::string& parent_path, std::uint32_t nesting_depth,
                   std::uint32_t& field_index, bool parent_is_sequence) {
     for (auto child : parent.children()) {
@@ -995,12 +934,12 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
         // C. Early field/node accounting: check budget before allocating
         if (field_index >= ctx.limits.max_fields_per_template) {
             ctx.error("excessive_fields",
-                      "Field count exceeds limit in template " + template_name);
+                      "Field count exceeds limit in template " + parent_path);
             return;
         }
         field_index++;
 
-        auto field = parse_field(child, field_index, template_name, ctx, parent_path, nesting_depth);
+        auto field = parse_field(child, field_index, ctx, parent_path, nesting_depth);
         if (ctx.has_errors()) return;
         fields.push_back(std::move(field));
     }
@@ -1133,7 +1072,7 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
         validate_element_attributes(tmpl, {"id", "name"}, ctx, "template " + ct.name);
 
         std::uint32_t field_index = 0;
-        parse_fields(tmpl, ct.fields, ct.name, ctx, "", 0, field_index, false);
+        parse_fields(tmpl, ct.fields, ctx, "", 0, field_index, false);
 
         ct.total_pmap_bits = count_pmap_bits(ct.fields);
 
