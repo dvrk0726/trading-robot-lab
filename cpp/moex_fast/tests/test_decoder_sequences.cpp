@@ -303,6 +303,114 @@ static void test_entry_with_optional_constant() {
     TEST_PASS("entry_with_optional_constant");
 }
 
+// Test: sequence entry with optional none only has no entry pmap
+static void test_optional_none_only_no_entry_pmap() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="OptNoneSeq">
+    <sequence name="Entries">
+      <length name="NoEntries" id="268"/>
+      <uInt32 name="Val" id="1" presence="optional"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // Verify: optional none has no pmap bit
+    {
+        const auto& seq = ts.find(10)->fields[0];
+        CHECK(seq.is_sequence);
+        CHECK(!seq.children[1].has_pmap_bit);
+        CHECK(seq.children[1].op.kind == OpKind::None);
+    }
+
+    // Decode 2 entries: one NULL, one non-NULL
+    // pmap [tmpl-id=1] -> 0xC0, tmpl=10->0x8A, seq length=2->0x82
+    // Entry 0: NO entry pmap, optional uInt32 NULL=0x80
+    // Entry 1: NO entry pmap, optional uInt32 7 -> nullable raw 8=0x88
+    auto data = hex("C0" "8A" "82"
+                     "80"       // entry0: Val=NULL
+                     "88");     // entry1: Val=7 (nullable raw 8)
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    if (r.status != DecodeStatus::Ok) {
+        std::cerr << "Decode failed: " << decode_status_name(r.status) << "\n";
+        for (const auto& issue : r.issues) {
+            std::cerr << "  [" << issue.code << "] " << issue.message << "\n";
+        }
+    }
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK(r.message.fields[0].is_sequence);
+    CHECK_EQ(r.message.fields[0].entries.size(), 2u);
+
+    // Entry 0: NULL
+    CHECK_EQ(r.message.fields[0].entries[0].size(), 1u);
+    CHECK(r.message.fields[0].entries[0][0].is_null);
+
+    // Entry 1: value 7
+    CHECK_EQ(r.message.fields[0].entries[1].size(), 1u);
+    CHECK(!r.message.fields[0].entries[1][0].is_null);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[0].entries[1][0].value), 7u);
+
+    TEST_PASS("optional_none_only_no_entry_pmap");
+}
+
+// Test: sequence entry with optional none followed by optional constant has exactly one entry pmap bit
+static void test_optional_none_then_constant_one_entry_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="OptNoneConstSeq">
+    <sequence name="Entries">
+      <length name="NoEntries" id="268"/>
+      <uInt32 name="Val" id="1" presence="optional"/>
+      <string name="Const" id="2" presence="optional"><constant>ABC</constant></string>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // Verify: Val (optional none) has no pmap bit, Const (optional constant) has pmap bit
+    {
+        const auto& seq = ts.find(10)->fields[0];
+        CHECK(seq.is_sequence);
+        CHECK(!seq.children[1].has_pmap_bit);  // optional none: no pmap bit
+        CHECK(seq.children[1].op.kind == OpKind::None);
+        CHECK(seq.children[2].has_pmap_bit);   // optional constant: has pmap bit
+        CHECK(seq.children[2].op.kind == OpKind::Constant);
+    }
+
+    // Decode 1 entry:
+    // pmap [tmpl-id=1] -> 0xC0, tmpl=10->0x8A, seq length=1->0x81
+    // Entry pmap: [Const present=1] -> 0xE0 (1 bit, stop=1, value=1)
+    // Entry: optional uInt32 NULL=0x80, Const="ABC" (from constant)
+    auto data = hex("C0" "8A" "81"
+                     "E0"       // entry pmap: Const present=1
+                     "80");     // Val=NULL (nullable wire, no pmap bit)
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    if (r.status != DecodeStatus::Ok) {
+        std::cerr << "Decode failed: " << decode_status_name(r.status) << "\n";
+        for (const auto& issue : r.issues) {
+            std::cerr << "  [" << issue.code << "] " << issue.message << "\n";
+        }
+    }
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK(r.message.fields[0].is_sequence);
+    CHECK_EQ(r.message.fields[0].entries.size(), 1u);
+    CHECK_EQ(r.message.fields[0].entries[0].size(), 2u);
+
+    // Val = NULL (nullable wire, no pmap)
+    CHECK(r.message.fields[0].entries[0][0].is_null);
+
+    // Const = "ABC" (from constant, pmap bit=1)
+    CHECK(r.message.fields[0].entries[0][1].source == ValueSource::Constant);
+    CHECK_EQ(std::get<std::string>(r.message.fields[0].entries[0][1].value), "ABC");
+
+    TEST_PASS("optional_none_then_constant_one_entry_bit");
+}
+
 int main() {
     test_simple_sequence();
     test_empty_sequence();
@@ -311,6 +419,8 @@ int main() {
     test_optional_empty_sequence();
     test_entry_without_presence_map();
     test_entry_with_optional_constant();
+    test_optional_none_only_no_entry_pmap();
+    test_optional_none_then_constant_one_entry_bit();
     std::cout << "All decoder sequence tests passed.\n";
     return 0;
 }

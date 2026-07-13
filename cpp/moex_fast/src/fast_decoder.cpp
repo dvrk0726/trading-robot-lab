@@ -374,17 +374,9 @@ struct DecoderSession::Impl {
     }
 
     // --- Operator: none ---
-    // Mandatory: no pmap, always wire. Optional: pmap consumed, 0=absent/null, 1=nullable wire.
+    // No pmap bit. Mandatory: ordinary wire. Optional: nullable wire; NULL from wire value alone.
     DecodeStatus decode_none_op(DecodeCtx& ctx, const CompiledField& field,
-                                 DecodedField& out, bool pmap_present) {
-        if (!field.is_mandatory && !pmap_present) {
-            out.is_null = true;
-            out.is_present = false;
-            out.value = std::monostate{};
-            out.source = ValueSource::Wire;
-            return DecodeStatus::Ok;
-        }
-
+                                 DecodedField& out, bool /*pmap_present*/) {
         out.source = ValueSource::Wire;
         return read_wire_value(ctx, field.wire_type, field.is_mandatory, out);
     }

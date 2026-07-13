@@ -110,7 +110,7 @@ static void test_valid_compile() {
     const auto& f3 = result.compiled.templates()[0].fields[3];
     CHECK_EQ(f3.name, "IntField");
     CHECK(!f3.is_mandatory);
-    CHECK(f3.has_pmap_bit);  // optional field with no operator: pmap-controlled absence
+    CHECK(!f3.has_pmap_bit);  // optional field with no operator: no pmap bit, nullable wire
 
     TEST_PASS("valid_compile");
 }
@@ -2653,8 +2653,8 @@ static void test_pmap_mandatory_no_operator_no_bit() {
     TEST_PASS("pmap_mandatory_no_operator_no_bit");
 }
 
-// Optional field without operator: pmap-controlled absence, nullable wire when present
-static void test_pmap_optional_no_operator_has_bit() {
+// Optional field without operator: no pmap bit, nullable wire
+static void test_pmap_optional_no_operator_no_bit() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
@@ -2666,9 +2666,9 @@ static void test_pmap_optional_no_operator_has_bit() {
     CHECK(r.ok);
     const auto& f = r.compiled.templates()[0].fields[0];
     CHECK(!f.is_mandatory);
-    CHECK(f.has_pmap_bit);  // optional: pmap controls absence
+    CHECK(!f.has_pmap_bit);  // optional none: no pmap bit, nullable wire
     CHECK(f.wire_type == DecWireType::uInt32);
-    TEST_PASS("pmap_optional_no_operator_has_bit");
+    TEST_PASS("pmap_optional_no_operator_no_bit");
 }
 
 // Mandatory constant: no field presence-map bit
@@ -2820,7 +2820,7 @@ static void test_pmap_entry_with_optional_constant() {
     TEST_PASS("pmap_entry_with_optional_constant");
 }
 
-// Optional no-operator field decode: pmap bit 0 = absent/null
+// Optional no-operator field decode: nullable wire NULL, no pmap bit
 static void test_pmap_optional_no_operator_decode_null() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -2831,28 +2831,27 @@ static void test_pmap_optional_no_operator_decode_null() {
 
     auto ts = compile(xml);
 
-    // Verify metadata: optional, has pmap bit
+    // Verify metadata: optional, no pmap bit
     {
         const auto& f = ts.find(1)->fields[0];
         CHECK(!f.is_mandatory);
-        CHECK(f.has_pmap_bit);
+        CHECK(!f.has_pmap_bit);
     }
 
-    // Wire: pmap [tmpl-id=1, Val absent=0] -> bit6=1, bit5=0 -> 0xC0
+    // Wire: pmap [tmpl-id=1] -> 0xC0 (no field bits)
     // tmpl=1->0x81
-    // Val absent: no wire bytes (pmap controls)
-    auto data = hex("C0" "81");
+    // Optional uInt32 NULL: nullable wire 0x80
+    auto data = hex("C0" "81" "80");
     DecoderSession session(ts);
     auto r = session.decode_exact(data.data(), data.size());
     CHECK(r.status == DecodeStatus::Ok);
     CHECK_EQ(r.message.fields.size(), 1u);
     CHECK(r.message.fields[0].is_null);
-    CHECK(!r.message.fields[0].is_present);
 
     TEST_PASS("pmap_optional_no_operator_decode_null");
 }
 
-// Optional no-operator field decode: pmap bit 1 = present, nullable wire value
+// Optional no-operator field decode: nullable wire non-NULL, no pmap bit
 static void test_pmap_optional_no_operator_decode_present() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -2863,19 +2862,137 @@ static void test_pmap_optional_no_operator_decode_present() {
 
     auto ts = compile(xml);
 
-    // Wire: pmap [tmpl-id=1, Val present=1] -> bit6=1, bit5=1 -> 0xE0
+    // Wire: pmap [tmpl-id=1] -> 0xC0 (no field bits)
     // tmpl=1->0x81
     // Optional uInt32 value 5: nullable wire raw 6 -> 0x86
-    auto data = hex("E0" "81" "86");
+    auto data = hex("C0" "81" "86");
     DecoderSession session(ts);
     auto r = session.decode_exact(data.data(), data.size());
     CHECK(r.status == DecodeStatus::Ok);
     CHECK_EQ(r.message.fields.size(), 1u);
     CHECK(!r.message.fields[0].is_null);
-    CHECK(r.message.fields[0].is_present);
     CHECK_EQ(std::get<std::uint64_t>(r.message.fields[0].value), 5u);
 
     TEST_PASS("pmap_optional_no_operator_decode_present");
+}
+
+// Optional none followed by optional constant: only the constant gets a pmap bit
+static void test_pmap_optional_none_then_optional_constant_only_constant_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="NoneField" id="1" presence="optional"/>
+    <string name="ConstField" id="2" presence="optional"><constant>ABC</constant></string>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f0 = r.compiled.templates()[0].fields[0];
+    const auto& f1 = r.compiled.templates()[0].fields[1];
+    CHECK(!f0.is_mandatory);
+    CHECK(!f0.has_pmap_bit);  // optional none: no pmap bit
+    CHECK(f0.op.kind == OpKind::None);
+    CHECK(!f1.is_mandatory);
+    CHECK(f1.has_pmap_bit);   // optional constant: has pmap bit
+    CHECK(f1.op.kind == OpKind::Constant);
+    TEST_PASS("pmap_optional_none_then_optional_constant_only_constant_bit");
+}
+
+// Sequence entry with optional none only: no entry pmap
+static void test_pmap_sequence_optional_none_no_entry_pmap() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="NoEntries"/>
+      <uInt32 name="Val" id="1" presence="optional"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    // Entry field: optional none: no pmap bit
+    CHECK(!seq.children[1].is_mandatory);
+    CHECK(!seq.children[1].has_pmap_bit);
+    CHECK(seq.children[1].op.kind == OpKind::None);
+
+    // Decode: sequence with 1 entry, optional none NULL via nullable wire
+    // pmap [tmpl-id=1] -> 0xC0, tmpl=1->0x81
+    // seq length=1->0x81
+    // Entry: NO entry pmap (0 entry pmap bits), optional uInt32 NULL=0x80
+    auto ts = compile(xml);
+    auto data = hex("C0" "81" "81" "80");
+    DecoderSession session(ts);
+    auto dr = session.decode_exact(data.data(), data.size());
+    if (dr.status != DecodeStatus::Ok) {
+        std::cerr << "Decode failed: " << decode_status_name(dr.status) << "\n";
+        for (const auto& issue : dr.issues) {
+            std::cerr << "  [" << issue.code << "] " << issue.message << "\n";
+        }
+    }
+    CHECK(dr.status == DecodeStatus::Ok);
+    CHECK(dr.message.fields[0].is_sequence);
+    CHECK_EQ(dr.message.fields[0].entries.size(), 1u);
+    CHECK_EQ(dr.message.fields[0].entries[0].size(), 1u);
+    CHECK(dr.message.fields[0].entries[0][0].is_null);
+
+    TEST_PASS("pmap_sequence_optional_none_no_entry_pmap");
+}
+
+// Sequence entry with optional none followed by optional constant: exactly one entry pmap bit
+static void test_pmap_sequence_optional_none_then_constant_one_entry_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="NoEntries"/>
+      <uInt32 name="Val" id="1" presence="optional"/>
+      <string name="Const" id="2" presence="optional"><constant>XYZ</constant></string>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    // Val: optional none: no pmap bit
+    CHECK(!seq.children[1].has_pmap_bit);
+    CHECK(seq.children[1].op.kind == OpKind::None);
+    // Const: optional constant: has pmap bit
+    CHECK(seq.children[2].has_pmap_bit);
+    CHECK(seq.children[2].op.kind == OpKind::Constant);
+
+    // Decode: 1 entry
+    // pmap [tmpl-id=1] -> 0xC0, tmpl=1->0x81, seq length=1->0x81
+    // Entry pmap: [Const present=1] -> 0xE0 (1 bit, stop=1, value=1)
+    // Entry: optional uInt32 42 -> nullable wire raw 43 -> 0xAB
+    auto ts = compile(xml);
+    auto data = hex("C0" "81" "81" "E0" "AB");
+    DecoderSession session(ts);
+    auto dr = session.decode_exact(data.data(), data.size());
+    if (dr.status != DecodeStatus::Ok) {
+        std::cerr << "Decode failed: " << decode_status_name(dr.status) << "\n";
+        for (const auto& issue : dr.issues) {
+            std::cerr << "  [" << issue.code << "] " << issue.message << "\n";
+        }
+    }
+    CHECK(dr.status == DecodeStatus::Ok);
+    CHECK(dr.message.fields[0].is_sequence);
+    CHECK_EQ(dr.message.fields[0].entries.size(), 1u);
+    CHECK_EQ(dr.message.fields[0].entries[0].size(), 2u);
+    // Val = 42 (nullable wire: raw 43 -> value 42)
+    CHECK(!dr.message.fields[0].entries[0][0].is_null);
+    CHECK_EQ(std::get<std::uint64_t>(dr.message.fields[0].entries[0][0].value), 42u);
+    // Const = "XYZ" (from constant, pmap bit=1)
+    CHECK(dr.message.fields[0].entries[0][1].source == ValueSource::Constant);
+    CHECK_EQ(std::get<std::string>(dr.message.fields[0].entries[0][1].value), "XYZ");
+
+    TEST_PASS("pmap_sequence_optional_none_then_constant_one_entry_bit");
 }
 
 int main() {
@@ -3006,7 +3123,7 @@ int main() {
     test_field_budget_precedence_over_subtree();
     // RT-3 presence-map matrix tests
     test_pmap_mandatory_no_operator_no_bit();
-    test_pmap_optional_no_operator_has_bit();
+    test_pmap_optional_no_operator_no_bit();
     test_pmap_mandatory_constant_no_bit();
     test_pmap_optional_constant_has_bit();
     test_pmap_sequence_no_bit();
@@ -3016,6 +3133,9 @@ int main() {
     test_pmap_entry_with_optional_constant();
     test_pmap_optional_no_operator_decode_null();
     test_pmap_optional_no_operator_decode_present();
+    test_pmap_optional_none_then_optional_constant_only_constant_bit();
+    test_pmap_sequence_optional_none_no_entry_pmap();
+    test_pmap_sequence_optional_none_then_constant_one_entry_bit();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }

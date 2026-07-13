@@ -1146,13 +1146,13 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
 
     // Presence-map matrix for the accepted MOEX SPECTRA profile:
     // - mandatory field without operator: no field bit
-    // - optional field without operator: one field bit (pmap-controlled absence; nullable wire when present)
+    // - optional field without operator: no field bit (nullable wire; NULL from wire value alone)
     // - mandatory constant: no field bit
     // - optional constant: one field bit
     // - other operators (default/copy/increment/delta/tail): one field bit
     switch (f.op.kind) {
         case OpKind::None:
-            f.has_pmap_bit = !f.is_mandatory;
+            f.has_pmap_bit = false;
             break;
         case OpKind::Constant:
             f.has_pmap_bit = !f.is_mandatory;
