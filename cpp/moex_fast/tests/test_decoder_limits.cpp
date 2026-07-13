@@ -501,8 +501,11 @@ static void test_cursor_restore() {
 static void test_session_independence() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
-  <template id="10" name="Msg">
-    <uInt32 name="Val" id="1"><copy/></uInt32>
+  <template id="10" name="Msg10">
+    <uInt32 name="Val" id="1"/>
+  </template>
+  <template id="20" name="Msg20">
+    <uInt32 name="Val" id="1"/>
   </template>
 </templates>)";
 
@@ -511,22 +514,44 @@ static void test_session_independence() {
     DecoderSession s1(ts);
     DecoderSession s2(ts);
 
-    // Set value in s1
-    auto msg1 = hex("E0" "8A" "B7");  // Val=55
-    s1.decode_exact(msg1.data(), msg1.size());
+    // s1: decode message with template 10, Val=55
+    auto msg1 = hex("C0" "8A" "B7");  // pmap=tmpl present, tid=10, Val=55
+    auto r1 = s1.decode_exact(msg1.data(), msg1.size());
+    CHECK(r1.status == DecodeStatus::Ok);
+    CHECK_EQ(std::get<std::uint64_t>(r1.message.fields[0].value), 55u);
 
-    // s2 should not see s1's state
-    auto msg2 = hex("E0" "8A" "81");  // Val=1
+    // s2: decode message with template 20, Val=77
+    auto msg2 = hex("C0" "94" "CD");  // pmap=tmpl present, tid=20, Val=77
     auto r2 = s2.decode_exact(msg2.data(), msg2.size());
     CHECK(r2.status == DecodeStatus::Ok);
-    CHECK_EQ(std::get<std::uint64_t>(r2.message.fields[0].value), 1u);
+    CHECK_EQ(std::get<std::uint64_t>(r2.message.fields[0].value), 77u);
 
-    // s1 should still have its own state
-    auto msg3 = hex("80");  // copy previous = 55
+    // Verify each session's fingerprint carries its own template ID
+    auto fp1 = s1.fingerprint();
+    CHECK(fp1.has_template_id);
+    CHECK_EQ(fp1.template_id, 10u);
+
+    auto fp2 = s2.fingerprint();
+    CHECK(fp2.has_template_id);
+    CHECK_EQ(fp2.template_id, 20u);
+
+    // s1: decode with omitted template ID (reuse 10), Val=30
+    auto msg3 = hex("80" "9E");  // pmap=tmpl absent, reuse tid=10, Val=30
     auto r3 = s1.decode_exact(msg3.data(), msg3.size());
     CHECK(r3.status == DecodeStatus::Ok);
-    CHECK(r3.message.fields[0].source == ValueSource::Copy);
-    CHECK_EQ(std::get<std::uint64_t>(r3.message.fields[0].value), 55u);
+    CHECK_EQ(r3.message.template_id, 10u);
+    CHECK_EQ(std::get<std::uint64_t>(r3.message.fields[0].value), 30u);
+
+    // s2: decode with omitted template ID (reuse 20), Val=40
+    auto msg4 = hex("80" "A8");  // pmap=tmpl absent, reuse tid=20, Val=40
+    auto r4 = s2.decode_exact(msg4.data(), msg4.size());
+    CHECK(r4.status == DecodeStatus::Ok);
+    CHECK_EQ(r4.message.template_id, 20u);
+    CHECK_EQ(std::get<std::uint64_t>(r4.message.fields[0].value), 40u);
+
+    // Verify fingerprints still reflect independent template IDs
+    CHECK_EQ(s1.fingerprint().template_id, 10u);
+    CHECK_EQ(s2.fingerprint().template_id, 20u);
 
     TEST_PASS("session_independence");
 }
