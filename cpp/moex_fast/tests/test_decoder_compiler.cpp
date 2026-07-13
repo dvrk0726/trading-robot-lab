@@ -56,6 +56,24 @@ static void check_invalid_compile_9B2(const CompileResult& r, const std::string&
     CHECK(r.compiled.find(1) == nullptr);
 }
 
+// Assert exactly one issue with exact code, field_path, message and complete invalid/empty handle invariant.
+static void check_single_issue_exact(const CompileResult& r,
+                                      const std::string& expected_code,
+                                      const std::string& expected_field_path,
+                                      const std::string& expected_message) {
+    CHECK(!r.ok);
+    CHECK_EQ(r.issues.size(), 1u);
+    CHECK_EQ(r.issues[0].code, expected_code);
+    CHECK_EQ(r.issues[0].field_path, expected_field_path);
+    CHECK_EQ(r.issues[0].message, expected_message);
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+}
+
 // --- static_assert: template collection returns const ref only ---
 static_assert(std::is_same_v<
     decltype(std::declval<const CompiledTemplateSet&>().templates()),
@@ -853,74 +871,6 @@ static void test_int64_constant_range() {
     TEST_PASS("int64_constant_range");
 }
 
-// Decimal exponent MIN/MAX and mantissa MIN/MAX exact metadata; adjacent failures
-static void test_decimal_component_range() {
-    // Exponent MAX (INT32_MAX) and mantissa MAX (INT64_MAX) succeed with exact metadata
-    {
-        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <decimal name="D">
-      <exponent><constant>2147483647</constant></exponent>
-      <mantissa><constant>9223372036854775807</constant></mantissa>
-    </decimal>
-  </template>
-</templates>)";
-        auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        const auto& f = r.compiled.templates()[0].fields[0];
-        CHECK(f.is_decimal);
-        CHECK_EQ(f.exponent_op.constant_int, INT32_MAX);
-        CHECK_EQ(f.mantissa_op.constant_int, INT64_MAX);
-    }
-    // Exponent MIN and mantissa MIN succeed
-    {
-        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <decimal name="D">
-      <exponent><constant>-2147483648</constant></exponent>
-      <mantissa><constant>-9223372036854775808</constant></mantissa>
-    </decimal>
-  </template>
-</templates>)";
-        auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        const auto& f = r.compiled.templates()[0].fields[0];
-        CHECK_EQ(f.exponent_op.constant_int, INT32_MIN);
-        CHECK_EQ(f.mantissa_op.constant_int, INT64_MIN);
-    }
-    // Exponent MAX+1 fails
-    {
-        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <decimal name="D">
-      <exponent><constant>2147483648</constant></exponent>
-      <mantissa><constant>0</constant></mantissa>
-    </decimal>
-  </template>
-</templates>)";
-        auto r = compile_templates_from_string(xml);
-        check_invalid_compile_9B1(r, "invalid_constant_value");
-    }
-    // Mantissa MAX+1 fails
-    {
-        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <decimal name="D">
-      <exponent><constant>0</constant></exponent>
-      <mantissa><constant>9223372036854775808</constant></mantissa>
-    </decimal>
-  </template>
-</templates>)";
-        auto r = compile_templates_from_string(xml);
-        check_invalid_compile_9B1(r, "invalid_constant_value");
-    }
-    TEST_PASS("decimal_component_range");
-}
-
 // Excluded operator <default> on sequence length fails with unsupported_operator
 static void test_sequence_length_initial_range() {
     // <default>0</default> on length
@@ -1301,15 +1251,15 @@ static void test_structural_operator_nested_child() {
     TEST_PASS("structural_operator_nested_child");
 }
 
-// Duplicate decimal exponent returns duplicate_decimal_exponent
+// Duplicate decimal exponent returns duplicate_decimal_exponent (operator-free fixture)
 static void test_structural_duplicate_decimal_exponent() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <decimal name="D">
-      <exponent><constant>1</constant></exponent>
-      <exponent><constant>2</constant></exponent>
-      <mantissa><constant>0</constant></mantissa>
+      <exponent/>
+      <exponent/>
+      <mantissa/>
     </decimal>
   </template>
 </templates>)";
@@ -1319,15 +1269,15 @@ static void test_structural_duplicate_decimal_exponent() {
     TEST_PASS("structural_duplicate_decimal_exponent");
 }
 
-// Duplicate decimal mantissa returns duplicate_decimal_mantissa
+// Duplicate decimal mantissa returns duplicate_decimal_mantissa (operator-free fixture)
 static void test_structural_duplicate_decimal_mantissa() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <decimal name="D">
-      <exponent><constant>0</constant></exponent>
-      <mantissa><constant>1</constant></mantissa>
-      <mantissa><constant>2</constant></mantissa>
+      <exponent/>
+      <mantissa/>
+      <mantissa/>
     </decimal>
   </template>
 </templates>)";
@@ -1367,7 +1317,7 @@ static void test_structural_decimal_unknown_presence() {
     TEST_PASS("structural_decimal_unknown_presence");
 }
 
-// Two operators in exponent returns multiple_operators
+// Two operators in exponent: first direct operator rejected at compile time
 static void test_structural_exponent_two_operators() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -1380,18 +1330,21 @@ static void test_structural_exponent_two_operators() {
 </templates>)";
 
     auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B1(r, "multiple_operators");
+    check_single_issue_exact(r, "unsupported_decimal_component_operator",
+                             "D.exponent",
+                             "Operator <constant> on decimal component <exponent> "
+                             "is outside the accepted MOEX SPECTRA T0/T1 profile (D.exponent)");
     TEST_PASS("structural_exponent_two_operators");
 }
 
-// Unknown child in exponent returns unknown_element
+// Unknown child in exponent returns unknown_element (no operators in decimal)
 static void test_structural_exponent_unknown_child() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <decimal name="D">
       <exponent><bogus/></exponent>
-      <mantissa><constant>0</constant></mantissa>
+      <mantissa/>
     </decimal>
   </template>
 </templates>)";
@@ -1401,30 +1354,33 @@ static void test_structural_exponent_unknown_child() {
     TEST_PASS("structural_exponent_unknown_child");
 }
 
-// Two operators in mantissa returns multiple_operators
+// Two operators in mantissa: first direct operator rejected at compile time
 static void test_structural_mantissa_two_operators() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <decimal name="D">
-      <exponent><constant>0</constant></exponent>
+      <exponent/>
       <mantissa><constant>1</constant><copy/></mantissa>
     </decimal>
   </template>
 </templates>)";
 
     auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B1(r, "multiple_operators");
+    check_single_issue_exact(r, "unsupported_decimal_component_operator",
+                             "D.mantissa",
+                             "Operator <constant> on decimal component <mantissa> "
+                             "is outside the accepted MOEX SPECTRA T0/T1 profile (D.mantissa)");
     TEST_PASS("structural_mantissa_two_operators");
 }
 
-// Unknown child in mantissa returns unknown_element
+// Unknown child in mantissa returns unknown_element (no operators in decimal)
 static void test_structural_mantissa_unknown_child() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <decimal name="D">
-      <exponent><constant>0</constant></exponent>
+      <exponent/>
       <mantissa><bogus/></mantissa>
     </decimal>
   </template>
@@ -1807,14 +1763,14 @@ static void test_9B2_unknown_attr_length() {
     TEST_PASS("9B2_unknown_attr_length");
 }
 
-// Test 5g: Unknown attribute on exponent returns unknown_attribute
+// Test 5g: Unknown attribute on exponent returns unknown_attribute (no component operators)
 static void test_9B2_unknown_attr_exponent() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <decimal name="D">
-      <exponent unknown="x"><constant>0</constant></exponent>
-      <mantissa><constant>0</constant></mantissa>
+      <exponent unknown="x"/>
+      <mantissa/>
     </decimal>
   </template>
 </templates>)";
@@ -1823,14 +1779,14 @@ static void test_9B2_unknown_attr_exponent() {
     TEST_PASS("9B2_unknown_attr_exponent");
 }
 
-// Test 5h: Unknown attribute on mantissa returns unknown_attribute
+// Test 5h: Unknown attribute on mantissa returns unknown_attribute (no component operators)
 static void test_9B2_unknown_attr_mantissa() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <decimal name="D">
-      <exponent><constant>0</constant></exponent>
-      <mantissa unknown="x"><constant>0</constant></mantissa>
+      <exponent/>
+      <mantissa unknown="x"/>
     </decimal>
   </template>
 </templates>)";
@@ -3293,7 +3249,6 @@ int main() {
     test_uint64_constant_range();
     test_int32_constant_range();
     test_int64_constant_range();
-    test_decimal_component_range();
     test_sequence_length_initial_range();
     test_reject_hex_literal();
     test_valid_ascii_static_values();

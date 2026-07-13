@@ -44,6 +44,31 @@ static void check_invalid_compile(const CompileResult& r, const std::string& exp
     CHECK(r.compiled.find(1) == nullptr);
 }
 
+// Assert the complete invalid/empty CompiledTemplateSet invariant for single-issue rejection.
+static void check_single_issue_rejection(const CompileResult& r,
+                                          const std::string& expected_code,
+                                          const std::string& expected_field_path,
+                                          const std::string& expected_message) {
+    CHECK(!r.ok);
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    // Exactly one issue
+    CHECK_EQ(r.issues.size(), 1u);
+    CHECK_EQ(r.issues[0].code, expected_code);
+    CHECK_EQ(r.issues[0].field_path, expected_field_path);
+    CHECK_EQ(r.issues[0].message, expected_message);
+    // No secondary diagnostics
+    CHECK(!has_issue(r, "unknown_attribute"));
+    CHECK(!has_issue(r, "unknown_element"));
+    CHECK(!has_issue(r, "multiple_operators"));
+    CHECK(!has_issue(r, "unsupported_operator"));
+    CHECK(!has_issue(r, "unsupported_operator_type"));
+}
+
 // Test: constant operator - no wire bytes consumed
 static void test_constant_operator() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
@@ -140,7 +165,7 @@ static void test_optional_decimal_non_null_no_field_bit() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="10" name="DecimalMsg">
-    <decimal name="Price" id="1" presence="optional"/>
+    <decimal name="Price" id="1" presence="optional"><exponent/><mantissa/></decimal>
   </template>
 </templates>)";
 
@@ -208,70 +233,49 @@ static void test_optional_decimal_null_no_mantissa() {
     TEST_PASS("optional_decimal_null_no_mantissa");
 }
 
-// Test: decimal runtime preflight rejects non-None component operator
-static void test_decimal_preflight_operator() {
+// Test: compile-time rejection of <constant> in top-level decimal exponent
+static void test_decimal_compile_reject_constant_in_exponent() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="10" name="DecimalMsg">
-    <decimal name="Price" id="1" presence="optional"/>
+    <decimal name="Price" id="1" presence="optional">
+      <exponent bad_attr="x"><constant>5</constant><nested/></exponent>
+      <mantissa/>
+    </decimal>
   </template>
 </templates>)";
 
-    auto ts = compile(xml);
+    auto r = compile_templates_from_string(xml);
+    check_single_issue_rejection(r, "unsupported_decimal_component_operator",
+                                 "Price.exponent",
+                                 "Operator <constant> on decimal component <exponent> "
+                                 "is outside the accepted MOEX SPECTRA T0/T1 profile (Price.exponent)");
 
-    // Verify valid no-operator decimal compiles correctly
-    {
-        const auto* tmpl = ts.find(10);
-        CHECK(tmpl != nullptr);
-        CHECK_EQ(tmpl->fields.size(), 1u);
-        const auto& f = tmpl->fields[0];
-        CHECK(f.is_decimal);
-        CHECK(!f.is_mandatory);
-        CHECK(f.exponent_op.kind == OpKind::None);
-        CHECK(f.mantissa_op.kind == OpKind::None);
-    }
+    TEST_PASS("decimal_compile_reject_constant_in_exponent");
+}
 
-    // Test-only: simulate corrupted compiled state by setting mantissa_op.kind to Copy
-    {
-        const auto* tmpl = ts.find(10);
-        auto& f = const_cast<CompiledField&>(tmpl->fields[0]);
-        f.mantissa_op.kind = OpKind::Copy;
-    }
+// Test: compile-time rejection of <copy> in nested decimal mantissa (inside sequence)
+static void test_decimal_compile_reject_copy_in_mantissa() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="SeqMsg">
+    <sequence name="Entries">
+      <length name="Count"/>
+      <decimal name="Price" id="1" presence="optional">
+        <exponent/>
+        <mantissa bad_attr="y"><copy/><nested/></mantissa>
+      </decimal>
+    </sequence>
+  </template>
+</templates>)";
 
-    DecoderSession session(ts);
+    auto r = compile_templates_from_string(xml);
+    check_single_issue_rejection(r, "unsupported_decimal_component_operator",
+                                 "Entries.Price.mantissa",
+                                 "Operator <copy> on decimal component <mantissa> "
+                                 "is outside the accepted MOEX SPECTRA T0/T1 profile (Entries.Price.mantissa)");
 
-    // Snapshot fingerprint before decode
-    auto fp_before = session.fingerprint();
-
-    // pmap: [tmpl-id=1] -> 0xC0
-    // tmpl-id 10 -> 0x8A
-    // nullable exponent NULL -> 0x80
-    auto msg = hex("C0" "8A" "80");
-    auto r = session.decode_exact(msg.data(), msg.size());
-
-    // Must reject with UnsupportedTemplateFeature
-    CHECK(r.status == DecodeStatus::UnsupportedTemplateFeature);
-
-    // Issue must carry unsupported_operator_runtime with exact decimal field path
-    CHECK(r.issues.size() >= 1u);
-    bool found_issue = false;
-    for (const auto& issue : r.issues) {
-        if (issue.code == "unsupported_operator_runtime" &&
-            issue.field_path == "DecimalMsg.Price") {
-            found_issue = true;
-            break;
-        }
-    }
-    CHECK(found_issue);
-
-    // Fingerprint must be unchanged (transaction rolled back)
-    auto fp_after = session.fingerprint();
-    CHECK(fp_before.has_template_id == fp_after.has_template_id);
-    CHECK_EQ(fp_before.template_id, fp_after.template_id);
-    CHECK_EQ(fp_before.dict_entry_count, fp_after.dict_entry_count);
-    CHECK_EQ(fp_before.dict_hash, fp_after.dict_hash);
-
-    TEST_PASS("decimal_preflight_operator");
+    TEST_PASS("decimal_compile_reject_copy_in_mantissa");
 }
 
 int main() {
@@ -282,7 +286,8 @@ int main() {
     test_excluded_operator_multiple();
     test_optional_decimal_non_null_no_field_bit();
     test_optional_decimal_null_no_mantissa();
-    test_decimal_preflight_operator();
+    test_decimal_compile_reject_constant_in_exponent();
+    test_decimal_compile_reject_copy_in_mantissa();
     std::cout << "All decoder operator tests passed.\n";
     return 0;
 }

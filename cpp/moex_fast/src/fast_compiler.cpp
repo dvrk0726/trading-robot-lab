@@ -530,6 +530,34 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
     auto exponent_node = node.child("exponent");
     auto mantissa_node = node.child("mantissa");
 
+    // Preflight: reject any operator directly inside decimal <exponent> or <mantissa>.
+    // Scans component nodes in XML document order; reports the first recognized operator
+    // and returns immediately. This runs before component attribute validation,
+    // operator attribute/value parsing, nested operator-child validation,
+    // component operator-count diagnostics, parse_operator invocation,
+    // or component operator metadata construction.
+    {
+        struct CompScan { pugi::xml_node node; const char* name; };
+        CompScan scans[] = {
+            {exponent_node, "exponent"},
+            {mantissa_node, "mantissa"}
+        };
+        for (auto& cs : scans) {
+            if (!cs.node) continue;
+            for (auto child : cs.node.children()) {
+                std::string cname(child.name());
+                if (is_operator_element(cname)) {
+                    std::string comp_path = field_path + "." + cs.name;
+                    ctx.error("unsupported_decimal_component_operator",
+                              "Operator <" + cname + "> on decimal component <" + cs.name +
+                              "> is outside the accepted MOEX SPECTRA T0/T1 profile (" + comp_path + ")",
+                              comp_path);
+                    return f;
+                }
+            }
+        }
+    }
+
     // Validate decimal children: reject unknown elements and duplicate exponent/mantissa
     {
         int exp_count = 0, man_count = 0;
@@ -563,46 +591,26 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
     if (exponent_node) {
         // Validate exponent attributes (no ordinary attributes)
         validate_element_attributes(exponent_node, {}, ctx, field_path + ".exponent");
-        // Validate exponent children: zero or one operator; no other element children
-        int exp_op_count = 0;
+        // Validate exponent children: no element children allowed
         for (auto echild : exponent_node.children()) {
             std::string ename(echild.name());
-            if (is_operator_element(ename)) {
-                exp_op_count++;
-                if (exp_op_count > 1) {
-                    ctx.error("multiple_operators",
-                              "Multiple operators in exponent " + field_path + ".exponent", field_path);
-                }
-            } else if (!ename.empty()) {
+            if (!ename.empty()) {
                 ctx.error("unknown_element",
                           "Unknown child <" + ename + "> in exponent " + field_path + ".exponent", field_path);
             }
         }
-        f.exponent_op = parse_operator(exponent_node, DecWireType::Int32,
-                                        ctx, field_path + ".exponent");
-        f.exponent_op.is_decimal_component = true;
     }
     if (mantissa_node) {
         // Validate mantissa attributes (no ordinary attributes)
         validate_element_attributes(mantissa_node, {}, ctx, field_path + ".mantissa");
-        // Validate mantissa children: zero or one operator; no other element children
-        int man_op_count = 0;
+        // Validate mantissa children: no element children allowed
         for (auto mchild : mantissa_node.children()) {
             std::string mname(mchild.name());
-            if (is_operator_element(mname)) {
-                man_op_count++;
-                if (man_op_count > 1) {
-                    ctx.error("multiple_operators",
-                              "Multiple operators in mantissa " + field_path + ".mantissa", field_path);
-                }
-            } else if (!mname.empty()) {
+            if (!mname.empty()) {
                 ctx.error("unknown_element",
                           "Unknown child <" + mname + "> in mantissa " + field_path + ".mantissa", field_path);
             }
         }
-        f.mantissa_op = parse_operator(mantissa_node, DecWireType::Int64,
-                                        ctx, field_path + ".mantissa");
-        f.mantissa_op.is_decimal_component = true;
     }
 
     if (!exponent_node) {
