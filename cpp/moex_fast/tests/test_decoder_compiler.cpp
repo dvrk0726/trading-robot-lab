@@ -3068,6 +3068,72 @@ static void test_optional_constant_present_flags() {
     TEST_PASS("optional_constant_present_flags");
 }
 
+// === RT-3 excessive_fields diagnostics regression ===
+
+// Top-level field overflow: exact message contains owning template name
+static void test_excessive_fields_top_level_diag() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="TopLevelDiag">
+    <uInt32 name="F1"/>
+    <uInt32 name="F2"/>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "excessive_fields" &&
+            issue.message == "Field count exceeds limit in template TopLevelDiag") {
+            found = true;
+        }
+    }
+    CHECK(found);
+    // Full invalid/empty compiled-handle invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("excessive_fields_top_level_diag");
+}
+
+// Sequence length child overflow: exact message contains owning template name
+static void test_excessive_fields_sequence_length_diag() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="SequenceDiag">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "excessive_fields" &&
+            issue.message == "Field count exceeds limit in template SequenceDiag") {
+            found = true;
+        }
+    }
+    CHECK(found);
+    // Full invalid/empty compiled-handle invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("excessive_fields_sequence_length_diag");
+}
+
 int main() {
     test_valid_compile();
     test_duplicate_template_id();
@@ -3214,6 +3280,9 @@ int main() {
     test_mandatory_decimal_no_pmap_bit();
     test_optional_constant_absent_flags();
     test_optional_constant_present_flags();
+    // RT-3 excessive_fields diagnostics regression
+    test_excessive_fields_top_level_diag();
+    test_excessive_fields_sequence_length_diag();
     std::cout << "All decoder compiler tests passed.\n";
     return 0;
 }

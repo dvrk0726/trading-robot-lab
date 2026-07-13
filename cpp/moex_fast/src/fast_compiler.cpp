@@ -627,11 +627,13 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
 void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
                   CompileCtx& ctx,
                   const std::string& parent_path, std::uint32_t nesting_depth,
-                  std::uint32_t& field_index, bool parent_is_sequence);
+                  std::uint32_t& field_index, bool parent_is_sequence,
+                  const std::string& template_name);
 
 CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
                           CompileCtx& ctx,
-                          const std::string& parent_path, std::uint32_t nesting_depth) {
+                          const std::string& parent_path, std::uint32_t nesting_depth,
+                          const std::string& template_name) {
     CompiledField f;
     f.index = field_index - 1;  // index already pre-allocated by caller
     f.name = node.attribute("name").as_string("");
@@ -725,7 +727,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
             // C. Budget check for length child before allocation
             if (field_index >= ctx.limits.max_fields_per_template) {
                 ctx.error("excessive_fields",
-                          "Field count exceeds limit in template " + field_path);
+                          "Field count exceeds limit in template " + template_name);
                 return f;
             }
 
@@ -789,7 +791,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         }
 
         std::vector<CompiledField> entry_fields;
-        parse_fields(node, entry_fields, ctx, field_path, nesting_depth + 1, field_index, true);
+        parse_fields(node, entry_fields, ctx, field_path, nesting_depth + 1, field_index, true, template_name);
 
         for (auto& ef : entry_fields) {
             f.children.push_back(std::move(ef));
@@ -803,7 +805,7 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         f.has_children = true;
         f.has_pmap_bit = !f.is_mandatory;
 
-        parse_fields(node, f.children, ctx, field_path, nesting_depth + 1, field_index, false);
+        parse_fields(node, f.children, ctx, field_path, nesting_depth + 1, field_index, false, template_name);
         return f;
     }
 
@@ -871,7 +873,8 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
 void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
                   CompileCtx& ctx,
                   const std::string& parent_path, std::uint32_t nesting_depth,
-                  std::uint32_t& field_index, bool parent_is_sequence) {
+                  std::uint32_t& field_index, bool parent_is_sequence,
+                  const std::string& template_name) {
     for (auto child : parent.children()) {
         std::string name(child.name());
 
@@ -934,12 +937,12 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
         // C. Early field/node accounting: check budget before allocating
         if (field_index >= ctx.limits.max_fields_per_template) {
             ctx.error("excessive_fields",
-                      "Field count exceeds limit in template " + parent_path);
+                      "Field count exceeds limit in template " + template_name);
             return;
         }
         field_index++;
 
-        auto field = parse_field(child, field_index, ctx, parent_path, nesting_depth);
+        auto field = parse_field(child, field_index, ctx, parent_path, nesting_depth, template_name);
         if (ctx.has_errors()) return;
         fields.push_back(std::move(field));
     }
@@ -1072,7 +1075,7 @@ CompileDraft compile_from_doc(pugi::xml_document& doc, const std::string& xml_co
         validate_element_attributes(tmpl, {"id", "name"}, ctx, "template " + ct.name);
 
         std::uint32_t field_index = 0;
-        parse_fields(tmpl, ct.fields, ctx, "", 0, field_index, false);
+        parse_fields(tmpl, ct.fields, ctx, "", 0, field_index, false, ct.name);
 
         ct.total_pmap_bits = count_pmap_bits(ct.fields);
 
