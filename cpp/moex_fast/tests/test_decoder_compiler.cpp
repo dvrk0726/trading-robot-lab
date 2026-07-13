@@ -216,8 +216,7 @@ static void test_decimal_compile() {
 }
 
 static void test_dictionary_collision() {
-    // Two fields with same dictionary scope, template, name and type collide
-    // Same explicit key means same dictionary entry — which is ambiguous
+    // <copy> is an excluded operator; compilation fails before dictionary collision
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="10" name="Msg">
@@ -227,14 +226,7 @@ static void test_dictionary_collision() {
 </templates>)";
 
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    bool found = false;
-    for (const auto& issue : result.issues) {
-        if (issue.code == "duplicate_dictionary_key") found = true;
-    }
-    CHECK(found);
-    CHECK(!result.compiled.valid());
-    CHECK_EQ(result.compiled.size(), 0u);
+    check_invalid_compile_9B1(result, "unsupported_operator");
     TEST_PASS("dictionary_collision");
 }
 
@@ -279,7 +271,7 @@ static void test_template_ref_rejection() {
 }
 
 static void test_unsupported_operator_type() {
-    // tail on uInt32 is unsupported
+    // tail on uInt32 is an excluded operator
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="10" name="Msg">
@@ -288,17 +280,12 @@ static void test_unsupported_operator_type() {
 </templates>)";
 
     auto result = compile_templates_from_string(xml);
-    CHECK(!result.ok);
-    bool found = false;
-    for (const auto& issue : result.issues) {
-        if (issue.code == "unsupported_operator_type") found = true;
-    }
-    CHECK(found);
-    CHECK(!result.compiled.valid());
+    check_invalid_compile_9B1(result, "unsupported_operator");
     TEST_PASS("unsupported_operator_type");
 }
 
 static void test_copy_with_dictionary_scope() {
+    // <copy> is an excluded operator; dictionary scope is irrelevant
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="10" name="Msg">
@@ -308,13 +295,7 @@ static void test_copy_with_dictionary_scope() {
 </templates>)";
 
     auto result = compile_templates_from_string(xml);
-    CHECK(result.ok);
-    const auto& f1 = result.compiled.templates()[0].fields[0];
-    CHECK(f1.op.kind == OpKind::Copy);
-    CHECK(f1.op.scope == DictScope::Global);
-    const auto& f2 = result.compiled.templates()[0].fields[1];
-    CHECK(f2.op.kind == OpKind::Copy);
-    CHECK(f2.op.scope == DictScope::TemplateType);
+    check_invalid_compile_9B1(result, "unsupported_operator");
     TEST_PASS("copy_with_dictionary_scope");
 }
 
@@ -883,9 +864,9 @@ static void test_decimal_component_range() {
     TEST_PASS("decimal_component_range");
 }
 
-// Sequence length initial 0/UINT32_MAX exact metadata; negative and MAX+1 fail
+// Excluded operator <default> on sequence length fails with unsupported_operator
 static void test_sequence_length_initial_range() {
-    // 0 succeeds
+    // <default>0</default> on length
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -897,11 +878,9 @@ static void test_sequence_length_initial_range() {
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        CHECK(r.compiled.templates()[0].fields[0].length_op.has_initial);
-        CHECK_EQ(r.compiled.templates()[0].fields[0].length_op.initial_uint, 0u);
+        check_invalid_compile_9B1(r, "unsupported_operator");
     }
-    // UINT32_MAX succeeds
+    // <default>4294967295</default> on length
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -913,10 +892,9 @@ static void test_sequence_length_initial_range() {
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        CHECK_EQ(r.compiled.templates()[0].fields[0].length_op.initial_uint, UINT32_MAX);
+        check_invalid_compile_9B1(r, "unsupported_operator");
     }
-    // Negative fails
+    // <default>-1</default> on length
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -928,9 +906,9 @@ static void test_sequence_length_initial_range() {
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        check_invalid_compile_9B1(r, "invalid_default_value");
+        check_invalid_compile_9B1(r, "unsupported_operator");
     }
-    // MAX+1 fails
+    // <default>4294967296</default> on length
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -942,7 +920,7 @@ static void test_sequence_length_initial_range() {
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        check_invalid_compile_9B1(r, "invalid_default_value");
+        check_invalid_compile_9B1(r, "unsupported_operator");
     }
     TEST_PASS("sequence_length_initial_range");
 }
@@ -1077,40 +1055,36 @@ static void test_exact_1mib_static_value() {
     TEST_PASS("exact_1mib_static_value");
 }
 
-// Default operator initial value: uInt64 MAX
+// Excluded operator <default> on uInt64 fails with unsupported_operator
 static void test_uint64_default_initial() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt64 name="F"><default>18446744073709551615</default></uInt64></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    CHECK(r.ok);
-    CHECK_EQ(r.compiled.templates()[0].fields[0].op.initial_uint, UINT64_MAX);
-    CHECK(r.compiled.templates()[0].fields[0].op.has_initial);
+    check_invalid_compile_9B1(r, "unsupported_operator");
     TEST_PASS("uint64_default_initial");
 }
 
-// Copy operator initial value: uInt64 MAX
+// Excluded operator <copy> on uInt64 fails with unsupported_operator
 static void test_uint64_copy_initial() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt64 name="F"><copy>18446744073709551615</copy></uInt64></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    CHECK(r.ok);
-    CHECK_EQ(r.compiled.templates()[0].fields[0].op.initial_uint, UINT64_MAX);
+    check_invalid_compile_9B1(r, "unsupported_operator");
     TEST_PASS("uint64_copy_initial");
 }
 
-// Increment operator initial value: uInt64 MAX
+// Excluded operator <increment> on uInt64 fails with unsupported_operator
 static void test_uint64_increment_initial() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt64 name="F"><increment>18446744073709551615</increment></uInt64></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    CHECK(r.ok);
-    CHECK_EQ(r.compiled.templates()[0].fields[0].op.initial_uint, UINT64_MAX);
+    check_invalid_compile_9B1(r, "unsupported_operator");
     TEST_PASS("uint64_increment_initial");
 }
 
@@ -1875,9 +1849,10 @@ static void test_9B2_unknown_attr_reference() {
     TEST_PASS("9B2_unknown_attr_reference");
 }
 
-// Test 6: Allowed synthetic operator attributes compile on corresponding operator families
+// Test 6: Excluded operators (default, copy, increment, delta, tail) fail with unsupported_operator;
+// constant with value attribute remains supported
 static void test_9B2_operator_attr_allowed_families() {
-    // value on constant
+    // value on constant — still supported
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -1887,55 +1862,50 @@ static void test_9B2_operator_attr_allowed_families() {
         CHECK(r.ok);
         CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 42u);
     }
-    // value,key,dictionary on default
+    // value,key,dictionary on default — excluded operator
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt32 name="F1"><default value="10" key="k1" dictionary="global"/></uInt32></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        CHECK(r.compiled.templates()[0].fields[0].op.has_initial);
+        check_invalid_compile_9B2(r, "unsupported_operator");
     }
-    // value,key,dictionary on copy
+    // value,key,dictionary on copy — excluded operator
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt32 name="F1"><copy value="5" key="k2" dictionary="template"/></uInt32></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        CHECK(r.compiled.templates()[0].fields[0].op.has_initial);
+        check_invalid_compile_9B2(r, "unsupported_operator");
     }
-    // value,key,dictionary on increment
+    // value,key,dictionary on increment — excluded operator
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt32 name="F1"><increment value="1" key="k3" dictionary="global"/></uInt32></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        CHECK(r.compiled.templates()[0].fields[0].op.has_initial);
+        check_invalid_compile_9B2(r, "unsupported_operator");
     }
-    // key,dictionary on delta
+    // key,dictionary on delta — excluded operator
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><string name="F1"><delta key="k4" dictionary="global"/></string></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        CHECK(r.compiled.templates()[0].fields[0].op.kind == OpKind::Delta);
+        check_invalid_compile_9B2(r, "unsupported_operator");
     }
-    // key,dictionary on tail
+    // key,dictionary on tail — excluded operator
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><string name="F1"><tail key="k5" dictionary="global"/></string></template>
 </templates>)";
         auto r = compile_templates_from_string(xml);
-        CHECK(r.ok);
-        CHECK(r.compiled.templates()[0].fields[0].op.kind == OpKind::Tail);
+        check_invalid_compile_9B2(r, "unsupported_operator");
     }
     TEST_PASS("9B2_operator_attr_allowed_families");
 }
@@ -1963,6 +1933,7 @@ static void test_9B2_text_value_equivalent_constant() {
     TEST_PASS("9B2_text_value_equivalent_constant");
 }
 
+// Excluded operator <default> fails in both text and value forms
 static void test_9B2_text_value_equivalent_default() {
     const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -1974,16 +1945,12 @@ static void test_9B2_text_value_equivalent_default() {
 </templates>)";
     auto r1 = compile_templates_from_string(xml_text);
     auto r2 = compile_templates_from_string(xml_value);
-    CHECK(r1.ok);
-    CHECK(r2.ok);
-    const auto& f1 = r1.compiled.templates()[0].fields[0];
-    const auto& f2 = r2.compiled.templates()[0].fields[0];
-    CHECK(f1.op.kind == f2.op.kind);
-    CHECK(f1.op.has_initial == f2.op.has_initial);
-    CHECK(f1.op.initial_uint == f2.op.initial_uint);
+    check_invalid_compile_9B2(r1, "unsupported_operator");
+    check_invalid_compile_9B2(r2, "unsupported_operator");
     TEST_PASS("9B2_text_value_equivalent_default");
 }
 
+// Excluded operator <copy> fails in both text and value forms
 static void test_9B2_text_value_equivalent_copy() {
     const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -1995,16 +1962,12 @@ static void test_9B2_text_value_equivalent_copy() {
 </templates>)";
     auto r1 = compile_templates_from_string(xml_text);
     auto r2 = compile_templates_from_string(xml_value);
-    CHECK(r1.ok);
-    CHECK(r2.ok);
-    const auto& f1 = r1.compiled.templates()[0].fields[0];
-    const auto& f2 = r2.compiled.templates()[0].fields[0];
-    CHECK(f1.op.kind == f2.op.kind);
-    CHECK(f1.op.has_initial == f2.op.has_initial);
-    CHECK(f1.op.initial_uint == f2.op.initial_uint);
+    check_invalid_compile_9B2(r1, "unsupported_operator");
+    check_invalid_compile_9B2(r2, "unsupported_operator");
     TEST_PASS("9B2_text_value_equivalent_copy");
 }
 
+// Excluded operator <increment> fails in both text and value forms
 static void test_9B2_text_value_equivalent_increment() {
     const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -2016,13 +1979,8 @@ static void test_9B2_text_value_equivalent_increment() {
 </templates>)";
     auto r1 = compile_templates_from_string(xml_text);
     auto r2 = compile_templates_from_string(xml_value);
-    CHECK(r1.ok);
-    CHECK(r2.ok);
-    const auto& f1 = r1.compiled.templates()[0].fields[0];
-    const auto& f2 = r2.compiled.templates()[0].fields[0];
-    CHECK(f1.op.kind == f2.op.kind);
-    CHECK(f1.op.has_initial == f2.op.has_initial);
-    CHECK(f1.op.initial_uint == f2.op.initial_uint);
+    check_invalid_compile_9B2(r1, "unsupported_operator");
+    check_invalid_compile_9B2(r2, "unsupported_operator");
     TEST_PASS("9B2_text_value_equivalent_increment");
 }
 
@@ -2037,44 +1995,47 @@ static void test_9B2_ambiguous_value_constant() {
     TEST_PASS("9B2_ambiguous_value_constant");
 }
 
+// Excluded operator <default> rejected before ambiguous value check
 static void test_9B2_ambiguous_value_default() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt32 name="F"><default value="10">10</default></uInt32></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    check_invalid_compile_9B2(r, "unsupported_operator");
     TEST_PASS("9B2_ambiguous_value_default");
 }
 
+// Excluded operator <copy> rejected before ambiguous value check
 static void test_9B2_ambiguous_value_copy() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt32 name="F"><copy value="7">7</copy></uInt32></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    check_invalid_compile_9B2(r, "unsupported_operator");
     TEST_PASS("9B2_ambiguous_value_copy");
 }
 
+// Excluded operator <increment> rejected before ambiguous value check
 static void test_9B2_ambiguous_value_increment() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><uInt32 name="F"><increment value="3">3</increment></uInt32></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    check_invalid_compile_9B2(r, "unsupported_operator");
     TEST_PASS("9B2_ambiguous_value_increment");
 }
 
-// Test 9: value on delta and tail returns unknown_attribute
+// Test 9: excluded operators delta and tail rejected before attribute check
 static void test_9B2_value_on_delta_unknown_attribute() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg"><string name="F"><delta value="x"/></string></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B2(r, "unknown_attribute");
+    check_invalid_compile_9B2(r, "unsupported_operator");
     TEST_PASS("9B2_value_on_delta_unknown_attribute");
 }
 
@@ -2084,7 +2045,7 @@ static void test_9B2_value_on_tail_unknown_attribute() {
   <template id="1" name="Msg"><string name="F"><tail value="x"/></string></template>
 </templates>)";
     auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B2(r, "unknown_attribute");
+    check_invalid_compile_9B2(r, "unsupported_operator");
     TEST_PASS("9B2_value_on_tail_unknown_attribute");
 }
 
