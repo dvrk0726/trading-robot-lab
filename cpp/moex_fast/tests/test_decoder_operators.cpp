@@ -208,6 +208,72 @@ static void test_optional_decimal_null_no_mantissa() {
     TEST_PASS("optional_decimal_null_no_mantissa");
 }
 
+// Test: decimal runtime preflight rejects non-None component operator
+static void test_decimal_preflight_operator() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="DecimalMsg">
+    <decimal name="Price" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // Verify valid no-operator decimal compiles correctly
+    {
+        const auto* tmpl = ts.find(10);
+        CHECK(tmpl != nullptr);
+        CHECK_EQ(tmpl->fields.size(), 1u);
+        const auto& f = tmpl->fields[0];
+        CHECK(f.is_decimal);
+        CHECK(!f.is_mandatory);
+        CHECK(f.exponent_op.kind == OpKind::None);
+        CHECK(f.mantissa_op.kind == OpKind::None);
+    }
+
+    // Test-only: simulate corrupted compiled state by setting mantissa_op.kind to Copy
+    {
+        const auto* tmpl = ts.find(10);
+        auto& f = const_cast<CompiledField&>(tmpl->fields[0]);
+        f.mantissa_op.kind = OpKind::Copy;
+    }
+
+    DecoderSession session(ts);
+
+    // Snapshot fingerprint before decode
+    auto fp_before = session.fingerprint();
+
+    // pmap: [tmpl-id=1] -> 0xC0
+    // tmpl-id 10 -> 0x8A
+    // nullable exponent NULL -> 0x80
+    auto msg = hex("C0" "8A" "80");
+    auto r = session.decode_exact(msg.data(), msg.size());
+
+    // Must reject with UnsupportedTemplateFeature
+    CHECK(r.status == DecodeStatus::UnsupportedTemplateFeature);
+
+    // Issue must carry unsupported_operator_runtime with exact decimal field path
+    CHECK(r.issues.size() >= 1u);
+    bool found_issue = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "unsupported_operator_runtime" &&
+            issue.field_path == "DecimalMsg.Price") {
+            found_issue = true;
+            break;
+        }
+    }
+    CHECK(found_issue);
+
+    // Fingerprint must be unchanged (transaction rolled back)
+    auto fp_after = session.fingerprint();
+    CHECK(fp_before.has_template_id == fp_after.has_template_id);
+    CHECK_EQ(fp_before.template_id, fp_after.template_id);
+    CHECK_EQ(fp_before.dict_entry_count, fp_after.dict_entry_count);
+    CHECK_EQ(fp_before.dict_hash, fp_after.dict_hash);
+
+    TEST_PASS("decimal_preflight_operator");
+}
+
 int main() {
     test_constant_operator();
     test_excluded_operator_default();
@@ -216,6 +282,7 @@ int main() {
     test_excluded_operator_multiple();
     test_optional_decimal_non_null_no_field_bit();
     test_optional_decimal_null_no_mantissa();
+    test_decimal_preflight_operator();
     std::cout << "All decoder operator tests passed.\n";
     return 0;
 }

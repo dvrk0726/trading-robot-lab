@@ -327,6 +327,26 @@ struct DecoderSession::Impl {
         out.is_null = false;
         out.is_present = true;
 
+        // Preflight: validate both decimal component operators before
+        // consuming any decimal field presence-map bit or decimal wire bytes.
+        if (field.exponent_op.kind != OpKind::None) {
+            ctx.set_error(DecodeStatus::UnsupportedTemplateFeature,
+                          "unsupported_operator_runtime",
+                          "Excluded decimal exponent operator " +
+                          std::string(op_kind_name(field.exponent_op.kind)) +
+                          " reached runtime on field " + field_path);
+            return DecodeStatus::UnsupportedTemplateFeature;
+        }
+
+        if (field.mantissa_op.kind != OpKind::None) {
+            ctx.set_error(DecodeStatus::UnsupportedTemplateFeature,
+                          "unsupported_operator_runtime",
+                          "Excluded decimal mantissa operator " +
+                          std::string(op_kind_name(field.mantissa_op.kind)) +
+                          " reached runtime on field " + field_path);
+            return DecodeStatus::UnsupportedTemplateFeature;
+        }
+
         // Consume the field-level pmap bit
         bool pmap_present = true;
         if (field.has_pmap_bit) {
@@ -343,16 +363,6 @@ struct DecoderSession::Impl {
         std::int32_t exponent = 0;
         std::int64_t mantissa = 0;
         bool dec_null = false;
-
-        // Decode exponent — only no-operator supported
-        if (field.exponent_op.kind != OpKind::None) {
-            ctx.set_error(DecodeStatus::UnsupportedTemplateFeature,
-                          "unsupported_operator_runtime",
-                          "Excluded decimal exponent operator " +
-                          std::string(op_kind_name(field.exponent_op.kind)) +
-                          " reached runtime on field " + field_path);
-            return DecodeStatus::UnsupportedTemplateFeature;
-        }
 
         if (field.is_mandatory) {
             DecodeStatus st = ctx.cursor.read_stopbit_i32(exponent);
@@ -371,16 +381,6 @@ struct DecoderSession::Impl {
             out.is_present = false;
             out.value = std::monostate{};
             return DecodeStatus::Ok;
-        }
-
-        // Decode mantissa — only no-operator supported
-        if (field.mantissa_op.kind != OpKind::None) {
-            ctx.set_error(DecodeStatus::UnsupportedTemplateFeature,
-                          "unsupported_operator_runtime",
-                          "Excluded decimal mantissa operator " +
-                          std::string(op_kind_name(field.mantissa_op.kind)) +
-                          " reached runtime on field " + field_path);
-            return DecodeStatus::UnsupportedTemplateFeature;
         }
 
         DecodeStatus st = ctx.cursor.read_stopbit_i64(mantissa);
