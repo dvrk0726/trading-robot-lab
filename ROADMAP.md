@@ -1,286 +1,150 @@
 # Roadmap
 
-Дата обновления: 2026-07-11  
+Дата обновления: 2026-07-13  
 Статус: gated engineering roadmap  
-Текущий gate: RT-3 implementation PR #23 — architecture review (CHANGES_REQUIRED)
+Текущий gate: RT-3 implementation correction in existing PR #23
 
 ## Главный порядок
 
 ```text
 repository workflow and protection
--> local FAST metadata inspection
+-> local MOEX FAST metadata inspection
 -> raw segment contract and deterministic replay
--> specialized FAST decoding
--> feed sequencing/recovery
+-> specialized MOEX T0/T1 FAST decoding
+-> SPECTRA framing, sequencing and recovery
 -> realtime data quality and books
 -> research/backtest/paper
 -> VPTS/certification
 -> owner-approved production only later
 ```
 
-Нельзя перескакивать gate из-за готовности отдельного компонента.
+Следующий этап не начинается до закрытия текущего gate.
 
-## Completed foundation
+## Завершено
 
-### Architecture and repository
-
-```text
-Trading Lab / Trading Runtime / Shared Contracts architecture;
-ADR-0001 through ADR-0004;
-security baseline;
-shared schemas/test vectors;
-Strategy Package standard;
-MiMo/GitHub branch + PR workflow;
-Option B procedural main protection.
-```
-
-### Historical C++ data contour
+### Workflow foundation — DONE
 
 ```text
-QSH/OrdLog ingest;
-L3/order-book reconstruction and data-quality diagnostics;
-M10X complete;
-20/20 regression tests;
-control commit 54cd53df4b92473e49dd5dff96b2024590b82e42.
+branch-only implementation
+Pull Request review
+CI baseline
+no MiMo merge or auto-merge
+procedural main protection
+scope-freeze protocol
 ```
 
-Remaining 907 crossed snapshots remain gated with `strategy_ready=false`.
-
-### MOEX realtime research
+### RT-1 — DONE
 
 ```text
-FAST 1.29.x and FAST_9.0 studied;
-T0 configuration structure studied;
-FIX SPECTRA / Drop Copy and VPTS requirements preserved;
-MOEX realtime architecture documented;
-QuickFAST rejected as production hot-path foundation;
-specialized C++ decoder direction accepted.
+local configuration.xml/templates.xml inspector
+normalized metadata and provenance
+Windows/Linux Release tests
 ```
 
-## WF-1 — DONE
+### RT-2 — DONE
 
 ```text
-Issue #1: DONE
-PR #15: merged (82077f6e54e439f27027301ac02813c018d380fc)
+.mxraw v1 raw segment contract
+synthetic capture/inspect/replay
+bounded validation
+CRC32C and SHA-256 provenance
+deterministic replay
+Windows/Linux Release tests
 ```
 
-Delivered workflow:
+## RT-3 — current gate
 
-```text
-READY_FOR_MIMO task selection;
-one task at a time;
-implementation only in dedicated branch;
-Pull Request and CI required;
-no MiMo merge or auto-merge;
-Python/C++/hygiene checks;
-QSH/M10X 20-test gate;
-secret/raw-data/large-file hygiene;
-Owner Review Package;
-canonical statuses and handoff evidence.
-```
+### Objective
 
-## RT-1 — DONE
+One template-driven C++20 decoder for the accepted official MOEX SPECTRA T0 and T1 template files.
 
-```text
-Issue #14: DONE
-PR #16: merged
-Merge commit: ab74f560c1bcf9d09ae7bdfb8552c745928fd022
-Post-merge main CI #32: passed
-Owner Release build and CTest: passed
-Owner strict official-file integration: valid, zero issues
-```
-
-Delivered:
-
-```text
-offline C++20/CMake inspector;
-configuration.xml and templates.xml parsing;
-MOEX feed-group/endpoint metadata;
-FAST field, sequence and <length> metadata;
-spectra-1.29 / spectra-1.30 detection;
-strict compatibility checks;
-deterministic text and JSON reports;
-Windows/Linux Release-active tests.
-```
-
-RT-1 deliberately excluded network, binary FAST decoding, recovery, books and order entry.
-
-## RT-2 — DONE
-
-```text
-Issue #18: DONE
-Specification PR #19: merged
-Implementation PR #20: merged
-Merge commit: 060371112d921c1c1f4055cfbdb99049bdf8a2af
-Current main control head after no-op cleanup: 5f1f9c1beaee080fe44eaccda7c7370d9324546d
-Post-merge/current-main CI #74: passed
-Owner local Release build: passed
-Owner CTest: 18/18
-Owner strict synthetic inspect: 4 segments, 10 records, 0 issues
-Owner replay: 4 segments, 10 records, 320 payload bytes, 0 issues
-```
-
-Delivered:
-
-```text
-C++20/CMake module: cpp/moex_raw/;
-versioned immutable .mxraw binary segments;
-fixed-width little-endian manual serialization;
-logical source identity and explicit timestamp domains;
-local capture_index distinct from exchange sequence;
-CRC32C record/footer validation and SHA-256 provenance;
-incremental content SHA-256;
-.partial -> finalized lifecycle;
-deterministic record/byte rotation;
-bounded streaming reader/validator;
-canonical filename parsing and filename/content identity;
-full (session_id, source_id, channel_id) stream key;
-numeric sorting, duplicate/missing detection;
-metadata/hash equality and monotonic validation;
-per-stream deterministic reports;
-deterministic replay callback with MXREPLAY1 digest;
-strict status classification and CLI validation;
-Windows/Linux Release-active tests (18 each).
-```
-
-RT-2 non-goals remain:
-
-```text
-no sockets, multicast or real capture;
-no FAST decode;
-no exchange sequence extraction;
-no A/B deduplication;
-no Snapshot/Incremental recovery;
-no books;
-no database, pcap, FIX/TWIME or order sending.
-```
-
-## RT-3 — Specialized C++ FAST decoder foundation
-
-Current status:
+### Verified checkpoint
 
 ```text
 Issue #21: CHANGES_REQUIRED
-Implementation branch: mimo/issue-21-rt3-fast-decoder
-Implementation PR: #23
-Specification PR: #22 (merged)
-Task package: tasks/RT-3-specialized-fast-decoder-foundation/
-RT-4: BLOCKED
+PR #23: open
+Branch: mimo/issue-21-rt3-fast-decoder
+Head: 062649476500f6060d22b9740cafa1b0250f3ba5
+Corrected specification PR #27: merged
+Main merge commit: e2e616673758b1cb888f5e3b4b7844343327c579
+Post-merge CI #126: success
 ```
 
-Specification scope:
+### Accepted profile
 
 ```text
-exactly one bounded FAST message payload;
-immutable decoder-specific compiled template tree;
-stop-bit integers, nullable values and presence maps;
-ASCII, Unicode, byte vector and exact decimal primitives;
-template-ID session state;
-none/constant/default/copy/increment/delta/tail operators;
-explicit canonical dictionary scopes/keys;
-groups, sequences and bounded recursion;
-transactional dictionary/template-ID commit and rollback;
-explicit reset API;
-deterministic typed message tree and text/JSON reports;
-RT-2 RawPacketRecord.payload span integration test;
-independent golden vectors and test-only reference encoder;
-Windows/Linux Release tests.
+T0 SHA-256 DBD50F1E0BECC2B2EBD9DAC8E4C6609BA1538566811B610CDE9B6DD3E7F66A8E
+T1 SHA-256 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 ```
 
-RT-3 boundaries:
+Required scope:
 
 ```text
-no SPECTRA UDP packet header or datagram framing;
-no multicast/network capture;
-no MsgSeqNum gap policy;
-no A/B sequencing/deduplication;
-no Snapshot/Incremental recovery;
-no normalized market events or book building;
-no FIX/TWIME or order sending;
-no strategy, paper or production enablement.
+field without operator
+constant
+template ID reuse
+presence maps
+ordinary and nullable integers
+ASCII and Unicode strings
+exact decimal
+sequences and single length instruction
+limits, reset and transactional rollback
+T0/T1 official XML compilation
+Windows/Linux Release tests
 ```
 
-RT-3 gate:
+Excluded scope:
 
 ```text
-owner reviews specification PR #22
--> owner explicitly approves merge
--> merge specification PR manually
--> post-merge main CI green
--> Issue #21 moves to READY_FOR_MIMO
--> MiMo implements in a separate mimo/issue-21-* branch and PR
--> architecture review and owner local acceptance
--> owner-approved merge only
+default/copy/increment/delta/tail
+generic field dictionaries
+user-defined dictionaries
+references and cycle resolution
+generic groups outside T0/T1
+decimal component operators
+historical FAST profile compatibility
 ```
 
-## RT-4 — SPECTRA feed processors and recovery
-
-Blocked by accepted RT-3 decoder correctness.
+### RT-3 remaining sequence
 
 ```text
-SPECTRA packet/message framing;
-FUT-INFO;
-ORDERS-LOG Snapshot;
-ORDERS-LOG Incremental;
-Snapshot + buffered Incremental bootstrap;
-A/B sequencing/deduplication;
-gap/recovery state;
-normalized market events.
+1. Synchronize canonical state/workflow documents.
+2. Merge current main into PR #23 branch without force push.
+3. Re-audit the resulting implementation diff.
+4. Remove generic FAST code and tests not required by T0/T1.
+5. Correct production-critical pmap, nullable and sequence behavior.
+6. Prove T0/T1 compilation and exact test inventory on Windows/Linux.
+7. Architecture review.
+8. Owner local acceptance.
+9. Owner-authorized merge.
+10. Post-merge main CI and Issue #21 DONE.
 ```
 
-## RT-5 — Realtime Data Quality and book state
+Each MiMo run is one small owner-authorized correction in the existing branch and PR.
 
-Blocked by RT-4.
+## RT-4 — BLOCKED
+
+Planned only after RT-3 is DONE:
 
 ```text
-sequence freshness;
-book invariants;
-crossed/locked diagnostics;
-recovery status;
-strategy_ready gating;
-replay/live parity evidence.
+MOEX 4-byte preamble and message boundary
+SPECTRA packet/framing contract
+A/B sequencing and deduplication
+gap detection and recovery
+Snapshot + buffered Incremental bootstrap
 ```
 
-No strategy-ready claim without measured evidence.
+No RT-4 implementation, branch or MiMo prompt is allowed before RT-3 acceptance, merge and green post-merge CI.
 
-## Later data and research stages
-
-After trustworthy realtime data:
+## Later stages
 
 ```text
-normalized Parquet/ClickHouse/PostgreSQL contour;
-research hypotheses;
-deterministic backtests;
-fees/slippage/latency sensitivity;
-out-of-sample checks;
-paper trading;
-operational and risk evidence.
+RT-5 realtime data quality and normalized events
+RT-6 ORDERS-LOG L3/L2 and storage
+RT-7 T0 pilot and measured capacity
+RT-8 research/backtest/paper on certified data
+RT-9 FIX/TWIME test and VPTS readiness
+RT-10 production certification and explicit owner gate
 ```
 
-Historical results do not authorize live.
-
-## Certification and production gate
-
-Before any production order entry:
-
-```text
-VPTS/certification satisfied;
-approved access and network architecture;
-RiskEngine and kill switch reviewed;
-monitoring/audit/recovery complete;
-Owner explicitly approves stage, cost and access;
-production remains disabled by default.
-```
-
-Issue #17 preserves future SPECTRA FIX 4.4 session, order-control and Drop Copy requirements. It does not authorize implementation now.
-
-## Immediate sequence
-
-```text
-1. Owner reviews RT-3 specification PR #22.
-2. Do not run MiMo implementation from the docs branch.
-3. If accepted, merge PR #22 manually.
-4. Confirm green post-merge CI on main.
-5. Only then move Issue #21 to READY_FOR_MIMO.
-6. Do not start RT-4 before RT-3 is DONE.
-```
+Names and scope of later stages remain provisional until the preceding gate supplies evidence.

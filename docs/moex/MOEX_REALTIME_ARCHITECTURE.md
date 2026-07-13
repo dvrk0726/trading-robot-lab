@@ -1,42 +1,108 @@
 # MOEX Realtime Architecture
 
-Date: 2026-07-09
-Status: proposed
+Date: 2026-07-13  
+Status: current architecture direction; execution is gated by `ROADMAP.md`
 
 ## Goal
 
 ```text
-FAST -> raw capture -> decode -> sequence/recovery -> ORDERS-LOG L3/L2 -> storage -> research
+raw capture
+-> bounded FAST message body
+-> template-driven MOEX T0/T1 decode
+-> framing/sequencing/recovery
+-> normalized events and ORDERS-LOG L3/L2
+-> storage
+-> research/backtest/paper
 ```
 
-Future trading stays separate:
+Future trading remains separate:
 
 ```text
 Strategy Package -> RiskEngine -> OrderManager -> FIX/TWIME
 ```
 
-## Main rule
+This document describes architecture direction. Current task order and gate status are authoritative only in `ROADMAP.md` and `PROJECT_STATE.md`.
+
+## Source hierarchy for SPECTRA FAST
+
+```text
+1. Official MOEX SPECTRA FAST documentation and templates:
+   https://ftp.moex.com/pub/FAST/Spectra/test/
+2. FIX FAST 1.1 only for base wire semantics MOEX does not restate.
+3. QuickFAST, OpenFAST and third-party articles only as cross-checks.
+```
+
+Current accepted decoder targets:
+
+```text
+T0 templatesT0/templates.xml
+SHA-256 DBD50F1E0BECC2B2EBD9DAC8E4C6609BA1538566811B610CDE9B6DD3E7F66A8E
+
+T1 templatesT1/templates.xml
+SHA-256 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
+```
+
+T0 corresponds to the production trading-system version; T1 is the next-release test system. `FAST_9.0/templates.xml` is byte-identical to accepted T0 and is not a third profile. Historical `FAST_8.6` and `backup/` are not current compatibility targets.
+
+## Main safety rule
 
 The capture path must not depend on a database, dashboard, Python process or strategy. If downstream systems fail, raw capture continues or the session is explicitly invalidated. Silent loss is forbidden.
+
+Raw data is immutable. Decoder fixes replay the original capture.
 
 ## Languages
 
 ```text
 C++20/23:
-UDP multicast, FAST decode, A/B deduplication, sequencing, recovery, raw recorder, L3/L2, replay, future Runtime.
+raw capture, FAST decode, framing, A/B sequencing, recovery,
+replay, books and future Trading Runtime.
 
 Python:
 research, statistics, backtests, quality reports, dashboards and offline conversion.
 
-SQL:
-ClickHouse analytics, PostgreSQL metadata, DuckDB local Parquet research.
+SQL/storage:
+ClickHouse analytics, PostgreSQL metadata, DuckDB/Parquet local research.
 ```
 
 Do not add another language without measured need.
 
+## Current RT-3 boundary
+
+RT-3 accepts exactly one bounded FAST message body. It does not parse the MOEX 4-byte preamble, UDP datagram framing, A/B source state or recovery.
+
+Supported profile is limited to constructs present in accepted T0/T1:
+
+```text
+field without operator
+constant
+template ID and previous-template-ID reuse
+presence maps
+ordinary and nullable integer primitives
+ASCII and Unicode strings
+exact decimal
+mandatory and optional sequences
+single sequence length instruction
+limits, reset and transactional rollback
+```
+
+The following are not current capabilities and must fail closed:
+
+```text
+default/copy/increment/delta/tail field operators
+generic field dictionaries and scopes
+user-defined dictionaries
+typeRef/templateRef/groupRef
+reference resolution and cycles
+generic groups outside accepted T0/T1
+decimal component operators
+historical profile compatibility
+```
+
+Previous-template-ID reuse is not the XML `<copy>` operator.
+
 ## Performance approach
 
-Real ORDERS-LOG load is unknown until T0 measurements. Design for:
+Real ORDERS-LOG load is unknown until measured T0 access. Design targets remain provisional:
 
 ```text
 >= 2x measured peak capacity
@@ -47,18 +113,11 @@ zero unexplained loss
 deterministic replay
 ```
 
-Initial benchmark targets are provisional:
+Do not buy production hardware before real T0 measurements.
 
-```text
-1,000,000 decoded entries/sec
-250 MB/sec raw write
-5x realtime replay
-1 GbE for test; 10 GbE-ready design later
-```
+## Initial process topology
 
-## Process
-
-Start with one C++ collector, not microservices:
+Start with one C++ collector/process boundary, not microservices:
 
 ```text
 Feed A/B receivers
@@ -69,10 +128,12 @@ Instrument/session state
 ORDERS-LOG book builder
 Batch normalized writer
 Metrics/health
-TCP Recovery worker
+Recovery worker
 ```
 
-Use preallocated bounded queues, batch transfer, minimal hot-path allocations and asynchronous bounded logs.
+These components are introduced only by their roadmap gates. RT-3 implements only the offline decoder boundary.
+
+Use preallocated bounded queues, batch transfer, minimal hot-path allocations and bounded asynchronous logging after measurements justify them.
 
 ## Storage
 
@@ -80,16 +141,14 @@ Use preallocated bounded queues, batch transfer, minimal hot-path allocations an
 
 ```text
 local high-endurance NVMe
--> immutable rotated binary segments or pcapng
+-> immutable rotated binary segments or approved packet capture
 -> checksums
--> compressed S3-compatible/MinIO archive later
+-> compressed object archive later
 ```
-
-Raw data is never edited. Decoder fixes replay the original capture.
 
 ### Normalized archive
 
-Use compressed Parquet, partitioned by market/date/feed/hour. Do not partition files by instrument.
+Use compressed Parquet partitioned by market/date/feed/hour. Do not partition files by instrument.
 
 ### Hot analytics
 
@@ -105,7 +164,7 @@ Use DuckDB/Python directly over Parquet.
 
 Kafka/Redpanda and Redis are not required for the first collector.
 
-## Data quality
+## Data quality gate
 
 A session is not research-ready unless:
 
@@ -122,6 +181,8 @@ raw checksums valid
 replay reproduces identical hashes
 ```
 
+These are later gates and are not RT-3 acceptance criteria.
+
 ## Platform
 
 ```text
@@ -129,27 +190,27 @@ Windows: development and early T0 tests
 Linux: preferred production collector/runtime
 ```
 
-Do not buy production hardware before real T0 measurements.
-
-## Focused roadmap
+## Gated roadmap
 
 ```text
-RT-0 Source/architecture alignment                 mostly done
-RT-1 Local config/templates inspector              next
-RT-2 Raw segment format + synthetic capture/replay
-RT-3 Template-driven FAST decoder
-RT-4 A/B sequencing, snapshot and recovery
-RT-5 T0 FAST connectivity                          waits for MOEX
-RT-6 L3/L2 + Parquet/ClickHouse/PostgreSQL
-RT-7 Production Full_orders_log one-month pilot
-RT-8 Paper trading on realtime data
-RT-9 Test FIX/TWIME + VPTS readiness
-RT-10 Production trading certification/owner gate
+RT-0 source/architecture alignment                  DONE at current level
+RT-1 local config/templates inspector               DONE
+RT-2 raw segment format and deterministic replay    DONE
+RT-3 specialized MOEX T0/T1 FAST decoder            CURRENT — CHANGES_REQUIRED
+RT-4 preamble/framing, A/B sequencing and recovery  BLOCKED
+RT-5 realtime data quality and normalized events
+RT-6 ORDERS-LOG L3/L2 and storage
+RT-7 T0 pilot and measured capacity
+RT-8 research/backtest/paper on certified data
+RT-9 FIX/TWIME test and VPTS readiness
+RT-10 production certification and owner gate
 ```
 
-## Next step
+Later stage names remain provisional until evidence from the preceding gate is reviewed.
+
+## Current next step
 
 ```text
-RT-1: local configuration.xml/templates.xml inspector and normalized C++ contracts.
-No network connection and no order sending in this step.
+Correct existing RT-3 PR #23 to the merged T0/T1 specification.
+Do not start RT-4, network connectivity or order sending.
 ```

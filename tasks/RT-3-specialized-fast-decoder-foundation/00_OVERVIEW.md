@@ -1,123 +1,114 @@
-# RT-3 — Specialized C++ FAST Decoder Foundation
+# RT-3 — MOEX SPECTRA T0/T1 FAST Decoder Foundation
 
-Date: 2026-07-11  
-Status: specification draft for owner review  
+Date: 2026-07-13  
+Status: corrected specification for owner review  
 Issue: #21  
-Executor after approval: MiMo Code  
-Reviewer: Architecture/Review Agent
+Implementation PR: #23 remains open and must not be changed by this documentation PR
+
+This revision supersedes the broader RT-3 scope merged in PR #22. The earlier text incorrectly expanded RT-3 into a near-general FAST 1.1 engine. RT-3 is limited to the constructs actually present in the accepted MOEX SPECTRA T0 and T1 template sets.
 
 ## Objective
 
-Create the first correctness-focused binary FAST decoder layer for the MOEX realtime contour:
+Create one offline, template-driven C++20 decoder that accepts exactly one bounded FAST message body and decodes it using either the accepted MOEX T0 or T1 `templates.xml` file.
 
 ```text
-RT-1 compiled template metadata
-+ one bounded FAST message byte span
-+ explicit decoder session state
--> deterministic typed decoded message
--> future RT-4 SPECTRA feed processors and recovery
+accepted T0 or T1 templates.xml
++ one bounded FAST message body
++ one DecoderSession
+-> deterministic typed DecodedMessage
 ```
 
-RT-3 is offline. It does not connect to MOEX and does not interpret a UDP datagram as a feed packet. The public decode boundary is exactly one FAST message payload.
+The decoder is not split into T0-specific and T1-specific implementations. Differences in template IDs and fields are supplied by the XML template set.
 
-## Why this stage exists
+## Authoritative sources and version roles
 
-RT-2 preserves raw bytes and deterministic replay. RT-3 must decode those bytes without mixing codec correctness with packet framing, A/B sequencing, recovery, normalized market events or book state.
+Source priority is fixed:
 
-The decoder must therefore be:
+1. MOEX SPECTRA FAST documentation and template files under `https://ftp.moex.com/pub/FAST/Spectra/test/`.
+2. FIX FAST 1.1 only for base wire semantics that MOEX uses but does not restate fully.
+3. Third-party implementations only as non-normative cross-checks.
+
+Accepted template targets:
+
+| Target | MOEX role | Path | SHA-256 |
+|---|---|---|---|
+| T0 | test system corresponding to the production trading-system version | `templatesT0/templates.xml` | `DBD50F1E0BECC2B2EBD9DAC8E4C6609BA1538566811B610CDE9B6DD3E7F66A8E` |
+| T1 | test system for the next trading-system release | `templatesT1/templates.xml` | `84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F` |
+
+`FAST_9.0/templates.xml` is byte-identical to the accepted T0 file and is not a third independent profile. `FAST_8.6` and `backup/` are historical material and are not RT-3 compatibility targets.
+
+The current MOEX protocol documents are `spectra_fastgate_ru.pdf` and `spectra_fastgate_en.pdf`, version 1.30.2 dated 2026-04-10.
+
+Before final owner acceptance, the current production template file must be downloaded and hashed again. If its hash is neither accepted T0 nor accepted T1, RT-3 stops for a new source audit; the decoder must not guess or silently broaden its profile.
+
+## Frozen MOEX XML profile
+
+The hash-bound inventory contains:
 
 ```text
-specialized for the currently accepted MOEX SPECTRA FAST template profile;
-template-driven rather than hard-coded by message name;
-transactional so failed messages do not corrupt dictionary state;
-bounded against malformed lengths, sequences and presence maps;
-deterministic across Windows/MSVC and Linux/GCC;
-independent of network, databases, Python and strategy code.
+T0: 19 templates, 393 fields, 70 constant elements, 323 fields without an operator
+T1: 19 templates, 396 fields, 70 constant elements, 326 fields without an operator
 ```
 
-## Required reading
-
-Before implementation MiMo must read:
+Both sets contain zero occurrences of:
 
 ```text
-AI_CONTEXT.md
-PROJECT_STATE.md
-ROADMAP.md
-SECURITY.md
-docs/mimo_developer_workflow.md
-docs/engineering/GITHUB_WRITE_LIMITS_AND_AI_WORKFLOW.md
-docs/moex/MOEX_REALTIME_ARCHITECTURE.md
-decisions/ADR-0003-cpp-qsh-ordlog-data-engine.md
-decisions/ADR-0004-moex-vpts-certification-gate.md
-tasks/RT-1-fast-config-template-inspector/00_OVERVIEW.md
-tasks/RT-2-raw-capture-replay-contract/00_OVERVIEW.md
-tasks/RT-3-specialized-fast-decoder-foundation/01_REQUIREMENTS.md
-tasks/RT-3-specialized-fast-decoder-foundation/02_TEST_PLAN.md
-tasks/RT-3-specialized-fast-decoder-foundation/03_ACCEPTANCE.md
+copy
+delta
+increment
+default
+tail
+dictionary attributes
 ```
 
-Normative public protocol references:
+The supported field behavior is therefore limited to:
+
+- a field with no operator element;
+- the `constant` operator;
+- the primitive and structural XML instructions actually present in the hash-bound T0/T1 files;
+- mandatory and optional presence;
+- template identifiers, decimals, sequences and sequence lengths as used by those files.
+
+`none` may remain an internal enum name for “no operator element”, but it is not an additional FAST operator.
+
+## Explicitly excluded from RT-3
+
+The following are not implemented, preserved as dormant capabilities, or moved to a future roadmap item:
 
 ```text
-https://fixtrading.org/standards/fast/
-https://ftp.moex.com/pub/FAST/Spectra/test/
+default/copy/increment/delta/tail field operators
+runtime field dictionaries and dictionary scopes
+user-defined dictionaries
+typeRef/templateRef/groupRef
+reference resolution and cycle detection
+generic group instructions not present in T0/T1
+historical FAST_8.6 or backup profile compatibility
 ```
 
-Official or owner-provided XML and raw market data remain outside Git. Only small synthetic templates and independently derived wire vectors may be committed.
+If any excluded construct appears in an input template, compilation fails closed with a stable unsupported-feature issue. A future official MOEX template that introduces a new construct requires a new owner-approved source audit and specification change.
 
-## Deliverables
+## Required decoder properties
 
-```text
-1. C++20/CMake decoder library integrated with the existing cpp/moex_fast project.
-2. Immutable decoder-specific compiled template tree that preserves operators and nesting.
-3. Bounded stop-bit, presence-map, integer, string, decimal and sequence primitives.
-4. Correct none/constant/default/copy/increment/delta/tail semantics for supported types.
-5. Explicit DecoderSession with template-ID state, dictionaries and reset API.
-6. Transactional state commit: any failed decode leaves session state unchanged.
-7. Typed DecodedMessage model preserving null, exact integers and decimal exponent/mantissa.
-8. Exact-one-message CLI for synthetic/public vectors with deterministic text and JSON output.
-9. Offline adapter contract accepting RawPacketRecord.payload as a byte span without feed framing claims.
-10. Release-active Windows/Linux tests, reference-derived vectors and implementation report.
-```
+- template-driven, with no message-name or T0/T1 hard-coded decode branches;
+- bounded cursor reads and checked arithmetic;
+- correct stop-bit, nullable, presence-map, decimal and sequence rules for the accepted profile;
+- immutable compiled template set;
+- one `DecoderSession` per ordered logical source stream;
+- previous-template-ID state and explicit reset;
+- transactional decode: any failure leaves session state unchanged;
+- deterministic owned output and stable issues on Windows/MSVC and Linux/GCC.
 
 ## Non-goals
 
 ```text
-no socket creation or multicast join;
-no real capture;
-no private IP addresses, ports, credentials or owner artifacts;
-no SPECTRA UDP packet header parsing;
-no multiple-message datagram framing;
-no exchange packet sequence extraction;
-no A/B merge or deduplication;
-no gap detection, historical replay request or Snapshot/Incremental bootstrap;
-no normalized market events;
-no order-log semantics or order-book reconstruction;
-no FIX/TWIME session or order sending;
-no Strategy, RiskEngine, backtest, paper or production enablement.
+no UDP/datagram framing or 4-byte MOEX preamble parsing
+no sockets or multicast
+no A/B sequencing or deduplication
+no gap detection or recovery
+no Snapshot/Incremental bootstrap
+no normalized market events or books
+no FIX/TWIME order entry
+no strategy, paper or production enablement
 ```
 
-## Architectural boundaries
-
-- One `DecoderSession` belongs to one logical ordered source stream and is not thread-safe.
-- The compiled template set is immutable and may be shared between sessions.
-- `decode_one` consumes one FAST message prefix and returns `bytes_consumed`; `decode_exact` additionally rejects trailing bytes.
-- RT-3 never guesses packet framing. A real UDP payload may require RT-4 framing before it reaches `decode_one`.
-- Decoder reset is explicit. RT-3 does not infer resets from `MsgSeqNum`, packet gaps, endpoint changes or trading-session events.
-- Decimal values remain exact `(exponent, mantissa)` pairs. Conversion to binary floating point is outside the decoder.
-- Expected malformed input uses explicit status/error values. No expected input error escapes the public API as an uncaught exception.
-
-## Workflow gate
-
-```text
-Architecture branch + specification PR
--> owner reviews specification
--> specification PR merged
--> post-merge main CI green
--> Issue #21 moves to READY_FOR_MIMO
--> MiMo creates a separate implementation branch and PR
--> Architecture/Review validates code and tests
--> owner performs local acceptance and approves merge
-```
-
-MiMo must not implement RT-3 from this specification branch and must not begin RT-4.
+RT-4 remains blocked until the corrected RT-3 specification is merged, PR #23 is corrected to this scope, owner acceptance is complete, owner authorizes merge, and post-merge CI on `main` is green.
