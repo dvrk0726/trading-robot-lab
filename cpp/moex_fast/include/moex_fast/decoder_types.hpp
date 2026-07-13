@@ -264,12 +264,10 @@ struct DecodeResult {
     std::vector<DecodeIssue> issues;
 };
 
-// --- Session fingerprint for rollback testing (deterministic) ---
+// --- Session fingerprint for rollback testing (previous-template-ID state) ---
 struct SessionFingerprint {
     bool has_template_id = false;
     std::uint32_t template_id = 0;
-    std::size_t dict_entry_count = 0;
-    std::string dict_hash;  // deterministic hex hash of all dict entries
 };
 
 }  // namespace moex_fast

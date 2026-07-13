@@ -632,13 +632,11 @@ struct DecoderSession::Impl {
         return result;
     }
 
-    // --- Deterministic fingerprint (no field dictionary) ---
+    // --- Session fingerprint (previous-template-ID state) ---
     SessionFingerprint make_fingerprint() const {
         SessionFingerprint fp;
         fp.has_template_id = has_prev_template_id;
         fp.template_id = prev_template_id;
-        fp.dict_entry_count = 0;
-        fp.dict_hash = "cbf29ce484222325";
         return fp;
     }
 };

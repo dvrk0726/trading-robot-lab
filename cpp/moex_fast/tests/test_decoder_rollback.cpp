@@ -26,6 +26,18 @@ static CompiledTemplateSet compile(const char* xml) {
     return r.compiled;
 }
 
+// Compile-time concepts: verify dict_entry_count and dict_hash are absent
+template<typename T>
+concept has_dict_entry_count = requires(T t) { t.dict_entry_count; };
+
+template<typename T>
+concept has_dict_hash = requires(T t) { t.dict_hash; };
+
+static_assert(!has_dict_entry_count<SessionFingerprint>,
+              "SessionFingerprint must not have dict_entry_count");
+static_assert(!has_dict_hash<SessionFingerprint>,
+              "SessionFingerprint must not have dict_hash");
+
 // Test: failed decode does not commit session state (transactional rollback)
 static void test_rollback_session_state() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
@@ -45,8 +57,10 @@ static void test_rollback_session_state() {
     CHECK(r1.status == DecodeStatus::Ok);
     CHECK_EQ(r1.message.template_id, 10u);
 
-    // Snapshot state
+    // Snapshot state — verify established fingerprint
     auto fp1 = session.fingerprint();
+    CHECK(fp1.has_template_id);
+    CHECK_EQ(fp1.template_id, 10u);
 
     // Message 2: reuse template 10, F1=30 consumed, then truncated (no F2)
     auto msg2 = hex("80" "9E");
@@ -57,8 +71,6 @@ static void test_rollback_session_state() {
     auto fp2 = session.fingerprint();
     CHECK_EQ(fp1.has_template_id, fp2.has_template_id);
     CHECK_EQ(fp1.template_id, fp2.template_id);
-    CHECK_EQ(fp1.dict_entry_count, fp2.dict_entry_count);
-    CHECK_EQ(fp1.dict_hash, fp2.dict_hash);
 
     // Message 3: reuse template 10 successfully, F1=40, F2=50
     auto msg3 = hex("80" "A8" "B2");
@@ -109,7 +121,7 @@ static void test_rollback_template_id() {
     TEST_PASS("rollback_template_id");
 }
 
-// Test: fingerprint is deterministic
+// Test: previous-template-ID state is deterministic across sessions
 static void test_fingerprint_deterministic() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -123,22 +135,38 @@ static void test_fingerprint_deterministic() {
     DecoderSession s1(ts);
     DecoderSession s2(ts);
 
-    // Both sessions start with same state
-    CHECK_EQ(s1.fingerprint().dict_hash, s2.fingerprint().dict_hash);
+    // Both sessions start with no previous-template-ID state
+    CHECK(!s1.fingerprint().has_template_id);
+    CHECK_EQ(s1.fingerprint().template_id, 0u);
+    CHECK(!s2.fingerprint().has_template_id);
+    CHECK_EQ(s2.fingerprint().template_id, 0u);
 
     // Decode same message in both (template present)
     auto msg1 = hex("C0" "8A" "81");
     s1.decode_exact(msg1.data(), msg1.size());
     s2.decode_exact(msg1.data(), msg1.size());
 
-    CHECK_EQ(s1.fingerprint().dict_hash, s2.fingerprint().dict_hash);
+    CHECK(s1.fingerprint().has_template_id);
+    CHECK_EQ(s1.fingerprint().template_id, 10u);
+    CHECK(s2.fingerprint().has_template_id);
+    CHECK_EQ(s2.fingerprint().template_id, 10u);
 
     // Reuse previous template ID in both
     auto msg2 = hex("80" "82");
     s1.decode_exact(msg2.data(), msg2.size());
     s2.decode_exact(msg2.data(), msg2.size());
 
-    CHECK_EQ(s1.fingerprint().dict_hash, s2.fingerprint().dict_hash);
+    CHECK(s1.fingerprint().has_template_id);
+    CHECK_EQ(s1.fingerprint().template_id, 10u);
+    CHECK(s2.fingerprint().has_template_id);
+    CHECK_EQ(s2.fingerprint().template_id, 10u);
+
+    // Reset s1; s2 retains previous-template-ID state
+    s1.reset();
+    CHECK(!s1.fingerprint().has_template_id);
+    CHECK_EQ(s1.fingerprint().template_id, 0u);
+    CHECK(s2.fingerprint().has_template_id);
+    CHECK_EQ(s2.fingerprint().template_id, 10u);
 
     TEST_PASS("fingerprint_deterministic");
 }

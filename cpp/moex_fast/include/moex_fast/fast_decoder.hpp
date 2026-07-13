@@ -25,10 +25,10 @@ public:
     // Like decode_one, but trailing bytes after one message are an error.
     DecodeResult decode_exact(const std::uint8_t* data, std::size_t size);
 
-    // Explicit reset: clears template-ID state and all dictionaries.
+    // Explicit reset: clears previous-template-ID state.
     void reset();
 
-    // Deterministic session fingerprint for rollback testing.
+    // Session fingerprint capturing previous-template-ID state for rollback testing.
     SessionFingerprint fingerprint() const;
 
     // Access compiled templates.

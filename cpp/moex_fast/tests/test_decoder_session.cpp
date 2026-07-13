@@ -444,6 +444,8 @@ static void test_invalid_handle_session() {
 
     // Fingerprint before decode
     auto fp_before = session.fingerprint();
+    CHECK(!fp_before.has_template_id);
+    CHECK_EQ(fp_before.template_id, 0u);
 
     // decode_one must return InternalError
     auto data = hex("C0" "8A" "81");
@@ -464,10 +466,8 @@ static void test_invalid_handle_session() {
 
     // Fingerprint must be unchanged (session state unmodified)
     auto fp_after = session.fingerprint();
-    CHECK_EQ(fp_before.has_template_id, fp_after.has_template_id);
-    CHECK_EQ(fp_before.template_id, fp_after.template_id);
-    CHECK_EQ(fp_before.dict_entry_count, fp_after.dict_entry_count);
-    CHECK_EQ(fp_before.dict_hash, fp_after.dict_hash);
+    CHECK(!fp_after.has_template_id);
+    CHECK_EQ(fp_after.template_id, 0u);
 
     TEST_PASS("invalid_handle_session");
 }
