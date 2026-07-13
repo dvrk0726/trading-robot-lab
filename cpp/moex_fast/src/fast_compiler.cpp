@@ -161,7 +161,7 @@ bool is_known_field_element(const std::string& n) {
            n == "uInt64" || n == "uint64" || n == "int32" ||
            n == "int64" || n == "decimal" || n == "unicode" ||
            n == "byteVector" || n == "byte-vector" ||
-           n == "sequence" || n == "group" || n == "length" ||
+           n == "sequence" || n == "length" ||
            n == "exponent" || n == "mantissa";
 }
 
@@ -800,14 +800,8 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
         return f;
     }
 
-    if (elem_name == "group") {
-        f.wire_type = DecWireType::Group;
-        f.has_children = true;
-        f.has_pmap_bit = !f.is_mandatory;
-
-        parse_fields(node, f.children, ctx, field_path, nesting_depth + 1, field_index, false, template_name);
-        return f;
-    }
+    // <group> is rejected at parse_fields level with unsupported_group;
+    // this branch is removed.
 
     f.wire_type = element_to_wire_type(elem_name.c_str());
 
@@ -898,6 +892,20 @@ void parse_fields(pugi::xml_node parent, std::vector<CompiledField>& fields,
                       "Misplaced <length> in " +
                       (parent_path.empty() ? std::string("template") : parent_path), parent_path);
             continue;
+        }
+
+        // Reject <group> immediately — outside the accepted MOEX SPECTRA T0/T1 profile.
+        // This fires before field-budget, index reservation, nesting-depth, attribute
+        // validation, child validation, operator parsing, or subtree traversal.
+        if (name == "group") {
+            std::string grp_name = child.attribute("name").as_string("");
+            std::string grp_path = grp_name.empty() ? std::string("")
+                : (parent_path.empty() ? grp_name : parent_path + "." + grp_name);
+            ctx.error("unsupported_group",
+                      "<group> is outside the accepted MOEX SPECTRA T0/T1 profile" +
+                      (grp_path.empty() ? std::string("") : " (" + grp_path + ")"),
+                      grp_path);
+            return;
         }
 
         if (!is_known_field_element(name) && !is_reference_element(name)) {

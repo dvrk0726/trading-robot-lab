@@ -1153,15 +1153,17 @@ static void test_structural_length_at_template_level() {
     TEST_PASS("structural_length_at_template_level");
 }
 
-// Misplaced length at group level returns unknown_element
+// Misplaced length at sequence entry level returns unknown_element
 static void test_structural_length_at_group_level() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
-    <group name="G">
+    <sequence name="S">
       <length name="L"/>
-      <uInt32 name="F1"/>
-    </group>
+      <uInt32 name="E">
+        <length name="Misplaced"/>
+      </uInt32>
+    </sequence>
   </template>
 </templates>)";
 
@@ -1198,40 +1200,6 @@ static void test_structural_misplaced_mantissa_in_template() {
     auto r = compile_templates_from_string(xml);
     check_invalid_compile_9B1(r, "unknown_element");
     TEST_PASS("structural_misplaced_mantissa_in_template");
-}
-
-// Misplaced operator in group returns unknown_element
-static void test_structural_misplaced_operator_in_group() {
-    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <group name="G">
-      <copy/>
-      <uInt32 name="F1"/>
-    </group>
-  </template>
-</templates>)";
-
-    auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B1(r, "unknown_element");
-    TEST_PASS("structural_misplaced_operator_in_group");
-}
-
-// Misplaced exponent in group returns unknown_element
-static void test_structural_misplaced_exponent_in_group() {
-    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <group name="G">
-      <exponent/>
-      <uInt32 name="F1"/>
-    </group>
-  </template>
-</templates>)";
-
-    auto r = compile_templates_from_string(xml);
-    check_invalid_compile_9B1(r, "unknown_element");
-    TEST_PASS("structural_misplaced_exponent_in_group");
 }
 
 // Scalar with two operators returns multiple_operators
@@ -2217,9 +2185,10 @@ static void test_hard_ceiling_exact_nesting() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
-    <group name="G">
+    <sequence name="S">
+      <length name="L"/>
       <uInt32 name="F1"/>
-    </group>
+    </sequence>
   </template>
 </templates>)";
     auto r = compile_templates_from_string(xml, lim);
@@ -2314,7 +2283,7 @@ static void test_max_fields_boundary_scalar() {
     TEST_PASS("max_fields_boundary_scalar");
 }
 
-// Test 5: Field accounting includes nested group/sequence descendants and sequence <length>
+// Test 5: Field accounting includes nested sequence descendants and sequence <length>
 static void test_field_accounting_nested() {
     CompileLimits lim;
     lim.max_fields_per_template = 3;
@@ -2348,55 +2317,57 @@ static void test_field_accounting_nested() {
         auto r = compile_templates_from_string(xml, lim);
         check_invalid_compile_9B2(r, "excessive_fields");
     }
-    // group + 1 child = 2 fields, plus scalar = 3 exactly
+    // scalar + sequence with length + 1 entry = 4 fields; limit 3 → excessive_fields
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <uInt32 name="F1"/>
-    <group name="G">
-      <uInt32 name="G1"/>
-    </group>
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E1"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    // scalar + sequence with length only (no entry) = 3 fields exactly
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <sequence name="S">
+      <length name="L"/>
+    </sequence>
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml, lim);
         CHECK(r.ok);
         CHECK(r.compiled.valid());
     }
-    // group + 2 children + scalar = 4 exceeds limit
-    {
-        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <uInt32 name="F1"/>
-    <group name="G">
-      <uInt32 name="G1"/>
-      <uInt32 name="G2"/>
-    </group>
-  </template>
-</templates>)";
-        auto r = compile_templates_from_string(xml, lim);
-        check_invalid_compile_9B2(r, "excessive_fields");
-    }
     TEST_PASS("field_accounting_nested");
 }
 
-// Test 6: First valid child at excessive depth rejected before invalid subtree is inspected
+// Test 6: First composite at excessive depth rejected before its entry subtree is inspected
 static void test_composite_rejected_before_subtree() {
     CompileLimits lim;
     lim.max_nesting_depth = 1;
-    // Group at depth 0 containing nested group at depth 1;
+    // Sequence at depth 0 containing nested sequence at depth 1;
     // first valid child at depth 2 triggers excessive_nesting
-    // before the invalid construct below it is inspected
+    // before the entry subtree is inspected
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
-    <group name="G">
-      <group name="Inner">
+    <sequence name="Outer">
+      <length name="L"/>
+      <sequence name="Inner">
+        <length name="IL"/>
         <uInt32 name="F1"/>
         <bogusWidget name="X"/>
-      </group>
-    </group>
+      </sequence>
+    </sequence>
   </template>
 </templates>)";
     auto r = compile_templates_from_string(xml, lim);
@@ -2416,30 +2387,33 @@ static void test_composite_rejected_before_subtree() {
 static void test_nesting_boundary() {
     CompileLimits lim;
     lim.max_nesting_depth = 1;
-    // depth 0 (template) + depth 1 (group/sequence) = ok
+    // depth 0 (template) + depth 1 (sequence) = ok
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
-    <group name="G">
+    <sequence name="S">
+      <length name="L"/>
       <uInt32 name="F1"/>
-    </group>
+    </sequence>
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml, lim);
         CHECK(r.ok);
         CHECK(r.compiled.valid());
     }
-    // depth 0 + depth 1 + depth 2 (nested group) = excessive_nesting
+    // depth 0 + depth 1 + depth 2 (nested sequence) = excessive_nesting
     {
         const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
-    <group name="G">
-      <group name="Inner">
+    <sequence name="Outer">
+      <length name="L"/>
+      <sequence name="Inner">
+        <length name="IL"/>
         <uInt32 name="F1"/>
-      </group>
-    </group>
+      </sequence>
+    </sequence>
   </template>
 </templates>)";
         auto r = compile_templates_from_string(xml, lim);
@@ -2484,19 +2458,16 @@ static void test_decimal_field_budget_count() {
     TEST_PASS("decimal_field_budget_count");
 }
 
-// Test 9: Mixed scalar + decimal + group + sequence/length indices contiguous, no decimal gap
+// Test 9: Mixed scalar + decimal + sequence/length indices contiguous, no decimal gap
 static void test_mixed_field_index_contiguous() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
   <template id="1" name="Msg">
     <uInt32 name="A"/>
     <decimal name="B"/>
-    <group name="C">
+    <sequence name="C">
+      <length name="CL"/>
       <uInt32 name="C1"/>
-    </group>
-    <sequence name="D">
-      <length name="DL"/>
-      <uInt32 name="D1"/>
     </sequence>
   </template>
 </templates>)";
@@ -2504,71 +2475,23 @@ static void test_mixed_field_index_contiguous() {
     CHECK(r.ok);
     CHECK(r.compiled.valid());
     const auto& fields = r.compiled.templates()[0].fields;
-    CHECK_EQ(fields.size(), 4u);
-    // Decimal now counts as 1 (no gap), indices are contiguous
+    CHECK_EQ(fields.size(), 3u);
+    // Decimal counts as 1 (no gap), indices are contiguous
     CHECK_EQ(fields[0].index, 0u);  // uInt32 A
     CHECK_EQ(fields[1].index, 1u);  // decimal B
-    CHECK_EQ(fields[2].index, 2u);  // group C
-    CHECK_EQ(fields[3].index, 4u);  // sequence D (after group child C1 at 3)
+    CHECK_EQ(fields[2].index, 2u);  // sequence C
     CHECK(fields[1].is_decimal);
-    CHECK(fields[2].has_children);
-    CHECK_EQ(fields[2].children.size(), 1u);
-    CHECK_EQ(fields[2].children[0].index, 3u);  // C1
-    CHECK(fields[3].is_sequence);
-    CHECK_EQ(fields[3].children.size(), 2u); // length + entry
-    CHECK_EQ(fields[3].children[0].index, 5u);  // DL (length)
-    CHECK_EQ(fields[3].children[1].index, 6u);  // D1 (entry)
+    CHECK(fields[2].is_sequence);
+    CHECK_EQ(fields[2].children.size(), 2u); // length + entry
+    CHECK_EQ(fields[2].children[0].index, 3u);  // CL (length)
+    CHECK_EQ(fields[2].children[1].index, 4u);  // C1 (entry)
     TEST_PASS("mixed_field_index_contiguous");
 }
 
 // === 9B3 focused evidence ===
 
-// max_nesting_depth=0: top-level empty group accepted at depth 0
-static void test_nesting_depth_zero_empty_group() {
-    CompileLimits lim;
-    lim.max_nesting_depth = 0;
-    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <group name="G"/>
-  </template>
-</templates>)";
-    auto r = compile_templates_from_string(xml, lim);
-    CHECK(r.ok);
-    CHECK(r.compiled.valid());
-    CHECK(!r.compiled.empty());
-    CHECK_EQ(r.compiled.size(), 1u);
-    CHECK_EQ(r.compiled.templates()[0].fields.size(), 1u);
-    CHECK(r.compiled.templates()[0].fields[0].has_children);
-    TEST_PASS("nesting_depth_zero_empty_group");
-}
-
-// max_nesting_depth=1: top-level group containing empty nested group accepted at depth 1
-static void test_nesting_depth_one_empty_nested_group() {
-    CompileLimits lim;
-    lim.max_nesting_depth = 1;
-    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
-<templates>
-  <template id="1" name="Msg">
-    <group name="G">
-      <group name="Inner"/>
-    </group>
-  </template>
-</templates>)";
-    auto r = compile_templates_from_string(xml, lim);
-    CHECK(r.ok);
-    CHECK(r.compiled.valid());
-    CHECK(!r.compiled.empty());
-    CHECK_EQ(r.compiled.size(), 1u);
-    CHECK_EQ(r.compiled.templates()[0].fields.size(), 1u);
-    CHECK(r.compiled.templates()[0].fields[0].has_children);
-    CHECK_EQ(r.compiled.templates()[0].fields[0].children.size(), 1u);
-    CHECK(r.compiled.templates()[0].fields[0].children[0].has_children);
-    TEST_PASS("nesting_depth_one_empty_nested_group");
-}
-
-// Field-budget precedence: composite node exceeding max_fields_per_template
-// returns excessive_fields before inspecting its invalid subtree
+// Field-budget precedence: sequence length child exceeding max_fields_per_template
+// returns excessive_fields before inspecting its entry subtree
 static void test_field_budget_precedence_over_subtree() {
     CompileLimits lim;
     lim.max_fields_per_template = 1;
@@ -2576,9 +2499,10 @@ static void test_field_budget_precedence_over_subtree() {
 <templates>
   <template id="1" name="Msg">
     <uInt32 name="F1"/>
-    <group name="G">
+    <sequence name="S">
+      <length name="L"/>
       <bogusWidget name="X"/>
-    </group>
+    </sequence>
   </template>
 </templates>)";
     auto r = compile_templates_from_string(xml, lim);
@@ -3068,6 +2992,83 @@ static void test_optional_constant_present_flags() {
     TEST_PASS("optional_constant_present_flags");
 }
 
+// === RT-3 generic group compile-time closure ===
+
+// Focused top-level precedence test: named group Outer whose subtree would exceed
+// field budget; verify unsupported_group, exact field_path, no subtree or budget errors
+static void test_group_reject_top_level_precedence() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <group name="Outer">
+      <uInt32 name="G1"/>
+      <uInt32 name="G2"/>
+      <bogusWidget name="X"/>
+    </group>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    // Exactly unsupported_group with field_path Outer
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "unsupported_group" && issue.field_path == "Outer") found = true;
+    }
+    CHECK(found);
+    // No subtree or budget errors
+    CHECK(!has_issue(r, "excessive_fields"));
+    CHECK(!has_issue(r, "excessive_nesting"));
+    CHECK(!has_issue(r, "unknown_element"));
+    // Full invalid/empty CompiledTemplateSet invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("group_reject_top_level_precedence");
+}
+
+// Focused test: named group Inner inside accepted sequence Entries
+// verify unsupported_group, exact field_path Entries.Inner, no child-derived error
+static void test_group_reject_inside_sequence() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="L"/>
+      <group name="Inner">
+        <uInt32 name="G1"/>
+        <bogusWidget name="X"/>
+      </group>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    // Exactly unsupported_group with field_path Entries.Inner
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "unsupported_group" && issue.field_path == "Entries.Inner") found = true;
+    }
+    CHECK(found);
+    // No child-derived error
+    CHECK(!has_issue(r, "unknown_element"));
+    CHECK(!has_issue(r, "excessive_nesting"));
+    CHECK(!has_issue(r, "excessive_fields"));
+    // Full invalid/empty handle invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("group_reject_inside_sequence");
+}
+
 // === RT-3 excessive_fields diagnostics regression ===
 
 // Top-level field overflow: exact message contains owning template name
@@ -3190,8 +3191,8 @@ int main() {
     test_structural_length_at_group_level();
     test_structural_misplaced_exponent_in_template();
     test_structural_misplaced_mantissa_in_template();
-    test_structural_misplaced_operator_in_group();
-    test_structural_misplaced_exponent_in_group();
+    // test_structural_misplaced_operator_in_group: removed — groups rejected at compile time
+    // test_structural_misplaced_exponent_in_group: removed — groups rejected at compile time
     test_structural_scalar_two_operators();
     test_structural_scalar_unknown_child();
     test_structural_operator_nested_child();
@@ -3257,8 +3258,8 @@ int main() {
     test_decimal_field_budget_count();
     test_mixed_field_index_contiguous();
     // 9B3 focused evidence
-    test_nesting_depth_zero_empty_group();
-    test_nesting_depth_one_empty_nested_group();
+    // test_nesting_depth_zero_empty_group: removed — groups rejected at compile time
+    // test_nesting_depth_one_empty_nested_group: removed — groups rejected at compile time
     test_field_budget_precedence_over_subtree();
     // RT-3 presence-map matrix tests
     test_pmap_mandatory_no_operator_no_bit();
@@ -3280,6 +3281,9 @@ int main() {
     test_mandatory_decimal_no_pmap_bit();
     test_optional_constant_absent_flags();
     test_optional_constant_present_flags();
+    // RT-3 generic group compile-time closure
+    test_group_reject_top_level_precedence();
+    test_group_reject_inside_sequence();
     // RT-3 excessive_fields diagnostics regression
     test_excessive_fields_top_level_diag();
     test_excessive_fields_sequence_length_diag();
