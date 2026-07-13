@@ -532,11 +532,10 @@ CompiledField parse_decimal_field(pugi::xml_node node, std::uint32_t& field_inde
     // For each child whose element name is exponent or mantissa, scans all of that
     // component node's direct children in their XML document order. At the first child
     // recognized by is_operator_element, emits exactly one CompileIssue and returns
-    // immediately. This runs before component attribute validation, operator
-    // attribute/value parsing, nested operator-child validation, duplicate diagnostics,
-    // unknown-child diagnostics, parse_operator invocation, or component operator
-    // metadata construction. Covers every exponent and mantissa node, including second
-    // or later duplicate component nodes; does not use node.child() to drive the scan.
+    // immediately. This runs before component attribute validation, duplicate
+    // diagnostics, and unknown-child diagnostics. Covers every exponent and mantissa
+    // node, including second or later duplicate component nodes; does not use
+    // node.child() to drive the scan.
     {
         for (auto dchild : node.children()) {
             std::string dname(dchild.name());
