@@ -489,26 +489,6 @@ struct DecoderSession::Impl {
             } else if (field.is_sequence) {
                 DecodeStatus st = decode_sequence(ctx, field, decoded, field_path);
                 if (st != DecodeStatus::Ok) return st;
-            } else if (field.has_children) {
-                // Group
-                decoded.name = field.name;
-                decoded.has_fix_tag = field.has_fix_tag;
-                decoded.fix_tag = field.fix_tag;
-                decoded.field_path = field_path;
-                decoded.is_group = true;
-
-                bool pmap_present = true;
-                if (field.has_pmap_bit) {
-                    pmap_present = consume_pmap_bit(ctx);
-                }
-
-                if (!field.is_mandatory && !pmap_present) {
-                    decoded.is_null = true;
-                    decoded.is_present = false;
-                } else {
-                    DecodeStatus st = decode_fields(ctx, field.children, decoded.children, field_path);
-                    if (st != DecodeStatus::Ok) return st;
-                }
             } else {
                 DecodeStatus st = decode_scalar(ctx, field, decoded, field_path);
                 if (st != DecodeStatus::Ok) return st;

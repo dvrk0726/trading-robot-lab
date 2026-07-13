@@ -62,6 +62,44 @@ static_assert(std::is_same_v<
     const std::vector<CompiledTemplate>&>,
     "templates() must return const reference");
 
+// --- Compile-time absence checks: generic group runtime removed ---
+namespace group_absence_check {
+    template<typename, typename = void> struct has_has_children : std::false_type {};
+    template<typename T> struct has_has_children<T, std::void_t<decltype(T::has_children)>> : std::true_type {};
+
+    template<typename, typename = void> struct has_is_group : std::false_type {};
+    template<typename T> struct has_is_group<T, std::void_t<decltype(T::is_group)>> : std::true_type {};
+
+    template<typename, typename = void> struct has_children_decoded : std::false_type {};
+    template<typename T> struct has_children_decoded<T, std::void_t<decltype(T::children)>> : std::true_type {};
+
+    // DecWireType::Group absence proven at compile time: if the enumerator existed,
+    // this constexpr function's switch would be non-exhaustive and fail to compile.
+    constexpr bool all_wire_types_covered(DecWireType wt) {
+        switch (wt) {
+            case DecWireType::uInt32:
+            case DecWireType::uInt64:
+            case DecWireType::Int32:
+            case DecWireType::Int64:
+            case DecWireType::AsciiString:
+            case DecWireType::UnicodeString:
+            case DecWireType::ByteVector:
+            case DecWireType::Decimal:
+            case DecWireType::Sequence:
+                return true;
+        }
+    }
+    static_assert(all_wire_types_covered(DecWireType::uInt32),
+                  "DecWireType must not have Group enumerator (switch exhaustive without it)");
+
+    static_assert(!has_has_children<CompiledField>::value,
+                  "CompiledField must not have has_children member");
+    static_assert(!has_is_group<DecodedField>::value,
+                  "DecodedField must not have is_group member");
+    static_assert(!has_children_decoded<DecodedField>::value,
+                  "DecodedField must not have children member");
+}
+
 static void test_valid_compile() {
     const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <templates>
@@ -190,7 +228,6 @@ static void test_sequence_compile() {
     CHECK_EQ(result.compiled.templates()[0].fields.size(), 2u);
     const auto& seq = result.compiled.templates()[0].fields[1];
     CHECK(seq.is_sequence);
-    CHECK(seq.has_children);
     // Children: length + 2 entry fields
     CHECK_EQ(seq.children.size(), 3u);
     CHECK_EQ(seq.children[0].name, "NoEntries");

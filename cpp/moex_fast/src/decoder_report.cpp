@@ -61,15 +61,6 @@ void write_field_text(std::ostringstream& oss, const DecodedField& field, int de
                 }
             }
         }
-    } else if (field.is_group) {
-        if (!field.is_present) {
-            oss << "absent group\n";
-        } else {
-            oss << "{group}\n";
-            for (const auto& child : field.children) {
-                write_field_text(oss, child, depth + 1);
-            }
-        }
     } else {
         write_decoded_scalar(oss, field.value, field.is_null);
         oss << " [" << value_source_name(field.source) << "]\n";
@@ -107,7 +98,6 @@ void write_scalar_json(std::ostringstream& oss, const DecodedScalar& val, bool i
 
 std::string wire_type_for_field(const DecodedField& field) {
     if (field.is_sequence) return "sequence";
-    if (field.is_group) return "group";
     if (std::holds_alternative<std::uint64_t>(field.value)) return "uInt";
     if (std::holds_alternative<std::int64_t>(field.value)) return "int";
     if (std::holds_alternative<std::string>(field.value)) return "string";
@@ -140,17 +130,6 @@ void write_field_json(std::ostringstream& oss, const DecodedField& field, int in
                     write_field_json(oss, field.entries[i][j], 0);
                 }
                 oss << "]";
-            }
-            oss << "]";
-        }
-    } else if (field.is_group) {
-        if (!field.is_present) {
-            oss << ",\"value\":null";
-        } else {
-            oss << ",\"fields\":[";
-            for (std::size_t i = 0; i < field.children.size(); ++i) {
-                if (i > 0) oss << ",";
-                write_field_json(oss, field.children[i], 0);
             }
             oss << "]";
         }

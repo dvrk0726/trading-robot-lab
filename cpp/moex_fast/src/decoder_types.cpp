@@ -13,7 +13,6 @@ const char* dec_wire_type_name(DecWireType wt) {
         case DecWireType::ByteVector:   return "byteVector";
         case DecWireType::Decimal:      return "decimal";
         case DecWireType::Sequence:     return "sequence";
-        case DecWireType::Group:        return "group";
     }
     return "unknown";
 }

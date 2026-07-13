@@ -152,7 +152,6 @@ DecWireType element_to_wire_type(const char* name) {
     if (n == "byteVector" || n == "byte-vector") return DecWireType::ByteVector;
     if (n == "decimal") return DecWireType::Decimal;
     if (n == "sequence") return DecWireType::Sequence;
-    if (n == "group") return DecWireType::Group;
     return DecWireType::uInt32;
 }
 
@@ -778,7 +777,6 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
             f.children.push_back(len_field);
         }
 
-        f.has_children = true;
         f.entry_has_pmap = true;
 
         // Reject misplaced elements at sequence level

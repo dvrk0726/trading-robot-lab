@@ -29,7 +29,7 @@ struct DecodeLimits {
 enum class DecWireType : std::uint8_t {
     uInt32, uInt64, Int32, Int64,
     AsciiString, UnicodeString, ByteVector,
-    Decimal, Sequence, Group
+    Decimal, Sequence
 };
 
 const char* dec_wire_type_name(DecWireType wt);
@@ -86,7 +86,6 @@ struct CompiledField {
     OpInstruction length_op;
     std::uint32_t length_field_index = 0;
 
-    bool has_children = false;
     std::vector<CompiledField> children;
 
     bool entry_has_pmap = false;
@@ -244,9 +243,6 @@ struct DecodedField {
     bool is_null = false;
     bool is_present = true;
     std::string field_path;
-
-    bool is_group = false;
-    std::vector<DecodedField> children;
 
     bool is_sequence = false;
     std::vector<std::vector<DecodedField>> entries;
