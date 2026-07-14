@@ -54,8 +54,8 @@ Addressed all 7 blocking items from Architecture Review Round 2 (CHANGES_REQUIRE
 ### 6. CI (.github/workflows/ci.yml)
 
 - **Exact RT-1 inventory**: 6 tests verified by name (test_template_parser, test_config_parser, test_provenance, test_deterministic_report, test_resource_safety, test_cli).
-- **Exact RT-3 inventory**: 8 tests verified by name (test_decoder_primitives, test_decoder_compiler, test_decoder_session, test_decoder_operators, test_decoder_sequences, test_decoder_rollback, test_decoder_cli, test_decoder_limits).
-- **Total count**: 14 tests (6 RT-1 + 8 RT-3).
+- **Exact RT-3 inventory**: 9 tests verified by name (test_decoder_primitives, test_decoder_compiler, test_decoder_session, test_decoder_operators, test_decoder_sequences, test_decoder_rollback, test_decoder_cli, test_decoder_limits, test_decoder_reference_oracle).
+- **Total count**: 15 tests (6 RT-1 + 9 RT-3).
 - **Separate verification**: Windows/MSVC and Linux/GCC each verify both inventories independently.
 
 ## Test Inventory (15 total)
