@@ -37,12 +37,7 @@ const char* dec_wire_type_name(DecWireType wt);
 // --- Operator kinds ---
 enum class OpKind : std::uint8_t {
     None,
-    Constant,
-    Default,
-    Copy,
-    Increment,
-    Delta,
-    Tail
+    Constant
 };
 
 const char* op_kind_name(OpKind ok);
@@ -179,8 +174,6 @@ enum class DecodeStatus : std::uint8_t {
     InvalidPresenceMap,
     UnknownTemplate,
     MissingPreviousTemplate,
-    MissingDictionaryValue,
-    InvalidOperatorState,
     InvalidSequenceLength,
     LimitExceeded,
     TrailingBytes,
@@ -218,12 +211,7 @@ using DecodedScalar = std::variant<
 // --- Value source ---
 enum class ValueSource : std::uint8_t {
     Wire,
-    Constant,
-    Default,
-    Copy,
-    Increment,
-    Delta,
-    Tail
+    Constant
 };
 
 const char* value_source_name(ValueSource vs);

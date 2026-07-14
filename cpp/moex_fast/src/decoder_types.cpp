@@ -20,11 +20,6 @@ const char* op_kind_name(OpKind ok) {
     switch (ok) {
         case OpKind::None:      return "none";
         case OpKind::Constant:  return "constant";
-        case OpKind::Default:   return "default";
-        case OpKind::Copy:      return "copy";
-        case OpKind::Increment: return "increment";
-        case OpKind::Delta:     return "delta";
-        case OpKind::Tail:      return "tail";
     }
     return "unknown";
 }
@@ -39,8 +34,6 @@ const char* decode_status_name(DecodeStatus s) {
         case DecodeStatus::InvalidPresenceMap:      return "invalid_presence_map";
         case DecodeStatus::UnknownTemplate:         return "unknown_template";
         case DecodeStatus::MissingPreviousTemplate: return "missing_previous_template";
-        case DecodeStatus::MissingDictionaryValue:  return "missing_dictionary_value";
-        case DecodeStatus::InvalidOperatorState:    return "invalid_operator_state";
         case DecodeStatus::InvalidSequenceLength:   return "invalid_sequence_length";
         case DecodeStatus::LimitExceeded:           return "limit_exceeded";
         case DecodeStatus::TrailingBytes:           return "trailing_bytes";
@@ -54,11 +47,6 @@ const char* value_source_name(ValueSource vs) {
     switch (vs) {
         case ValueSource::Wire:      return "wire";
         case ValueSource::Constant:  return "constant";
-        case ValueSource::Default:   return "default";
-        case ValueSource::Copy:      return "copy";
-        case ValueSource::Increment: return "increment";
-        case ValueSource::Delta:     return "delta";
-        case ValueSource::Tail:      return "tail";
     }
     return "unknown";
 }

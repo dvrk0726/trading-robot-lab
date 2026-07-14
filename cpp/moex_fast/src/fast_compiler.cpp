@@ -204,40 +204,6 @@ void validate_element_attributes(pugi::xml_node node,
 
 }  // namespace (anonymous)
 
-// Normative operator/type matrix for the accepted MOEX SPECTRA profile
-bool is_supported_op_type(OpKind op, DecWireType wire_type, bool is_mandatory) {
-    (void)is_mandatory;
-    switch (op) {
-        case OpKind::None:
-            return true;  // all types supported with none
-        case OpKind::Constant:
-            return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
-                   wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64 ||
-                   wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString;
-        case OpKind::Default:
-            return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
-                   wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64 ||
-                   wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString ||
-                   wire_type == DecWireType::Decimal;
-        case OpKind::Copy:
-            return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
-                   wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64 ||
-                   wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString ||
-                   wire_type == DecWireType::Decimal;
-        case OpKind::Increment:
-            return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
-                   wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64;
-        case OpKind::Delta:
-            return wire_type == DecWireType::uInt32 || wire_type == DecWireType::uInt64 ||
-                   wire_type == DecWireType::Int32 || wire_type == DecWireType::Int64 ||
-                   wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString ||
-                   wire_type == DecWireType::Decimal;
-        case OpKind::Tail:
-            return wire_type == DecWireType::AsciiString || wire_type == DecWireType::UnicodeString;
-    }
-    return false;
-}
-
 namespace {
 
 bool parse_u32(const std::string& text, std::uint32_t& out) {
@@ -466,13 +432,6 @@ OpInstruction parse_operator(pugi::xml_node field_node, DecWireType wire_type,
         }
 
         break;  // one operator per field
-    }
-
-    // Validate operator/type combination
-    if (op.kind != OpKind::None && !is_supported_op_type(op.kind, wire_type, true)) {
-        ctx.error("unsupported_operator_type",
-                  "Unsupported operator/type combination: " + std::string(op_kind_name(op.kind)) +
-                  " on " + dec_wire_type_name(wire_type) + " field " + field_path, field_path);
     }
 
     return op;
@@ -834,20 +793,12 @@ CompiledField parse_field(pugi::xml_node node, std::uint32_t& field_index,
     // - optional field without operator: no field bit (nullable wire; NULL from wire value alone)
     // - mandatory constant: no field bit
     // - optional constant: one field bit
-    // - other operators (default/copy/increment/delta/tail): one field bit
     switch (f.op.kind) {
         case OpKind::None:
             f.has_pmap_bit = false;
             break;
         case OpKind::Constant:
             f.has_pmap_bit = !f.is_mandatory;
-            break;
-        case OpKind::Default:
-        case OpKind::Copy:
-        case OpKind::Increment:
-        case OpKind::Delta:
-        case OpKind::Tail:
-            f.has_pmap_bit = true;
             break;
     }
 

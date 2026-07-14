@@ -260,17 +260,6 @@ struct DecoderSession::Impl {
                 return decode_none_op(ctx, field, out, pmap_present);
             case OpKind::Constant:
                 return decode_constant_op(ctx, field, out, pmap_present);
-            case OpKind::Default:
-            case OpKind::Copy:
-            case OpKind::Increment:
-            case OpKind::Delta:
-            case OpKind::Tail: {
-                ctx.set_error(DecodeStatus::UnsupportedTemplateFeature,
-                              "unsupported_operator_runtime",
-                              "Excluded operator " + std::string(op_kind_name(field.op.kind)) +
-                              " reached runtime on field " + field_path);
-                return DecodeStatus::UnsupportedTemplateFeature;
-            }
         }
         return DecodeStatus::InternalError;
     }
