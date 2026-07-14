@@ -23,16 +23,49 @@ jobs:
     name: Repository hygiene
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      run_python: ${{ steps.route.outputs.run_python }}
+      run_qsh: ${{ steps.route.outputs.run_qsh }}
+      run_fast: ${{ steps.route.outputs.run_fast }}
+      run_raw: ${{ steps.route.outputs.run_raw }}
+      full_matrix: ${{ steps.route.outputs.full_matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+
+      - name: Compute changed paths
+        if: github.event_name == 'pull_request'
+        run: |
+          : > "$RUNNER_TEMP/changed_paths.txt"
+          git diff --name-only --no-renames \
+            '${{ github.event.pull_request.base.sha }}' \
+            '${{ github.event.pull_request.head.sha }}' \
+            > "$RUNNER_TEMP/changed_paths.txt" || {
+            echo "::warning::git diff failed; routing to full matrix"
+            : > "$RUNNER_TEMP/changed_paths.txt"
+          }
+
+      - name: Route CI jobs
+        id: route
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python tools/ci_route.py \
+              --paths-file "$RUNNER_TEMP/changed_paths.txt" \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            python tools/ci_route.py \
+              --paths-file /dev/null \
+              --force-full \
+              --github-output "$GITHUB_OUTPUT"
+          fi
 
       - name: Validate canonical label configuration
         run: python -m json.tool .github/task-labels.json > /dev/null
@@ -42,6 +75,8 @@ jobs:
 
   python:
     name: Python tests and contracts
+    needs: repository-hygiene
+    if: needs.repository-hygiene.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -70,6 +105,8 @@ jobs:
 
   cpp-qsh-m10x-regression:
     name: C++ QSH M10X regression (20 tests)
+    needs: repository-hygiene
+    if: needs.repository-hygiene.outputs.run_qsh == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -144,6 +181,8 @@ jobs:
   # RT-1 inspector: 6 tests on Windows/MSVC, RT-3 decoder: 9 tests on Windows/MSVC
   cpp-moex-fast-inspector:
     name: "C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)"
+    needs: repository-hygiene
+    if: needs.repository-hygiene.outputs.run_fast == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -218,6 +257,8 @@ jobs:
   # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 9 tests on Linux/GCC
   cpp-moex-fast-inspector-linux:
     name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)"
+    needs: repository-hygiene
+    if: needs.repository-hygiene.outputs.run_fast == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -266,6 +307,8 @@ jobs:
 
   cpp-moex-raw-windows:
     name: C++ MOEX RAW Windows/MSVC (18 tests)
+    needs: repository-hygiene
+    if: needs.repository-hygiene.outputs.run_raw == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -304,6 +347,8 @@ jobs:
 
   cpp-moex-raw-linux:
     name: C++ MOEX RAW Linux/GCC (18 tests)
+    needs: repository-hygiene
+    if: needs.repository-hygiene.outputs.run_raw == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
