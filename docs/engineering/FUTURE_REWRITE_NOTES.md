@@ -67,12 +67,12 @@ Priority: critical
 Status: accepted
 ```
 
-### NOTE-004 — Historical QSH and live FAST semantics must remain separate
+### NOTE-004 — Legacy or third-party source-specific semantics must not leak into official contracts
 
 ```text
 Area: data contracts
-Observation: QSH OrdLog flags and FAST MDFlags use different layouts and meanings.
-Future design: separate parsers, enums and versioned normalized adapters; never reuse one flag enum for both sources.
+Observation: retired or third-party data sources can carry source-specific flags, enum layouts and semantics that differ from the official MOEX SPECTRA specification.
+Future design: official MOEX normalized events and order-book contracts must be derived only from the live specification; legacy or third-party source-specific flags and semantics must never be embedded in official contracts or reused as a common enum layer.
 Priority: critical
 Status: accepted
 ```

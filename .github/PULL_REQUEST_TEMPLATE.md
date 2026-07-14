@@ -57,7 +57,7 @@ For C++ tasks:
 ```text
 Compiler/toolchain:
 New tests:
-Existing QSH/M10X regression: XX/20 passed
+Task-specific C++ test inventory and evidence: <list tests or state none>
 ```
 
 For Python tasks:
@@ -71,8 +71,8 @@ contract/example validation:
 
 - [ ] Repository hygiene passed
 - [ ] Python tests and contracts passed
-- [ ] C++ QSH M10X regression passed
-- [ ] Other task-specific checks passed
+- [ ] All required CI checks passed (see active issue/PR for matrix)
+- [ ] Task-specific C++ tests passed (if applicable)
 
 Do not merge while a required check is pending or failed.
 
@@ -81,7 +81,7 @@ Do not merge while a required check is pending or failed.
 - [ ] `python tools/check_repository_hygiene.py` passed
 - [ ] no secrets, credentials, personal data or private connection parameters
 - [ ] no official private XML or raw market data
-- [ ] no QSH/FAST/pcap captures
+- [ ] no forbidden raw market-data files (*.qsh, *.pcap, *.pcapng, raw FAST)
 - [ ] no databases, binaries or build directories
 - [ ] no unexpected large/generated files
 
@@ -94,8 +94,7 @@ Do not merge while a required check is pending or failed.
 - [ ] live remains disabled by default
 - [ ] no broker/MOEX order connection was added
 - [ ] no unapproved network/FIX/TWIME/FAST binary decoder was added
-- [ ] QSH semantics were not changed outside scope
-- [ ] `strategy_ready` gating was not weakened
+- [ ] no source-specific legacy semantics leaked into normalized event or order-book contracts
 - [ ] no unrelated architecture expansion or refactor
 
 ## Owner Review Package

@@ -104,7 +104,7 @@ expected test vectors;
 инструкции получения данных вне Git.
 ```
 
-Historical QSH 2021 используется локально только как engineering sample и не коммитится.
+Retired и third-party raw форматы (включая *.qsh) не являются product inputs и запрещены в Git.
 
 ## Binaries и scripts
 
