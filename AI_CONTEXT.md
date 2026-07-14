@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-14
 Репозиторий: `dvrk0726/trading-robot-lab`
-Текущий gate: RT-3 pre-merge evidence synchronization
+Текущий gate: RT-3 DONE; CI optimization next (not started)
 
 ## Источник истины
 
@@ -47,40 +47,30 @@ decisions/ADR-0004-moex-vpts-certification-gate.md
 ```text
 RT-1: DONE — local MOEX configuration/templates inspector
 RT-2: DONE — .mxraw v1 raw segment and deterministic replay
+RT-3: DONE — specialized MOEX SPECTRA T0/T1 decoder
 M10X/QSH regression: 20/20
 ```
 
 RT-2 payload bytes остаются opaque. `capture_index` не является FAST `MsgSeqNum` или exchange sequence.
 
-## Текущий RT-3 checkpoint
+## RT-3 — DONE
 
 ```text
-Issue: #21, open, label CHANGES_REQUIRED
-Implementation PR: #23, open, not merged
-Implementation branch: mimo/issue-21-rt3-fast-decoder
-Last verified implementation/evidence head: 3fde6847d652ebd5277ca03a496dc701392eb75e
-CI #155: success, all 7 jobs passed
-Corrected specification PR: #27, merged
-Specification merge commit on main: e2e616673758b1cb888f5e3b4b7844343327c579
-RT-4: BLOCKED
-
-Acceptance evidence on 3fde6847d652ebd5277ca03a496dc701392eb75e:
-  FAST Release Windows/MSVC: 6 RT-1 + 9 RT-3 = 15 tests, all passed
-  FAST Release Linux/GCC: 6 RT-1 + 9 RT-3 = 15 tests, all passed
-  RAW Windows: 18 tests passed
-  RAW Linux: 18 tests passed
-  QSH M10X regression: 20 tests passed
-  Python tests/contracts: passed
-  Repository hygiene: passed
-  Owner-local Windows Release acceptance on 3fde6847d652ebd5277ca03a496dc701392eb75e:
-    configure/build success, inventory 15/15, PASS
-  Repository: Public
-  Owner server-side protection active: main branch, PR required,
-    unresolved conversations block merge, branch must be up to date,
-    7 CI checks required, deletion and force-push blocked
+Issue #21: closed, completed
+Implementation PR #23: merged
+Final reviewed PR head: a1443d3f909151d327b83042e43c1cc4c04cc732
+Merge commit on main: 377618c360c165d88dde4cfe0cee87f8747cba03
+Pre-merge CI #156: success, all 7 jobs passed
+Post-merge main CI #157: success, all 7 jobs passed
+Owner-local Windows Release acceptance on 3fde6847d652ebd5277ca03a496dc701392eb75e:
+  configure/build success, inventory 15/15, PASS
+Repository: Public
+Owner server-side protection active: main branch, PR required,
+  unresolved conversations block merge, branch must be up to date,
+  7 CI checks required, deletion and force-push blocked
 ```
 
-PR #23 remains the only implementation PR for RT-3. No new branch or PR was created.
+Accepted implementation: specialized MOEX SPECTRA T0/T1 decoder, not a general-purpose FAST 1.1 engine.
 
 ## Authoritative RT-3 target
 
@@ -185,15 +175,7 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-1. This state-sync commit synchronizes final acceptance evidence.
-2. Update evidence in Issue #21 and PR #23.
-3. Final architecture review.
-4. Explicit owner merge authorization.
-5. Manual owner merge.
-6. Post-merge main CI green.
-7. Issue #21 may then move to DONE.
+RT-3 is DONE and merged.
+CI optimization is the next separate engineering gate but is not started or authorized by this task.
+RT-4 requires a separate specification and explicit Owner authorization.
 ```
-
-RT-3 is not declared DONE and not declared merged until all of the above are complete. RT-4 remains BLOCKED until the full RT-3 sequence finishes.
-
-After RT-3 closure, the next engineering gate is CI optimization: job routing by changed files, full matrix on main/manual gate, vcpkg/CMake caching as a separate step. CI optimization is not started now.
