@@ -87,8 +87,8 @@ Post-merge CI #165: success
 ```text
 Issue: #33
 Draft PR: #34, branch mimo/issue-33-qsh-retirement-stage1
-Head: 0a39e7cd5ace38adce28d32f6eb1a325a9e1d1c2
-CI #172 / run 29359345488: success, exactly 6 jobs
+Stage 2A implementation head: 0a39e7cd5ace38adce28d32f6eb1a325a9e1d1c2
+Stage 2A CI #172 / run 29359345488: success, exactly 6 jobs
 
 Stage 1 (product/docs removal) and Stage 2A (CI/routing removal)
 are implemented. The gate is not merged and not finally complete
