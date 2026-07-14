@@ -15,11 +15,11 @@ RT-1 local MOEX configuration/templates inspector: DONE
 RT-2 .mxraw v1 raw capture/replay contract: DONE
 RT-3 specialized MOEX SPECTRA T0/T1 FAST decoder: DONE
 CI-1 baseline CI and documentation: DONE
-QSH retirement: Issue #33 / draft PR #34, Stage 1 + Stage 2A implementation
-  complete. Not merged. Not finally complete until Owner merge and
-  successful post-merge main CI.
+QSH retirement: DONE (PR #34 merged, main SHA 7c05cfb979cd0144be508e41a6f3a6229bfab1cb,
+  post-merge CI #175 / run 29361711016 success, 6 jobs)
   Active Protect main ruleset (ID 18924726): 6 required checks.
-CI-2 caching: after Issue #33 is closed
+  Issue #33 open until docs finalization PR #35 merges and verifies.
+CI-2 caching: next separate gate after Issue #33 closes, not started, not authorized
 RT-4 framing/sequencing/recovery: not started, not authorized
 ```
 

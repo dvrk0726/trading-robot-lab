@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-14
 Репозиторий: `dvrk0726/trading-robot-lab`
-Текущий gate: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement Issue #33 / draft PR #34, Stage 1 + Stage 2A implementation complete (not merged)
+Текущий gate: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement DONE
 
 ## Источник истины
 
@@ -138,26 +138,23 @@ historical FAST profile compatibility
 
 Previous-template-ID reuse is retained and is not the XML `<copy>` operator.
 
-## QSH retirement — implementation complete in PR #34 (not merged)
+## QSH retirement — DONE
 
 ```text
-Issue: #33
-Draft PR: #34, branch mimo/issue-33-qsh-retirement-stage1
-Stage 2A implementation head: 0a39e7cd5ace38adce28d32f6eb1a325a9e1d1c2
-Stage 2A CI #172 / run 29359345488: success, exactly 6 jobs
+Issue: #33 (open until docs finalization PR #35 merges)
+PR: #34, merged
+Main merge SHA: 7c05cfb979cd0144be508e41a6f3a6229bfab1cb
+Post-merge CI: #175 / run 29361711016 — success, exactly 6 jobs
 
-Stage 1 (product/docs removal) and Stage 2A (CI/routing removal)
-are implemented. The gate is not merged and not finally complete
-until Owner merge and successful post-merge main CI.
+Historical implementation evidence:
+  Stage 2A head: 0a39e7cd5ace38adce28d32f6eb1a325a9e1d1c2
+  Stage 2A CI: #172 / run 29359345488 — success, exactly 6 jobs
 
 The QSH/QScalp/OrdLog product support, old QSH L3/L2 book,
-Trading Lab QSH integration and archive QSH documents are retired.
-They are not part of the future architecture.
+Trading Lab QSH integration, tombstone job, run_qsh and QSH routing
+are retired and absent. They are not part of the future architecture.
 
-The QSH tombstone job, run_qsh, QSH routing and QSH routing tests
-are removed.
-
-The active Protect main ruleset (ID 18924726) now requires exactly
+The active Protect main ruleset (ID 18924726) requires exactly
 six checks:
   - Repository hygiene
   - Python tests and contracts
@@ -166,24 +163,21 @@ six checks:
   - C++ MOEX RAW Windows/MSVC (18 tests)
   - C++ MOEX RAW Linux/GCC (18 tests)
 
-.qsh remains mentioned only as a raw-market-data safety ban; not
+*.qsh remains mentioned only as a raw-market-data safety ban; not
 product support.
 ```
 
 ## Sequence
 
 ```text
-final Architecture Review and Owner merge authorization
--> merge PR #34
--> post-merge main CI with six jobs
--> close Issue #33
--> CI-2 caching
--> separately specified and authorized RT-4
+close Issue #33 after docs finalization PR #35 merges and post-merge CI verifies
+-> CI-2 caching (next separate gate, not started, not authorized)
+-> separately specified and explicitly Owner-authorized RT-4
 ```
 
 RT-4 remains not started and not authorized. Future normalized events
-and order book (RT-5/RT-6) must be designed from official MOEX SPECTRA
-data; no automatic reuse of the old QSH book.
+and new L3/L2 book are designed from official MOEX SPECTRA data; no
+automatic reuse of the old QSH code.
 
 ## Workflow
 
@@ -222,12 +216,12 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-RT-1, RT-2, RT-3 DONE and merged. CI-1 DONE.
-QSH retirement Issue #33 / draft PR #34, Stage 1 + Stage 2A implementation
-  complete. Not merged. Not finally complete until Owner merge and
-  successful post-merge main CI.
-Current gate: final Architecture Review, Owner merge authorization,
-  merge PR #34, post-merge main CI with six jobs, close Issue #33.
-CI-2 caching follows after Issue #33 is closed.
+RT-1, RT-2, RT-3 DONE and merged. CI-1 DONE. QSH retirement DONE.
+PR #34 merged. Main SHA: 7c05cfb979cd0144be508e41a6f3a6229bfab1cb.
+Post-merge CI #175 / run 29361711016 success, exactly 6 jobs.
+Current gate: close Issue #33 after docs finalization PR #35 merges
+  and post-merge CI verifies.
+CI-2 caching is the next separate gate after Issue #33 closes;
+  not started and not authorized.
 RT-4 requires a separate specification and explicit Owner authorization. Not started.
 ```
