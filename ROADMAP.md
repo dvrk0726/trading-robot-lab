@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-14
 Статус: gated engineering roadmap
-Текущий gate: RT-3 DONE; CI optimization next (not started)
+Текущий gate: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement Stage 1 + Stage 2A implementation complete (not merged)
 
 ## Главный порядок
 
@@ -11,6 +11,8 @@ repository workflow and protection
 -> local MOEX FAST metadata inspection
 -> raw segment contract and deterministic replay
 -> specialized MOEX T0/T1 FAST decoding
+-> CI routing optimization (CI-1 DONE)
+-> QSH retirement (Stage 1 + Stage 2A implementation complete, not merged)
 -> SPECTRA framing, sequencing and recovery
 -> realtime data quality and books
 -> research/backtest/paper
@@ -71,19 +73,60 @@ Accepted operators: field without operator, constant.
 
 Excluded and fail-closed: default, copy, increment, delta, tail, generic dictionaries, references, generic groups outside T0/T1, byteVector, decimal component operators, historical-profile compatibility.
 
-## Next engineering gate
+### CI-1 — DONE
 
 ```text
-CI optimization:
-  job routing by changed files
-  full matrix on main and manual gate
-  vcpkg/CMake caching as a separate step
-Not started. Not authorized by this task.
+Required-check-preserving routing
+Docs-only smoke PR #32
+Main SHA: 0699a533a1ed44a9d47e05b049aca4061bebaac0
+Post-merge CI #165: success
 ```
 
-## RT-4 — not started
+### QSH retirement — implementation complete in PR #34 (not merged)
 
-Requires a separate specification and explicit Owner authorization. Not automatically authorized by RT-3 completion.
+```text
+Issue: #33
+Draft PR: #34, branch mimo/issue-33-qsh-retirement-stage1
+Stage 2A implementation head: 0a39e7cd5ace38adce28d32f6eb1a325a9e1d1c2
+Stage 2A CI #172 / run 29359345488: success, exactly 6 jobs
+
+Stage 1 (product/docs removal) and Stage 2A (CI/routing removal)
+are implemented. The gate is not merged and not finally complete
+until Owner merge and successful post-merge main CI.
+
+The QSH/QScalp/OrdLog product support, old QSH L3/L2 book,
+Trading Lab QSH integration and archive QSH documents are retired.
+They are not part of the future architecture.
+
+The QSH tombstone job, run_qsh, QSH routing and QSH routing tests
+are removed.
+
+The active Protect main ruleset (ID 18924726) now requires exactly
+six checks:
+  - Repository hygiene
+  - Python tests and contracts
+  - C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)
+  - C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)
+  - C++ MOEX RAW Windows/MSVC (18 tests)
+  - C++ MOEX RAW Linux/GCC (18 tests)
+
+.qsh remains mentioned only as a raw-market-data safety ban.
+```
+
+## Current sequence
+
+```text
+final Architecture Review and Owner merge authorization
+-> merge PR #34
+-> post-merge main CI with six jobs
+-> close Issue #33
+-> CI-2 caching
+-> separately specified and authorized RT-4
+```
+
+## RT-4 — not started, not authorized
+
+Requires a separate specification and explicit Owner authorization. Not automatically authorized by prior completion.
 
 ```text
 MOEX 4-byte preamble and message boundary
@@ -104,4 +147,6 @@ RT-9 FIX/TWIME test and VPTS readiness
 RT-10 production certification and explicit owner gate
 ```
 
+Future normalized events and order book (RT-5/RT-6) must be designed
+from official MOEX SPECTRA data; no automatic reuse of the old QSH book.
 Names and scope of later stages remain provisional until the preceding gate supplies evidence.

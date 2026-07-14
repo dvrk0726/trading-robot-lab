@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-14
 Репозиторий: `dvrk0726/trading-robot-lab`
-Текущий gate: RT-3 DONE; CI optimization next (not started)
+Текущий gate: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement Issue #33 / draft PR #34, Stage 1 + Stage 2A implementation complete (not merged)
 
 ## Источник истины
 
@@ -38,7 +38,6 @@ Authoritative ADRs:
 ```text
 decisions/ADR-0001-hybrid-python-cpp-architecture.md
 decisions/ADR-0002-two-system-lab-runtime-architecture.md
-decisions/ADR-0003-cpp-qsh-ordlog-data-engine.md
 decisions/ADR-0004-moex-vpts-certification-gate.md
 ```
 
@@ -48,7 +47,8 @@ decisions/ADR-0004-moex-vpts-certification-gate.md
 RT-1: DONE — local MOEX configuration/templates inspector
 RT-2: DONE — .mxraw v1 raw segment and deterministic replay
 RT-3: DONE — specialized MOEX SPECTRA T0/T1 decoder
-M10X/QSH regression: 20/20
+CI-1: DONE — required-check-preserving routing, docs-only smoke PR #32,
+  main SHA 0699a533a1ed44a9d47e05b049aca4061bebaac0, post-merge CI #165 success
 ```
 
 RT-2 payload bytes остаются opaque. `capture_index` не является FAST `MsgSeqNum` или exchange sequence.
@@ -138,6 +138,53 @@ historical FAST profile compatibility
 
 Previous-template-ID reuse is retained and is not the XML `<copy>` operator.
 
+## QSH retirement — implementation complete in PR #34 (not merged)
+
+```text
+Issue: #33
+Draft PR: #34, branch mimo/issue-33-qsh-retirement-stage1
+Stage 2A implementation head: 0a39e7cd5ace38adce28d32f6eb1a325a9e1d1c2
+Stage 2A CI #172 / run 29359345488: success, exactly 6 jobs
+
+Stage 1 (product/docs removal) and Stage 2A (CI/routing removal)
+are implemented. The gate is not merged and not finally complete
+until Owner merge and successful post-merge main CI.
+
+The QSH/QScalp/OrdLog product support, old QSH L3/L2 book,
+Trading Lab QSH integration and archive QSH documents are retired.
+They are not part of the future architecture.
+
+The QSH tombstone job, run_qsh, QSH routing and QSH routing tests
+are removed.
+
+The active Protect main ruleset (ID 18924726) now requires exactly
+six checks:
+  - Repository hygiene
+  - Python tests and contracts
+  - C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)
+  - C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)
+  - C++ MOEX RAW Windows/MSVC (18 tests)
+  - C++ MOEX RAW Linux/GCC (18 tests)
+
+.qsh remains mentioned only as a raw-market-data safety ban; not
+product support.
+```
+
+## Sequence
+
+```text
+final Architecture Review and Owner merge authorization
+-> merge PR #34
+-> post-merge main CI with six jobs
+-> close Issue #33
+-> CI-2 caching
+-> separately specified and authorized RT-4
+```
+
+RT-4 remains not started and not authorized. Future normalized events
+and order book (RT-5/RT-6) must be designed from official MOEX SPECTRA
+data; no automatic reuse of the old QSH book.
+
 ## Workflow
 
 Authoritative process documents:
@@ -175,7 +222,12 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-RT-3 is DONE and merged.
-CI optimization is the next separate engineering gate but is not started or authorized by this task.
-RT-4 requires a separate specification and explicit Owner authorization.
+RT-1, RT-2, RT-3 DONE and merged. CI-1 DONE.
+QSH retirement Issue #33 / draft PR #34, Stage 1 + Stage 2A implementation
+  complete. Not merged. Not finally complete until Owner merge and
+  successful post-merge main CI.
+Current gate: final Architecture Review, Owner merge authorization,
+  merge PR #34, post-merge main CI with six jobs, close Issue #33.
+CI-2 caching follows after Issue #33 is closed.
+RT-4 requires a separate specification and explicit Owner authorization. Not started.
 ```

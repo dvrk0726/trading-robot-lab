@@ -13,22 +13,15 @@ Shared Contracts — versioned events, signals, OrderIntent and RiskDecision sch
 ```text
 RT-1 local MOEX configuration/templates inspector: DONE
 RT-2 .mxraw v1 raw capture/replay contract: DONE
-RT-3 specialized MOEX SPECTRA T0/T1 FAST decoder: CHANGES_REQUIRED in PR #23
-RT-4 framing/sequencing/recovery: BLOCKED
+RT-3 specialized MOEX SPECTRA T0/T1 FAST decoder: DONE
+CI-1 baseline CI and documentation: DONE
+QSH retirement: Issue #33 / draft PR #34, Stage 1 + Stage 2A implementation
+  complete. Not merged. Not finally complete until Owner merge and
+  successful post-merge main CI.
+  Active Protect main ruleset (ID 18924726): 6 required checks.
+CI-2 caching: after Issue #33 is closed
+RT-4 framing/sequencing/recovery: not started, not authorized
 ```
-
-Current RT-3 checkpoint:
-
-```text
-Issue #21
-PR #23
-Branch mimo/issue-21-rt3-fast-decoder
-Head 062649476500f6060d22b9740cafa1b0250f3ba5
-Corrected specification PR #27 merged at e2e616673758b1cb888f5e3b4b7844343327c579
-Post-merge main CI #126 success
-```
-
-The accepted RT-3 target is one template-driven decoder for the official hash-bound MOEX T0 and T1 profiles. It is not a general FAST 1.1 engine.
 
 Read before work:
 
@@ -74,11 +67,9 @@ For a new `READY_FOR_MIMO` task, the prompt may authorize a new branch and PR. F
 python -m pytest -q
 python shared/schemas/validate_examples.py
 python tools/check_repository_hygiene.py
-
-cmake -S cpp/qsh_ingest -B build/qsh_ingest
-cmake --build build/qsh_ingest --config Release
-ctest --test-dir build/qsh_ingest -C Release --output-on-failure
 ```
+
+C++ checks are task- and module-specific; see the active task or PR for the exact build/test commands.
 
 Task-specific checks are added on top of the baseline. Green CI does not replace architecture review or owner acceptance.
 

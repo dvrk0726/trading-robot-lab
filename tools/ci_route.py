@@ -2,7 +2,9 @@
 """CI-1 job routing by changed file paths.
 
 Fail-closed: empty input, errors, unknown paths, and any path forcing a
-sensitive/full-matrix change all route to the full seven-job matrix.
+sensitive/full-matrix change all route to the full six-job matrix.
+
+Routed expensive contours: Python, MOEX FAST, MOEX RAW.
 
 Designed to run inside GitHub Actions ``repository-hygiene`` with no
 external dependencies.
@@ -33,7 +35,6 @@ _DOCS_DIR_PREFIXES: tuple[str, ...] = (
 # C++ contour directories → which C++ jobs to enable.
 _CPP_FAST_PREFIXES: tuple[str, ...] = ("cpp/moex_fast/",)
 _CPP_RAW_PREFIXES: tuple[str, ...] = ("cpp/moex_raw/",)
-_CPP_QSH_PREFIXES: tuple[str, ...] = ("cpp/qsh_ingest/",)
 
 # Python contour directories.
 _PYTHON_PREFIXES: tuple[str, ...] = (
@@ -43,9 +44,6 @@ _PYTHON_PREFIXES: tuple[str, ...] = (
     "tools/",
     "apps/",
 )
-
-# Single file that triggers both Python and QSH.
-_MIMO_SAVE_PS1 = "tools/mimo_save.ps1"
 
 # Paths that force the full matrix (any change = run everything).
 _FULL_MATRIX_EXACT_PATHS: set[str] = {
@@ -101,7 +99,7 @@ def _is_valid_path(path: str) -> bool:
 def _classify_single(path: str) -> set[str]:
     """Return a set of contour tags for one changed path.
 
-    Tags: ``"full"``, ``"fast"``, ``"raw"``, ``"qsh"``, ``"python"``, ``"docs"``.
+    Tags: ``"full"``, ``"fast"``, ``"raw"``, ``"python"``, ``"docs"``.
 
     Unknown paths → ``{"full"}`` (fail-closed).
     """
@@ -132,10 +130,6 @@ def _classify_single(path: str) -> set[str]:
         if path.startswith(prefix):
             return {"raw"}
 
-    for prefix in _CPP_QSH_PREFIXES:
-        if path.startswith(prefix):
-            return {"qsh"}
-
     # Any other cpp/** is uncategorised → fail-closed.
     if parts and parts[0] == "cpp":
         return {"full"}
@@ -149,9 +143,6 @@ def _classify_single(path: str) -> set[str]:
             return {"docs"}
 
     # --- Python contour -------------------------------------------------------
-    if path == _MIMO_SAVE_PS1:
-        return {"python", "qsh"}
-
     for prefix in _PYTHON_PREFIXES:
         if path.startswith(prefix):
             return {"python"}
@@ -167,7 +158,7 @@ def _classify_single(path: str) -> set[str]:
 def route(paths: list[str]) -> dict[str, bool]:
     """Compute routing flags from a list of changed file paths.
 
-    Returns a dict with keys ``run_python``, ``run_qsh``, ``run_fast``,
+    Returns a dict with keys ``run_python``, ``run_fast``,
     ``run_raw``, and ``full_matrix`` (all ``bool``).
     """
     # Empty or absent input → full matrix (fail-closed).
@@ -175,7 +166,6 @@ def route(paths: list[str]) -> dict[str, bool]:
         return {
             "full_matrix": True,
             "run_python": True,
-            "run_qsh": True,
             "run_fast": True,
             "run_raw": True,
         }
@@ -189,7 +179,6 @@ def route(paths: list[str]) -> dict[str, bool]:
         return {
             "full_matrix": True,
             "run_python": True,
-            "run_qsh": True,
             "run_fast": True,
             "run_raw": True,
         }
@@ -199,7 +188,6 @@ def route(paths: list[str]) -> dict[str, bool]:
         return {
             "full_matrix": False,
             "run_python": False,
-            "run_qsh": False,
             "run_fast": False,
             "run_raw": False,
         }
@@ -207,7 +195,6 @@ def route(paths: list[str]) -> dict[str, bool]:
     return {
         "full_matrix": False,
         "run_python": "python" in tags,
-        "run_qsh": "qsh" in tags,
         "run_fast": "fast" in tags,
         "run_raw": "raw" in tags,
     }
@@ -223,7 +210,7 @@ _TRUE_FALSE = {True: "true", False: "false"}
 def write_github_output(path: str, flags: dict[str, bool]) -> None:
     """Append routing flags as ``key=value`` lines to *path*."""
     with open(path, "a", encoding="utf-8") as fh:
-        for key in ("run_python", "run_qsh", "run_fast", "run_raw", "full_matrix"):
+        for key in ("run_python", "run_fast", "run_raw", "full_matrix"):
             fh.write(f"{key}={_TRUE_FALSE[flags[key]]}\n")
 
 
@@ -255,7 +242,6 @@ def main(argv: list[str] | None = None) -> int:
         flags: dict[str, bool] = {
             "full_matrix": True,
             "run_python": True,
-            "run_qsh": True,
             "run_fast": True,
             "run_raw": True,
         }
@@ -273,13 +259,12 @@ def main(argv: list[str] | None = None) -> int:
             flags = {
                 "full_matrix": True,
                 "run_python": True,
-                "run_qsh": True,
                 "run_fast": True,
                 "run_raw": True,
             }
             if args.github_output:
                 write_github_output(args.github_output, flags)
-            for key in ("full_matrix", "run_python", "run_qsh", "run_fast", "run_raw"):
+            for key in ("full_matrix", "run_python", "run_fast", "run_raw"):
                 print(f"{key}={_TRUE_FALSE[flags[key]]}")
             return 0
 
@@ -289,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         write_github_output(args.github_output, flags)
 
     # Always print to stdout for local debugging.
-    for key in ("full_matrix", "run_python", "run_qsh", "run_fast", "run_raw"):
+    for key in ("full_matrix", "run_python", "run_fast", "run_raw"):
         print(f"{key}={_TRUE_FALSE[flags[key]]}")
 
     return 0

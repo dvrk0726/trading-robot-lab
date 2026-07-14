@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-14
 Репозиторий: `dvrk0726/trading-robot-lab`
-Статус: RT-1 DONE; RT-2 DONE; RT-3 DONE
+Статус: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement Stage 1 + Stage 2A implementation complete (not merged)
 
 ## Архитектурные границы
 
@@ -59,6 +59,46 @@ Owner server-side protection active: main branch, PR required,
 
 Accepted implementation: specialized MOEX SPECTRA T0/T1 decoder, not a general-purpose FAST 1.1 engine.
 
+## CI-1 — DONE
+
+```text
+Required-check-preserving routing
+Docs-only smoke PR #32
+Main SHA: 0699a533a1ed44a9d47e05b049aca4061bebaac0
+Post-merge CI #165: success
+```
+
+## QSH retirement — implementation complete in PR #34 (not merged)
+
+```text
+Issue: #33
+Draft PR: #34, branch mimo/issue-33-qsh-retirement-stage1
+Stage 2A implementation head: 0a39e7cd5ace38adce28d32f6eb1a325a9e1d1c2
+Stage 2A CI #172 / run 29359345488: success, exactly 6 jobs
+
+Stage 1 (product/docs removal) and Stage 2A (CI/routing removal)
+are implemented. The gate is not merged and not finally complete
+until Owner merge and successful post-merge main CI.
+
+The QSH/QScalp/OrdLog product support, old QSH L3/L2 book,
+Trading Lab QSH integration and archive QSH documents are retired.
+They are not part of the future architecture.
+
+The QSH tombstone job, run_qsh, QSH routing and QSH routing tests
+are removed.
+
+The active Protect main ruleset (ID 18924726) now requires exactly
+six checks:
+  - Repository hygiene
+  - Python tests and contracts
+  - C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)
+  - C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)
+  - C++ MOEX RAW Windows/MSVC (18 tests)
+  - C++ MOEX RAW Linux/GCC (18 tests)
+
+.qsh remains mentioned only as a raw-market-data safety ban.
+```
+
 ## Authoritative RT-3 profile
 
 ```text
@@ -102,14 +142,17 @@ historical profile compatibility
 
 Unsupported XML must fail compilation explicitly.
 
-## Next engineering gate
+## Sequence
 
 ```text
-CI optimization is the next separate engineering gate:
-  job routing by changed files
-  full matrix on main and manual gate
-  vcpkg/CMake caching as a separate step
-Not started. Not authorized by this task.
+final Architecture Review and Owner merge authorization
+-> merge PR #34
+-> post-merge main CI with six jobs
+-> close Issue #33
+-> CI-2 caching
+-> separately specified and authorized RT-4
 ```
 
-RT-4 requires a separate specification and explicit Owner authorization. Not automatically authorized by RT-3 completion.
+RT-4 remains not started and not authorized. Future normalized events
+and order book (RT-5/RT-6) must be designed from official MOEX SPECTRA
+data; no automatic reuse of the old QSH book.
