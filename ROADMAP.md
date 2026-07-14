@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-14
 Статус: gated engineering roadmap
-Текущий gate: RT-3 pre-merge evidence synchronization
+Текущий gate: RT-3 DONE; CI optimization next (not started)
 
 ## Главный порядок
 
@@ -52,106 +52,38 @@ deterministic replay
 Windows/Linux Release tests
 ```
 
-## RT-3 — current gate
-
-### Objective
-
-One template-driven C++20 decoder for the accepted official MOEX SPECTRA T0 and T1 template files.
-
-### Verified checkpoint
+### RT-3 — DONE
 
 ```text
-Issue #21: open, CHANGES_REQUIRED
-PR #23: open, not merged
-Branch: mimo/issue-21-rt3-fast-decoder
-Last verified implementation/evidence head: 3fde6847d652ebd5277ca03a496dc701392eb75e
-CI #155: success, all 7 jobs passed
-Corrected specification PR #27: merged
-Main merge commit: e2e616673758b1cb888f5e3b4b7844343327c579
+Specialized MOEX SPECTRA T0/T1 decoder
+Issue #21: closed, completed
+PR #23: merged
+Final reviewed PR head: a1443d3f909151d327b83042e43c1cc4c04cc732
+Merge commit on main: 377618c360c165d88dde4cfe0cee87f8747cba03
+Pre-merge CI #156: success, all 7 jobs passed
+Post-merge main CI #157: success, all 7 jobs passed
+Owner-local Windows Release acceptance: inventory 15/15, PASS
 ```
 
-Acceptance evidence on 3fde6847d652ebd5277ca03a496dc701392eb75e:
+Accepted T0/T1 SHA-256 and profile: see PROJECT_STATE.md.
 
-```text
-FAST Release Windows/MSVC: 6 RT-1 + 9 RT-3 = 15 tests, all passed
-FAST Release Linux/GCC: 6 RT-1 + 9 RT-3 = 15 tests, all passed
-RAW Windows: 18 tests passed
-RAW Linux: 18 tests passed
-QSH M10X regression: 20 tests passed
-Python tests/contracts: passed
-Repository hygiene: passed
-Owner-local Windows Release acceptance on 3fde6847d652ebd5277ca03a496dc701392eb75e:
-  configure/build success, inventory 15/15, PASS
-Repository: Public
-Owner server-side protection active: main branch, PR required,
-  unresolved conversations block merge, branch must be up to date,
-  7 CI checks required, deletion and force-push blocked
-```
+Accepted operators: field without operator, constant.
 
-### Accepted profile
+Excluded and fail-closed: default, copy, increment, delta, tail, generic dictionaries, references, generic groups outside T0/T1, byteVector, decimal component operators, historical-profile compatibility.
 
-```text
-T0 SHA-256 DBD50F1E0BECC2B2EBD9DAC8E4C6609BA1538566811B610CDE9B6DD3E7F66A8E
-T1 SHA-256 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
-```
-
-Required scope:
-
-```text
-field without operator
-constant
-template ID reuse
-presence maps
-ordinary and nullable integers
-ASCII and Unicode strings
-exact decimal
-sequences and single length instruction
-limits, reset and transactional rollback
-T0/T1 official XML compilation
-Windows/Linux Release tests
-```
-
-Excluded scope:
-
-```text
-default/copy/increment/delta/tail
-generic field dictionaries
-user-defined dictionaries
-references and cycle resolution
-generic groups outside T0/T1
-byteVector
-decimal component operators
-historical FAST profile compatibility
-```
-
-### RT-3 remaining sequence
-
-```text
-1. This state-sync commit: synchronize final acceptance evidence.
-2. Update evidence in Issue #21 and PR #23.
-3. Final architecture review.
-4. Explicit owner merge authorization.
-5. Manual owner merge.
-6. Post-merge main CI green.
-7. Issue #21 DONE.
-```
-
-RT-3 is not declared DONE and not declared merged until all of the above are complete. Each MiMo run is one small owner-authorized task in the existing branch and PR.
-
-### Next engineering gate after RT-3 closure
+## Next engineering gate
 
 ```text
 CI optimization:
   job routing by changed files
   full matrix on main and manual gate
   vcpkg/CMake caching as a separate step
+Not started. Not authorized by this task.
 ```
 
-Not started. Not part of RT-3 or RT-4.
+## RT-4 — not started
 
-## RT-4 — BLOCKED
-
-Planned only after RT-3 is DONE:
+Requires a separate specification and explicit Owner authorization. Not automatically authorized by RT-3 completion.
 
 ```text
 MOEX 4-byte preamble and message boundary
@@ -160,8 +92,6 @@ A/B sequencing and deduplication
 gap detection and recovery
 Snapshot + buffered Incremental bootstrap
 ```
-
-No RT-4 implementation, branch or MiMo prompt is allowed before RT-3 acceptance, merge and green post-merge CI.
 
 ## Later stages
 
