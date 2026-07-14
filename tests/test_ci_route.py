@@ -301,3 +301,92 @@ class TestEdgeCases:
         """Docs + Python → Python enabled, not docs-only."""
         paths = ["README.md", "src/app.py"]
         _assert_flags(route(paths), run_python=True)
+
+
+# ---------------------------------------------------------------------------
+# Path validation (invalid paths → full matrix)
+# ---------------------------------------------------------------------------
+
+class TestPathValidation:
+    def test_absolute_path(self) -> None:
+        _assert_flags(route(["/etc/passwd"]), full_matrix=True)
+
+    def test_backslash_path(self) -> None:
+        _assert_flags(route(["src\\file.py"]), full_matrix=True)
+
+    def test_dotdot_component(self) -> None:
+        _assert_flags(route(["../secret/file.txt"]), full_matrix=True)
+
+    def test_internal_dotdot(self) -> None:
+        _assert_flags(route(["src/../../../etc/passwd"]), full_matrix=True)
+
+    def test_nul_character(self) -> None:
+        _assert_flags(route(["src/file\x00.py"]), full_matrix=True)
+
+    def test_control_character(self) -> None:
+        _assert_flags(route(["src/file\x01.py"]), full_matrix=True)
+
+    def test_trailing_slash(self) -> None:
+        _assert_flags(route(["src/"]), full_matrix=True)
+
+    def test_empty_component(self) -> None:
+        _assert_flags(route(["src//file.py"]), full_matrix=True)
+
+    def test_dot_component(self) -> None:
+        _assert_flags(route(["./src/file.py"]), full_matrix=True)
+
+    def test_internal_dot(self) -> None:
+        _assert_flags(route(["src/./file.py"]), full_matrix=True)
+
+
+# ---------------------------------------------------------------------------
+# Missing paths-file and --force-full edge cases
+# ---------------------------------------------------------------------------
+
+class TestMissingPathsFile:
+    def test_missing_paths_file_full_matrix(self) -> None:
+        """Missing paths-file without --force-full → full matrix, exit 0."""
+        output_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        )
+        output_file.close()
+        try:
+            ret = main([
+                "--paths-file", "/nonexistent/paths.txt",
+                "--github-output", output_file.name,
+            ])
+            assert ret == 0
+            with open(output_file.name, encoding="utf-8") as fh:
+                lines = fh.read().strip().splitlines()
+            values = dict(line.split("=", 1) for line in lines)
+            assert values["full_matrix"] == "true"
+            assert values["run_python"] == "true"
+            assert values["run_qsh"] == "true"
+            assert values["run_fast"] == "true"
+            assert values["run_raw"] == "true"
+        finally:
+            os.unlink(output_file.name)
+
+    def test_missing_paths_file_with_force_full(self) -> None:
+        """--force-full with missing paths-file → full matrix, exit 0."""
+        output_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        )
+        output_file.close()
+        try:
+            ret = main([
+                "--paths-file", "/nonexistent/paths.txt",
+                "--force-full",
+                "--github-output", output_file.name,
+            ])
+            assert ret == 0
+            with open(output_file.name, encoding="utf-8") as fh:
+                lines = fh.read().strip().splitlines()
+            values = dict(line.split("=", 1) for line in lines)
+            assert values["full_matrix"] == "true"
+            assert values["run_python"] == "true"
+            assert values["run_qsh"] == "true"
+            assert values["run_fast"] == "true"
+            assert values["run_raw"] == "true"
+        finally:
+            os.unlink(output_file.name)

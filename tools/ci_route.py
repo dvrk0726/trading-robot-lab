@@ -11,6 +11,7 @@ external dependencies.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import PurePosixPath
 
@@ -67,6 +68,33 @@ _FULL_MATRIX_ROOT_FILES: set[str] = {
 
 
 # ---------------------------------------------------------------------------
+# Path validation
+# ---------------------------------------------------------------------------
+
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _is_valid_path(path: str) -> bool:
+    """Return ``True`` if *path* is a valid relative POSIX path.
+
+    Invalid (→ full matrix): absolute path, backslash, empty component,
+    ``.`` or ``..`` component, NUL/control characters, trailing slash.
+    """
+    if not path or path.endswith("/"):
+        return False
+    if path.startswith("/"):
+        return False
+    if "\\" in path:
+        return False
+    if _CONTROL_RE.search(path):
+        return False
+    for part in path.split("/"):
+        if part in ("", ".", ".."):
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Single-path classification
 # ---------------------------------------------------------------------------
 
@@ -77,6 +105,9 @@ def _classify_single(path: str) -> set[str]:
 
     Unknown paths → ``{"full"}`` (fail-closed).
     """
+    if not _is_valid_path(path):
+        return {"full"}
+
     posix = PurePosixPath(path)
     suffix = posix.suffix.lower()
     parts = posix.parts  # e.g. ("cpp", "moex_fast", "foo.cpp")
@@ -219,25 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Read paths from file.  Errors → full matrix (fail-closed).
-    try:
-        with open(args.paths_file, encoding="utf-8") as fh:
-            paths = [line.strip() for line in fh if line.strip()]
-    except OSError as exc:
-        print(f"ERROR: cannot read paths file: {exc}", file=sys.stderr)
-        if args.github_output:
-            write_github_output(
-                args.github_output,
-                {
-                    "full_matrix": True,
-                    "run_python": True,
-                    "run_qsh": True,
-                    "run_fast": True,
-                    "run_raw": True,
-                },
-            )
-        return 1
-
+    # --force-full takes priority — apply before reading paths-file.
     if args.force_full:
         flags: dict[str, bool] = {
             "full_matrix": True,
@@ -247,6 +260,29 @@ def main(argv: list[str] | None = None) -> int:
             "run_raw": True,
         }
     else:
+        # Read paths from file.  Errors → full matrix (fail-closed, exit 0).
+        try:
+            with open(args.paths_file, encoding="utf-8") as fh:
+                paths = [line.strip() for line in fh if line.strip()]
+        except OSError as exc:
+            print(
+                f"WARNING: cannot read paths file: {exc}; "
+                "routing to full matrix",
+                file=sys.stderr,
+            )
+            flags = {
+                "full_matrix": True,
+                "run_python": True,
+                "run_qsh": True,
+                "run_fast": True,
+                "run_raw": True,
+            }
+            if args.github_output:
+                write_github_output(args.github_output, flags)
+            for key in ("full_matrix", "run_python", "run_qsh", "run_fast", "run_raw"):
+                print(f"{key}={_TRUE_FALSE[flags[key]]}")
+            return 0
+
         flags = route(paths)
 
     if args.github_output:

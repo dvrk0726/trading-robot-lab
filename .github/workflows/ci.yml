@@ -44,10 +44,14 @@ jobs:
       - name: Compute changed paths
         if: github.event_name == 'pull_request'
         run: |
+          : > "$RUNNER_TEMP/changed_paths.txt"
           git diff --name-only --no-renames \
             '${{ github.event.pull_request.base.sha }}' \
             '${{ github.event.pull_request.head.sha }}' \
-            > "$RUNNER_TEMP/changed_paths.txt"
+            > "$RUNNER_TEMP/changed_paths.txt" || {
+            echo "::warning::git diff failed; routing to full matrix"
+            : > "$RUNNER_TEMP/changed_paths.txt"
+          }
 
       - name: Route CI jobs
         id: route
