@@ -1,0 +1,3368 @@
+#include "moex_fast/fast_compiler.hpp"
+#include "moex_fast/fast_decoder.hpp"
+#include "test_check.hpp"
+#include <iostream>
+#include <type_traits>
+#include <string>
+
+using namespace moex_fast;
+
+static std::vector<std::uint8_t> hex(const char* h) {
+    std::vector<std::uint8_t> bytes;
+    for (int i = 0; h[i] && h[i + 1]; i += 2) {
+        auto hv = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return 0;
+        };
+        bytes.push_back(static_cast<std::uint8_t>(hv(h[i]) * 16 + hv(h[i + 1])));
+    }
+    return bytes;
+}
+
+static CompiledTemplateSet compile(const char* xml) {
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    return r.compiled;
+}
+
+static bool has_issue(const CompileResult& r, const std::string& code) {
+    for (const auto& issue : r.issues) {
+        if (issue.code == code) return true;
+    }
+    return false;
+}
+
+static void check_invalid_compile_9B1(const CompileResult& r, const std::string& expected_code) {
+    CHECK(!r.ok);
+    CHECK(has_issue(r, expected_code));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+}
+
+static void check_invalid_compile_9B2(const CompileResult& r, const std::string& expected_code) {
+    CHECK(!r.ok);
+    CHECK(has_issue(r, expected_code));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+}
+
+// Assert exactly one issue with exact code, field_path, message and complete invalid/empty handle invariant.
+static void check_single_issue_exact(const CompileResult& r,
+                                      const std::string& expected_code,
+                                      const std::string& expected_field_path,
+                                      const std::string& expected_message) {
+    CHECK(!r.ok);
+    CHECK_EQ(r.issues.size(), 1u);
+    CHECK_EQ(r.issues[0].code, expected_code);
+    CHECK_EQ(r.issues[0].field_path, expected_field_path);
+    CHECK_EQ(r.issues[0].message, expected_message);
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+}
+
+// --- static_assert: template collection returns const ref only ---
+static_assert(std::is_same_v<
+    decltype(std::declval<const CompiledTemplateSet&>().templates()),
+    const std::vector<CompiledTemplate>&>,
+    "templates() must return const reference");
+
+// --- Compile-time absence checks: generic group runtime removed ---
+namespace group_absence_check {
+    template<typename, typename = void> struct has_has_children : std::false_type {};
+    template<typename T> struct has_has_children<T, std::void_t<decltype(T::has_children)>> : std::true_type {};
+
+    template<typename, typename = void> struct has_is_group : std::false_type {};
+    template<typename T> struct has_is_group<T, std::void_t<decltype(T::is_group)>> : std::true_type {};
+
+    template<typename, typename = void> struct has_children_decoded : std::false_type {};
+    template<typename T> struct has_children_decoded<T, std::void_t<decltype(T::children)>> : std::true_type {};
+
+    // DecWireType::Group and DecWireType::ByteVector absence proven at compile time:
+    // if either enumerator existed, this constexpr function's switch would be
+    // non-exhaustive and fail to compile.
+    constexpr bool all_wire_types_covered(DecWireType wt) {
+        switch (wt) {
+            case DecWireType::uInt32:
+            case DecWireType::uInt64:
+            case DecWireType::Int32:
+            case DecWireType::Int64:
+            case DecWireType::AsciiString:
+            case DecWireType::UnicodeString:
+            case DecWireType::Decimal:
+            case DecWireType::Sequence:
+                return true;
+        }
+    }
+    static_assert(all_wire_types_covered(DecWireType::uInt32),
+                  "DecWireType must not have Group or ByteVector enumerator (switch exhaustive without them)");
+
+    static_assert(!has_has_children<CompiledField>::value,
+                  "CompiledField must not have has_children member");
+    static_assert(!has_is_group<DecodedField>::value,
+                  "DecodedField must not have is_group member");
+    static_assert(!has_children_decoded<DecodedField>::value,
+                  "DecodedField must not have children member");
+}
+
+// --- Compile-time: DecodedScalar has exactly five alternatives, no byteVector ---
+namespace decoded_scalar_check {
+    static_assert(std::variant_size_v<DecodedScalar> == 5,
+                  "DecodedScalar must have exactly five alternatives");
+    static_assert(std::is_same_v<std::variant_alternative_t<0, DecodedScalar>, std::monostate>,
+                  "DecodedScalar[0] must be std::monostate");
+    static_assert(std::is_same_v<std::variant_alternative_t<1, DecodedScalar>, std::uint64_t>,
+                  "DecodedScalar[1] must be std::uint64_t");
+    static_assert(std::is_same_v<std::variant_alternative_t<2, DecodedScalar>, std::int64_t>,
+                  "DecodedScalar[2] must be std::int64_t");
+    static_assert(std::is_same_v<std::variant_alternative_t<3, DecodedScalar>, std::string>,
+                  "DecodedScalar[3] must be std::string");
+    static_assert(std::is_same_v<std::variant_alternative_t<4, DecodedScalar>, DecodedDecimal>,
+                  "DecodedScalar[4] must be DecodedDecimal");
+    static_assert(!std::is_constructible_v<DecodedScalar, std::vector<std::uint8_t>>,
+                  "DecodedScalar must not be constructible from std::vector<uint8_t>");
+    static_assert(!std::is_assignable_v<DecodedScalar&, std::vector<std::uint8_t>>,
+                  "DecodedScalar must not be assignable from std::vector<uint8_t>");
+}
+
+static void test_valid_compile() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="100" name="TestMsg">
+    <string name="ConstField" id="1"><constant>HELLO</constant></string>
+    <uInt32 name="SeqNum" id="34"/>
+    <uInt64 name="Timestamp" id="52"/>
+    <int32 name="IntField" id="100" presence="optional"/>
+    <string name="StrField" id="101" presence="optional"/>
+    <decimal name="Price" id="270" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+
+    // Immutable handle checks
+    CHECK(result.compiled.valid());
+    CHECK(!result.compiled.empty());
+    CHECK_EQ(result.compiled.size(), 1u);
+    CHECK_EQ(result.compiled.templates().size(), 1u);
+    CHECK_EQ(result.compiled.templates()[0].id, 100u);
+    CHECK_EQ(result.compiled.templates()[0].name, "TestMsg");
+    CHECK_EQ(result.compiled.templates()[0].fields.size(), 6u);
+    CHECK(!result.compiled.templates_sha256().empty());
+
+    // Find
+    auto* found = result.compiled.find(100);
+    CHECK(found != nullptr);
+    CHECK_EQ(found->id, 100u);
+    CHECK(result.compiled.find(999) == nullptr);
+
+    // Check field details
+    const auto& f0 = result.compiled.templates()[0].fields[0];
+    CHECK_EQ(f0.name, "ConstField");
+    CHECK(f0.wire_type == DecWireType::AsciiString);
+    CHECK(f0.op.kind == OpKind::Constant);
+    CHECK_EQ(f0.op.constant_str, "HELLO");
+
+    const auto& f1 = result.compiled.templates()[0].fields[1];
+    CHECK_EQ(f1.name, "SeqNum");
+    CHECK(f1.wire_type == DecWireType::uInt32);
+    CHECK(f1.is_mandatory);
+    CHECK(!f1.has_pmap_bit);  // mandatory none -> no pmap bit
+
+    const auto& f3 = result.compiled.templates()[0].fields[3];
+    CHECK_EQ(f3.name, "IntField");
+    CHECK(!f3.is_mandatory);
+    CHECK(!f3.has_pmap_bit);  // optional field with no operator: no pmap bit, nullable wire
+
+    TEST_PASS("valid_compile");
+}
+
+static void test_duplicate_template_id() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="A"><uInt32 name="F1"/></template>
+  <template id="1" name="B"><uInt32 name="F2"/></template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    bool found = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "duplicate_template_id") found = true;
+    }
+    CHECK(found);
+
+    // Failed compile: handle must be invalid/empty
+    CHECK(!result.compiled.valid());
+    CHECK(result.compiled.empty());
+    CHECK_EQ(result.compiled.size(), 0u);
+    CHECK(result.compiled.templates().empty());
+    CHECK(result.compiled.find(1) == nullptr);
+
+    TEST_PASS("duplicate_template_id");
+}
+
+static void test_missing_template_id() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template name="NoId"><uInt32 name="F1"/></template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    CHECK(!result.compiled.valid());
+    CHECK_EQ(result.compiled.size(), 0u);
+    TEST_PASS("missing_template_id");
+}
+
+static void test_invalid_xml() {
+    auto result = compile_templates_from_string("<not valid xml");
+    CHECK(!result.ok);
+    CHECK(!result.compiled.valid());
+    CHECK_EQ(result.compiled.size(), 0u);
+    TEST_PASS("invalid_xml");
+}
+
+static void test_empty_templates() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates></templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);  // no templates compiled
+    CHECK(!result.compiled.valid());
+    CHECK_EQ(result.compiled.size(), 0u);
+    TEST_PASS("empty_templates");
+}
+
+static void test_sequence_compile() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="SeqMsg">
+    <uInt32 name="Header"/>
+    <sequence name="Entries">
+      <length name="NoEntries" id="268"/>
+      <uInt32 name="Action" id="279"/>
+      <string name="Type" id="269" presence="optional"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK_EQ(result.compiled.templates()[0].fields.size(), 2u);
+    const auto& seq = result.compiled.templates()[0].fields[1];
+    CHECK(seq.is_sequence);
+    // Children: length + 2 entry fields
+    CHECK_EQ(seq.children.size(), 3u);
+    CHECK_EQ(seq.children[0].name, "NoEntries");
+    CHECK_EQ(seq.children[1].name, "Action");
+    CHECK_EQ(seq.children[2].name, "Type");
+    TEST_PASS("sequence_compile");
+}
+
+static void test_decimal_compile() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="20" name="DecMsg">
+    <decimal name="Price" id="270" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    const auto& f = result.compiled.templates()[0].fields[0];
+    CHECK(f.is_decimal);
+    CHECK(f.wire_type == DecWireType::Decimal);
+    TEST_PASS("decimal_compile");
+}
+
+static void test_dictionary_collision() {
+    // <copy> is an excluded operator; compilation fails before dictionary collision
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <uInt32 name="Val1" id="1"><copy key="sharedKey"/></uInt32>
+    <uInt32 name="Val2" id="2"><copy key="sharedKey"/></uInt32>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "unsupported_operator");
+    TEST_PASS("dictionary_collision");
+}
+
+static void test_reference_rejection() {
+    // typeRef should be rejected as unsupported
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <typeRef name="SomeType"/>
+    <uInt32 name="Val" id="1"/>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    bool found = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "unsupported_reference") found = true;
+    }
+    CHECK(found);
+    CHECK(!result.compiled.valid());
+    TEST_PASS("reference_rejection");
+}
+
+static void test_template_ref_rejection() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <templateRef name="OtherTemplate"/>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+    bool found = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "unsupported_reference") found = true;
+    }
+    CHECK(found);
+    CHECK(!result.compiled.valid());
+    TEST_PASS("template_ref_rejection");
+}
+
+static void test_unsupported_operator_type() {
+    // tail on uInt32 is an excluded operator
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <uInt32 name="Val" id="1"><tail/></uInt32>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "unsupported_operator");
+    TEST_PASS("unsupported_operator_type");
+}
+
+static void test_copy_with_dictionary_scope() {
+    // <copy> is an excluded operator; dictionary scope is irrelevant
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg">
+    <uInt32 name="Val" id="1"><copy dictionary="global"/></uInt32>
+    <uInt32 name="Val2" id="2"><copy dictionary="template"/></uInt32>
+  </template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "unsupported_operator");
+    TEST_PASS("copy_with_dictionary_scope");
+}
+
+static void test_sha256_provenance() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg"><uInt32 name="Val"/></template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK(!result.compiled.templates_sha256().empty());
+    CHECK_EQ(result.compiled.templates_sha256().size(), 64u);  // hex sha256
+    CHECK(result.compiled.templates_file_size() > 0);
+    CHECK(!result.compiled.compiler_version().empty());
+    CHECK(!result.compiled.schema_version().empty());
+    TEST_PASS("sha256_provenance");
+}
+
+// --- New tests for round 9A ---
+
+// Test 1: successful compile returns exact order, find, SHA, size, versions
+static void test_compile_provenance_and_order() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="200" name="MsgA"><uInt32 name="F1"/></template>
+  <template id="100" name="MsgB"><uInt32 name="F2"/></template>
+  <template id="300" name="MsgC"><uInt32 name="F3"/></template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK(result.compiled.valid());
+    CHECK(!result.compiled.empty());
+    CHECK_EQ(result.compiled.size(), 3u);
+
+    // Exact order preserved
+    CHECK_EQ(result.compiled.templates()[0].id, 200u);
+    CHECK_EQ(result.compiled.templates()[0].name, "MsgA");
+    CHECK_EQ(result.compiled.templates()[1].id, 100u);
+    CHECK_EQ(result.compiled.templates()[1].name, "MsgB");
+    CHECK_EQ(result.compiled.templates()[2].id, 300u);
+    CHECK_EQ(result.compiled.templates()[2].name, "MsgC");
+
+    // Find works for all
+    CHECK(result.compiled.find(200) != nullptr);
+    CHECK(result.compiled.find(100) != nullptr);
+    CHECK(result.compiled.find(300) != nullptr);
+    CHECK(result.compiled.find(400) == nullptr);
+    CHECK_EQ(result.compiled.find(200)->name, "MsgA");
+    CHECK_EQ(result.compiled.find(100)->name, "MsgB");
+
+    // Provenance
+    CHECK_EQ(result.compiled.templates_sha256().size(), 64u);
+    CHECK(result.compiled.templates_file_size() > 0);
+    CHECK(!result.compiled.compiler_version().empty());
+    CHECK(!result.compiled.schema_version().empty());
+
+    TEST_PASS("compile_provenance_and_order");
+}
+
+// Test 2: first valid template + subsequent duplicate template id → invalid empty handle, no partial lookup
+static void test_fatal_path_duplicate_after_valid() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Good"><uInt32 name="F1"/></template>
+  <template id="10" name="Dup"><uInt32 name="F2"/></template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+
+    // Issues preserved
+    bool found_dup = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "duplicate_template_id") found_dup = true;
+    }
+    CHECK(found_dup);
+
+    // Handle is completely invalid; no partial lookup
+    CHECK(!result.compiled.valid());
+    CHECK(result.compiled.empty());
+    CHECK_EQ(result.compiled.size(), 0u);
+    CHECK(result.compiled.templates().empty());
+    CHECK(result.compiled.find(10) == nullptr);
+
+    TEST_PASS("fatal_path_duplicate_after_valid");
+}
+
+// Test 3: second fatal path — unknown wire-affecting element after valid template
+static void test_fatal_path_unknown_element() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Good"><uInt32 name="F1"/></template>
+  <template id="20" name="Bad"><unknownWidget name="X"/></template>
+</templates>)";
+
+    auto result = compile_templates_from_string(xml);
+    CHECK(!result.ok);
+
+    bool found_unknown = false;
+    for (const auto& issue : result.issues) {
+        if (issue.code == "unknown_element") found_unknown = true;
+    }
+    CHECK(found_unknown);
+
+    // Same isolation: invalid empty handle, no partial lookup
+    CHECK(!result.compiled.valid());
+    CHECK(result.compiled.empty());
+    CHECK_EQ(result.compiled.size(), 0u);
+    CHECK(result.compiled.find(10) == nullptr);
+    CHECK(result.compiled.find(20) == nullptr);
+
+    TEST_PASS("fatal_path_unknown_element");
+}
+
+// Test 4: copy/move lifetime — copied handle usable after source destroyed
+static void test_copy_lifetime() {
+    CompiledTemplateSet copy;
+    std::string sha;
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10" name="Msg"><uInt32 name="Val"/></template>
+</templates>)";
+        auto result = compile_templates_from_string(xml);
+        CHECK(result.ok);
+
+        // Copy the handle
+        copy = result.compiled;
+        sha = copy.templates_sha256();
+
+        // Verify copy is valid while source is alive
+        CHECK(copy.valid());
+        CHECK_EQ(copy.size(), 1u);
+        CHECK(copy.find(10) != nullptr);
+    }
+    // Source (CompileResult) destroyed; copy must still be valid
+    CHECK(copy.valid());
+    CHECK_EQ(copy.size(), 1u);
+    CHECK(copy.find(10) != nullptr);
+    CHECK_EQ(copy.find(10)->name, "Msg");
+    CHECK_EQ(copy.templates_sha256(), sha);
+    CHECK_EQ(copy.templates_sha256().size(), 64u);
+
+    TEST_PASS("copy_lifetime");
+}
+
+// Test 5: move lifetime
+static void test_move_lifetime() {
+    CompiledTemplateSet moved;
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="5" name="M"><uInt32 name="X"/></template>
+</templates>)";
+        auto result = compile_templates_from_string(xml);
+        CHECK(result.ok);
+
+        CompiledTemplateSet tmp = result.compiled;
+        moved = std::move(tmp);
+
+        // tmp should be in a valid but empty state after move
+        // (shared_ptr move sets source to nullptr)
+    }
+    // Source destroyed; moved must still work
+    CHECK(moved.valid());
+    CHECK_EQ(moved.size(), 1u);
+    CHECK(moved.find(5) != nullptr);
+    CHECK_EQ(moved.find(5)->name, "M");
+
+    TEST_PASS("move_lifetime");
+}
+
+// Test 6: default-constructed handle is invalid/empty
+static void test_default_handle_invalid() {
+    CompiledTemplateSet h;
+    CHECK(!h.valid());
+    CHECK(h.empty());
+    CHECK_EQ(h.size(), 0u);
+    CHECK(h.templates().empty());
+    CHECK(h.find(0) == nullptr);
+    CHECK(h.find(1) == nullptr);
+    CHECK(h.templates_sha256().empty());
+    CHECK(h.compiler_version().empty());
+    CHECK(h.schema_version().empty());
+    CHECK_EQ(h.templates_file_size(), 0u);
+
+    TEST_PASS("default_handle_invalid");
+}
+
+// --- 9B1 tests ---
+
+// Template ID UINT32_MAX succeeds and is findable
+static void test_template_id_uint32_max() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="4294967295" name="MaxTid"><uInt32 name="F1"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK(result.compiled.valid());
+    auto* t = result.compiled.find(4294967295u);
+    CHECK(t != nullptr);
+    CHECK_EQ(t->id, 4294967295u);
+    TEST_PASS("template_id_uint32_max");
+}
+
+// Template id zero fails
+static void test_template_id_zero() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="0" name="Zero"><uInt32 name="F1"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "invalid_template_id");
+    TEST_PASS("template_id_zero");
+}
+
+// Template id non-decimal fails
+static void test_template_id_non_decimal() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="10abc" name="Bad"><uInt32 name="F1"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "non_numeric_template_id");
+    TEST_PASS("template_id_non_decimal");
+}
+
+// Template id UINT32_MAX+1 fails
+static void test_template_id_out_of_range() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="4294967296" name="BigTid"><uInt32 name="F1"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "template_id_out_of_range");
+    TEST_PASS("template_id_out_of_range");
+}
+
+// FIX tag INT32_MAX succeeds on scalar
+static void test_fix_tag_scalar_ok() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="2147483647"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK_EQ(result.compiled.templates()[0].fields[0].fix_tag, 2147483647);
+    CHECK(result.compiled.templates()[0].fields[0].has_fix_tag);
+    TEST_PASS("fix_tag_scalar_ok");
+}
+
+// FIX tag INT32_MAX succeeds on decimal
+static void test_fix_tag_decimal_ok() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><decimal name="D" id="2147483647"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK_EQ(result.compiled.templates()[0].fields[0].fix_tag, 2147483647);
+    TEST_PASS("fix_tag_decimal_ok");
+}
+
+// FIX tag INT32_MAX succeeds on sequence length
+static void test_fix_tag_sequence_length_ok() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L" id="2147483647"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    CHECK(result.ok);
+    CHECK_EQ(result.compiled.templates()[0].fields[0].children[0].fix_tag, 2147483647);
+    CHECK(result.compiled.templates()[0].fields[0].children[0].has_fix_tag);
+    TEST_PASS("fix_tag_sequence_length_ok");
+}
+
+// FIX tag zero fails
+static void test_fix_tag_zero() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="0"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "invalid_fix_tag");
+    TEST_PASS("fix_tag_zero");
+}
+
+// FIX tag negative fails
+static void test_fix_tag_negative() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="-5"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "invalid_fix_tag");
+    TEST_PASS("fix_tag_negative");
+}
+
+// FIX tag non-decimal fails
+static void test_fix_tag_non_decimal() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="abc"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "invalid_fix_tag");
+    TEST_PASS("fix_tag_non_decimal");
+}
+
+// FIX tag INT32_MAX+1 fails
+static void test_fix_tag_out_of_range() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F" id="2147483648"/></template>
+</templates>)";
+    auto result = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(result, "invalid_fix_tag");
+    TEST_PASS("fix_tag_out_of_range");
+}
+
+// uInt32 0 and MAX succeed, -1 and MAX+1 fail
+static void test_uint32_constant_range() {
+    // 0 succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>0</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 0u);
+    }
+    // MAX succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>4294967295</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 4294967295u);
+    }
+    // -1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>-1</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    // MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>4294967296</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    TEST_PASS("uint32_constant_range");
+}
+
+// uInt64 0 and MAX succeed, -1 and MAX+1 fail
+static void test_uint64_constant_range() {
+    // 0
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><constant>0</constant></uInt64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 0u);
+    }
+    // MAX = 18446744073709551615
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><constant>18446744073709551615</constant></uInt64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, UINT64_MAX);
+    }
+    // -1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><constant>-1</constant></uInt64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    // 18446744073709551616 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><constant>18446744073709551616</constant></uInt64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    TEST_PASS("uint64_constant_range");
+}
+
+// int32 MIN and MAX succeed; adjacent values fail
+static void test_int32_constant_range() {
+    // MAX = 2147483647
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int32 name="F"><constant>2147483647</constant></int32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_int, INT32_MAX);
+    }
+    // MIN = -2147483648
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int32 name="F"><constant>-2147483648</constant></int32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_int, INT32_MIN);
+    }
+    // MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int32 name="F"><constant>2147483648</constant></int32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    // MIN-1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int32 name="F"><constant>-2147483649</constant></int32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    TEST_PASS("int32_constant_range");
+}
+
+// int64 MIN and MAX succeed; adjacent values fail
+static void test_int64_constant_range() {
+    // MAX = 9223372036854775807
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int64 name="F"><constant>9223372036854775807</constant></int64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_int, INT64_MAX);
+    }
+    // MIN = -9223372036854775808
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int64 name="F"><constant>-9223372036854775808</constant></int64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_int, INT64_MIN);
+    }
+    // MAX+1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int64 name="F"><constant>9223372036854775808</constant></int64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    // MIN-1 fails
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><int64 name="F"><constant>-9223372036854775809</constant></int64></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    TEST_PASS("int64_constant_range");
+}
+
+// Excluded operator <default> on sequence length fails with unsupported_operator
+static void test_sequence_length_initial_range() {
+    // <default>0</default> on length
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><default>0</default></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "unsupported_operator");
+    }
+    // <default>4294967295</default> on length
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><default>4294967295</default></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "unsupported_operator");
+    }
+    // <default>-1</default> on length
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><default>-1</default></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "unsupported_operator");
+    }
+    // <default>4294967296</default> on length
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><default>4294967296</default></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "unsupported_operator");
+    }
+    TEST_PASS("sequence_length_initial_range");
+}
+
+// Reject hexadecimal numeric literal
+static void test_reject_hex_literal() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>0xFF</constant></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "invalid_constant_value");
+    TEST_PASS("reject_hex_literal");
+}
+
+// Valid empty and non-empty ASCII constant values
+static void test_valid_ascii_static_values() {
+    // Empty ASCII
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F"><constant></constant></string></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_str, "");
+    }
+    // Non-empty ASCII
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F"><constant>Hello</constant></string></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_str, "Hello");
+    }
+    TEST_PASS("valid_ascii_static_values");
+}
+
+// Valid 1/2/3/4-byte Unicode static values
+static void test_valid_unicode_static_values() {
+    // 1-byte (ASCII)
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><unicode name="F"><constant>A</constant></unicode></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+    }
+    // 2-byte (U+00A2 = C2 A2)
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<unicode name=\"F\"><constant>\xC2\xA2</constant></unicode>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+    }
+    // 3-byte (U+20AC = E2 82 AC)
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<unicode name=\"F\"><constant>\xE2\x82\xAC</constant></unicode>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+    }
+    // 4-byte (U+1F600 = F0 9F 98 80)
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<unicode name=\"F\"><constant>\xF0\x9F\x98\x80</constant></unicode>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+    }
+    TEST_PASS("valid_unicode_static_values");
+}
+
+// Non-ASCII in ASCII field fails
+static void test_non_ascii_in_ascii_field() {
+    // Non-ASCII byte (0xC2 0xA2 = U+00A2 in UTF-8) in ASCII field
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<string name=\"F\"><constant>\xC2\xA2</constant></string>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B1(r, "invalid_constant_value");
+    }
+    TEST_PASS("non_ascii_in_ascii_field");
+}
+
+// Invalid Unicode (surrogate U+D800 = ED A0 80) fails
+static void test_invalid_unicode_surrogate() {
+    // Surrogate U+D800
+    const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<templates><template id=\"1\" name=\"Msg\">"
+        "<unicode name=\"F\"><constant>\xED\xA0\x80</constant></unicode>"
+        "</template></templates>";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "invalid_constant_value");
+    TEST_PASS("invalid_unicode_surrogate");
+}
+
+// Oversized static value (1 MiB + 1) fails
+static void test_oversized_static_value() {
+    // 1 MiB + 1 bytes of ASCII 'A'
+    std::string big(1024 * 1024 + 1, 'A');
+    std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<templates><template id=\"1\" name=\"Msg\">"
+        "<string name=\"F\"><constant>" + big + "</constant></string>"
+        "</template></templates>";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "invalid_constant_value");
+    TEST_PASS("oversized_static_value");
+}
+
+// Exact 1 MiB static value succeeds
+static void test_exact_1mib_static_value() {
+    std::string big(1024 * 1024, 'A');
+    std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<templates><template id=\"1\" name=\"Msg\">"
+        "<string name=\"F\"><constant>" + big + "</constant></string>"
+        "</template></templates>";
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_str.size(), 1024u * 1024u);
+    TEST_PASS("exact_1mib_static_value");
+}
+
+// Excluded operator <default> on uInt64 fails with unsupported_operator
+static void test_uint64_default_initial() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><default>18446744073709551615</default></uInt64></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unsupported_operator");
+    TEST_PASS("uint64_default_initial");
+}
+
+// Excluded operator <copy> on uInt64 fails with unsupported_operator
+static void test_uint64_copy_initial() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><copy>18446744073709551615</copy></uInt64></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unsupported_operator");
+    TEST_PASS("uint64_copy_initial");
+}
+
+// Excluded operator <increment> on uInt64 fails with unsupported_operator
+static void test_uint64_increment_initial() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt64 name="F"><increment>18446744073709551615</increment></uInt64></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unsupported_operator");
+    TEST_PASS("uint64_increment_initial");
+}
+
+// --- 9B2 phase 1 structural validation tests ---
+
+// Comments, whitespace, processing instructions are ignored; compile succeeds
+static void test_structural_comments_whitespace_pi() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<!-- comment -->
+<templates>
+  <?processing-instruction data?>
+  <template id="1" name="Msg">
+    <!-- field comment -->
+    <uInt32 name="F1"/>
+    <uInt64 name="F2"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    CHECK_EQ(r.compiled.size(), 1u);
+    TEST_PASS("structural_comments_whitespace_pi");
+}
+
+// Unknown root child (not <template>) returns unknown_element
+static void test_structural_unknown_root_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <unknownWidget name="X"/>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_unknown_root_child");
+}
+
+// Misplaced operator in template returns unknown_element
+static void test_structural_misplaced_operator_in_template() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <constant>42</constant>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_operator_in_template");
+}
+
+// Misplaced length at template level returns unknown_element
+static void test_structural_length_at_template_level() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <length name="L"/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_length_at_template_level");
+}
+
+// Misplaced length at sequence entry level returns unknown_element
+static void test_structural_length_at_group_level() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E">
+        <length name="Misplaced"/>
+      </uInt32>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_length_at_group_level");
+}
+
+// Misplaced exponent in template returns unknown_element
+static void test_structural_misplaced_exponent_in_template() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <exponent/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_exponent_in_template");
+}
+
+// Misplaced mantissa in template returns unknown_element
+static void test_structural_misplaced_mantissa_in_template() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <mantissa/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_mantissa_in_template");
+}
+
+// Scalar with two operators returns multiple_operators
+static void test_structural_scalar_two_operators() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><constant>1</constant><copy/></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "multiple_operators");
+    TEST_PASS("structural_scalar_two_operators");
+}
+
+// Scalar with unknown child returns unknown_element
+static void test_structural_scalar_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><bogus/></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_scalar_unknown_child");
+}
+
+// Operator with nested element returns unknown_element
+static void test_structural_operator_nested_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><constant><value>42</value></constant></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_operator_nested_child");
+}
+
+// Duplicate decimal exponent returns duplicate_decimal_exponent (operator-free fixture)
+static void test_structural_duplicate_decimal_exponent() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent/>
+      <exponent/>
+      <mantissa/>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "duplicate_decimal_exponent");
+    TEST_PASS("structural_duplicate_decimal_exponent");
+}
+
+// Duplicate decimal mantissa returns duplicate_decimal_mantissa (operator-free fixture)
+static void test_structural_duplicate_decimal_mantissa() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent/>
+      <mantissa/>
+      <mantissa/>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "duplicate_decimal_mantissa");
+    TEST_PASS("structural_duplicate_decimal_mantissa");
+}
+
+// Unknown child in decimal returns unknown_element
+static void test_structural_decimal_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <bogus/>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_decimal_unknown_child");
+}
+
+// Decimal unknown presence returns unknown_presence
+static void test_structural_decimal_unknown_presence() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D" presence="conditional"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_presence");
+    TEST_PASS("structural_decimal_unknown_presence");
+}
+
+// Two operators in exponent: first direct operator rejected at compile time
+static void test_structural_exponent_two_operators() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><constant>1</constant><copy/></exponent>
+      <mantissa><constant>0</constant></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_single_issue_exact(r, "unsupported_decimal_component_operator",
+                             "D.exponent",
+                             "Operator <constant> on decimal component <exponent> "
+                             "is outside the accepted MOEX SPECTRA T0/T1 profile (D.exponent)");
+    TEST_PASS("structural_exponent_two_operators");
+}
+
+// Unknown child in exponent returns unknown_element (no operators in decimal)
+static void test_structural_exponent_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent><bogus/></exponent>
+      <mantissa/>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_exponent_unknown_child");
+}
+
+// Two operators in mantissa: first direct operator rejected at compile time
+static void test_structural_mantissa_two_operators() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent/>
+      <mantissa><constant>1</constant><copy/></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_single_issue_exact(r, "unsupported_decimal_component_operator",
+                             "D.mantissa",
+                             "Operator <constant> on decimal component <mantissa> "
+                             "is outside the accepted MOEX SPECTRA T0/T1 profile (D.mantissa)");
+    TEST_PASS("structural_mantissa_two_operators");
+}
+
+// Unknown child in mantissa returns unknown_element (no operators in decimal)
+static void test_structural_mantissa_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent/>
+      <mantissa><bogus/></mantissa>
+    </decimal>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_mantissa_unknown_child");
+}
+
+// Sequence missing length returns missing_sequence_length
+static void test_structural_sequence_missing_length() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "missing_sequence_length");
+    TEST_PASS("structural_sequence_missing_length");
+}
+
+// Duplicate sequence length returns duplicate_sequence_length
+static void test_structural_duplicate_sequence_length() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L1"/>
+      <length name="L2"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "duplicate_sequence_length");
+    TEST_PASS("structural_duplicate_sequence_length");
+}
+
+// Misplaced operator in sequence returns unknown_element
+static void test_structural_sequence_misplaced_operator() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <copy/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_sequence_misplaced_operator");
+}
+
+// Misplaced exponent in sequence returns unknown_element
+static void test_structural_sequence_misplaced_exponent() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <exponent/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_sequence_misplaced_exponent");
+}
+
+// Misplaced mantissa in sequence returns unknown_element
+static void test_structural_sequence_misplaced_mantissa() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <mantissa/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_sequence_misplaced_mantissa");
+}
+
+// Two operators in length returns multiple_operators
+static void test_structural_length_two_operators() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><constant>1</constant><copy/></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "multiple_operators");
+    TEST_PASS("structural_length_two_operators");
+}
+
+// Unknown child in length returns unknown_element
+static void test_structural_length_unknown_child() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"><bogus/></length>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_length_unknown_child");
+}
+
+// Reference at allowed level (template) remains unsupported_reference
+static void test_structural_reference_at_allowed_level() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <typeRef name="SomeType"/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "unsupported_reference"));
+    CHECK(!r.compiled.valid());
+    TEST_PASS("structural_reference_at_allowed_level");
+}
+
+// Misplaced reference in scalar returns unknown_element (not unsupported_reference)
+static void test_structural_misplaced_reference_in_scalar() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><typeRef name="X"/></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B1(r, "unknown_element");
+    TEST_PASS("structural_misplaced_reference_in_scalar");
+}
+
+// === 9B2 phase 2 tests ===
+
+// Test 1: XML namespace declarations do not trigger unknown_attribute; official-style default-namespace snippet compiles
+static void test_9B2_ns_decls_no_unknown_attribute() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates xmlns="http://www.fixprotocol.org/ns/fast/td/1.1">
+  <template id="100" name="TestMsg">
+    <string name="F1" id="1" xmlns:custom="http://example.com"/>
+    <uInt32 name="F2" id="2"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    CHECK_EQ(r.compiled.size(), 1u);
+    CHECK_EQ(r.compiled.templates()[0].fields.size(), 2u);
+    TEST_PASS("9B2_ns_decls_no_unknown_attribute");
+}
+
+// Test 2: MOEX-observed attribute combinations compile, including string charset='unicode' and constant value='...'
+static void test_9B2_moex_attr_combinations() {
+    // string charset='unicode' compiles
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="F1" id="1" charset="unicode"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK(r.compiled.templates()[0].fields[0].wire_type == DecWireType::UnicodeString);
+    }
+    // constant value='...' compiles
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1" id="1"><constant value="42"/></uInt32>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 42u);
+    }
+    TEST_PASS("9B2_moex_attr_combinations");
+}
+
+// Test 3: string charset='unicode' produces UnicodeString; absent charset remains AsciiString
+static void test_9B2_string_charset_unicode_wire_type() {
+    // charset='unicode' -> UnicodeString
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="F1" id="1" charset="unicode"><constant>\xC2\xA2</constant></string>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].wire_type == DecWireType::UnicodeString);
+    }
+    // absent charset -> AsciiString
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <string name="F1" id="1"><constant>ABC</constant></string>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].wire_type == DecWireType::AsciiString);
+    }
+    // charset='unicode' accepts valid non-ASCII UTF-8 static constant
+    {
+        const char* xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<templates><template id=\"1\" name=\"Msg\">"
+            "<string name=\"F1\" id=\"1\" charset=\"unicode\"><constant>\xE2\x82\xAC</constant></string>"
+            "</template></templates>";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.templates()[0].fields[0].wire_type == DecWireType::UnicodeString);
+    }
+    TEST_PASS("9B2_string_charset_unicode_wire_type");
+}
+
+// Test 4: empty, unknown and case-mismatched charset return unknown_charset
+static void test_9B2_unknown_charset() {
+    // empty charset
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" id="1" charset=""/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_charset");
+    }
+    // unknown charset value
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" id="1" charset="utf-8"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_charset");
+    }
+    // case-mismatched: Unicode (capital U)
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" id="1" charset="Unicode"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_charset");
+    }
+    // case-mismatched: UNICODE
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" id="1" charset="UNICODE"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_charset");
+    }
+    TEST_PASS("9B2_unknown_charset");
+}
+
+// Test 5: Unknown attribute on root returns unknown_attribute
+static void test_9B2_unknown_attr_root() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates version="1">
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_root");
+}
+
+// Test 5b: Unknown attribute on template returns unknown_attribute
+static void test_9B2_unknown_attr_template() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg" version="2"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_template");
+}
+
+// Test 5c: Unknown attribute on scalar/string returns unknown_attribute
+static void test_9B2_unknown_attr_scalar_string() {
+    // uInt32 with unknown attribute
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1" unknown="x"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_attribute");
+    }
+    // string with unknown attribute
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1" unknown="x"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unknown_attribute");
+    }
+    TEST_PASS("9B2_unknown_attr_scalar_string");
+}
+
+// Test 5d: Unknown attribute on decimal returns unknown_attribute
+static void test_9B2_unknown_attr_decimal() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><decimal name="D" unknown="x"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_decimal");
+}
+
+// Test 5e: Unknown attribute on sequence returns unknown_attribute
+static void test_9B2_unknown_attr_sequence() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S" unknown="x">
+      <length name="L"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_sequence");
+}
+
+// Test 5f: Unknown attribute on length returns unknown_attribute
+static void test_9B2_unknown_attr_length() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L" unknown="x"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_length");
+}
+
+// Test 5g: Unknown attribute on exponent returns unknown_attribute (no component operators)
+static void test_9B2_unknown_attr_exponent() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent unknown="x"/>
+      <mantissa/>
+    </decimal>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_exponent");
+}
+
+// Test 5h: Unknown attribute on mantissa returns unknown_attribute (no component operators)
+static void test_9B2_unknown_attr_mantissa() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D">
+      <exponent/>
+      <mantissa unknown="x"/>
+    </decimal>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_mantissa");
+}
+
+// Test 5i: Unknown attribute on operator returns unknown_attribute
+static void test_9B2_unknown_attr_operator() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"><constant unknown="x">42</constant></uInt32>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unknown_attribute");
+    TEST_PASS("9B2_unknown_attr_operator");
+}
+
+// Test 5j: Unknown attribute on reference returns unknown_attribute
+static void test_9B2_unknown_attr_reference() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <typeRef name="SomeType" unknown="x"/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    // Should have both unknown_attribute and unsupported_reference
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "unknown_attribute"));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("9B2_unknown_attr_reference");
+}
+
+// Test 6: Excluded operators (default, copy, increment, delta, tail) fail with unsupported_operator;
+// constant with value attribute remains supported
+static void test_9B2_operator_attr_allowed_families() {
+    // value on constant — still supported
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"><constant value="42"/></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 42u);
+    }
+    // value,key,dictionary on default — excluded operator
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"><default value="10" key="k1" dictionary="global"/></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unsupported_operator");
+    }
+    // value,key,dictionary on copy — excluded operator
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"><copy value="5" key="k2" dictionary="template"/></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unsupported_operator");
+    }
+    // value,key,dictionary on increment — excluded operator
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"><increment value="1" key="k3" dictionary="global"/></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unsupported_operator");
+    }
+    // key,dictionary on delta — excluded operator
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1"><delta key="k4" dictionary="global"/></string></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unsupported_operator");
+    }
+    // key,dictionary on tail — excluded operator
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F1"><tail key="k5" dictionary="global"/></string></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "unsupported_operator");
+    }
+    TEST_PASS("9B2_operator_attr_allowed_families");
+}
+
+// Test 7: Text-only and value-only forms produce equivalent metadata for constant, default, copy, increment
+static void test_9B2_text_value_equivalent_constant() {
+    const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>42</constant></uInt32></template>
+</templates>)";
+    const char* xml_value = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant value="42"/></uInt32></template>
+</templates>)";
+    auto r1 = compile_templates_from_string(xml_text);
+    auto r2 = compile_templates_from_string(xml_value);
+    CHECK(r1.ok);
+    CHECK(r2.ok);
+    const auto& f1 = r1.compiled.templates()[0].fields[0];
+    const auto& f2 = r2.compiled.templates()[0].fields[0];
+    CHECK(f1.op.kind == f2.op.kind);
+    CHECK(f1.op.has_constant == f2.op.has_constant);
+    CHECK(f1.op.constant_uint == f2.op.constant_uint);
+    CHECK(f1.op.constant_str == f2.op.constant_str);
+    TEST_PASS("9B2_text_value_equivalent_constant");
+}
+
+// Excluded operator <default> fails in both text and value forms
+static void test_9B2_text_value_equivalent_default() {
+    const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><default>10</default></uInt32></template>
+</templates>)";
+    const char* xml_value = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><default value="10"/></uInt32></template>
+</templates>)";
+    auto r1 = compile_templates_from_string(xml_text);
+    auto r2 = compile_templates_from_string(xml_value);
+    check_invalid_compile_9B2(r1, "unsupported_operator");
+    check_invalid_compile_9B2(r2, "unsupported_operator");
+    TEST_PASS("9B2_text_value_equivalent_default");
+}
+
+// Excluded operator <copy> fails in both text and value forms
+static void test_9B2_text_value_equivalent_copy() {
+    const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><copy>7</copy></uInt32></template>
+</templates>)";
+    const char* xml_value = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><copy value="7"/></uInt32></template>
+</templates>)";
+    auto r1 = compile_templates_from_string(xml_text);
+    auto r2 = compile_templates_from_string(xml_value);
+    check_invalid_compile_9B2(r1, "unsupported_operator");
+    check_invalid_compile_9B2(r2, "unsupported_operator");
+    TEST_PASS("9B2_text_value_equivalent_copy");
+}
+
+// Excluded operator <increment> fails in both text and value forms
+static void test_9B2_text_value_equivalent_increment() {
+    const char* xml_text = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><increment>3</increment></uInt32></template>
+</templates>)";
+    const char* xml_value = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><increment value="3"/></uInt32></template>
+</templates>)";
+    auto r1 = compile_templates_from_string(xml_text);
+    auto r2 = compile_templates_from_string(xml_value);
+    check_invalid_compile_9B2(r1, "unsupported_operator");
+    check_invalid_compile_9B2(r2, "unsupported_operator");
+    TEST_PASS("9B2_text_value_equivalent_increment");
+}
+
+// Test 8: Simultaneous direct text and value returns ambiguous_operator_value for constant, default, copy, increment
+static void test_9B2_ambiguous_value_constant() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant value="42">42</constant></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    TEST_PASS("9B2_ambiguous_value_constant");
+}
+
+// Excluded operator <default> rejected before ambiguous value check
+static void test_9B2_ambiguous_value_default() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><default value="10">10</default></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unsupported_operator");
+    TEST_PASS("9B2_ambiguous_value_default");
+}
+
+// Excluded operator <copy> rejected before ambiguous value check
+static void test_9B2_ambiguous_value_copy() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><copy value="7">7</copy></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unsupported_operator");
+    TEST_PASS("9B2_ambiguous_value_copy");
+}
+
+// Excluded operator <increment> rejected before ambiguous value check
+static void test_9B2_ambiguous_value_increment() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><increment value="3">3</increment></uInt32></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unsupported_operator");
+    TEST_PASS("9B2_ambiguous_value_increment");
+}
+
+// Test 9: excluded operators delta and tail rejected before attribute check
+static void test_9B2_value_on_delta_unknown_attribute() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F"><delta value="x"/></string></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unsupported_operator");
+    TEST_PASS("9B2_value_on_delta_unknown_attribute");
+}
+
+static void test_9B2_value_on_tail_unknown_attribute() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><string name="F"><tail value="x"/></string></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    check_invalid_compile_9B2(r, "unsupported_operator");
+    TEST_PASS("9B2_value_on_tail_unknown_attribute");
+}
+
+// Test 10a: Split direct CDATA/text content is concatenated in document order
+static void test_9B2_split_cdata_concatenation() {
+    // Two adjacent CDATA segments should be concatenated: 42, not 4
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant><![CDATA[4]]><![CDATA[2]]></constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 42u);
+    }
+    // CDATA followed by PCDATA in document order
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant><![CDATA[1]]>23</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 123u);
+    }
+    // PCDATA followed by CDATA
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant>9<![CDATA[9]]></constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK_EQ(r.compiled.templates()[0].fields[0].op.constant_uint, 99u);
+    }
+    TEST_PASS("9B2_split_cdata_concatenation");
+}
+
+// Test 10b: value attribute with non-empty content in a later PCDATA/CDATA segment returns ambiguous_operator_value
+static void test_9B2_value_with_later_cdata_ambiguous() {
+    // value attribute present, but there is also direct CDATA content (in a later segment)
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant value="42"><![CDATA[10]]></constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    }
+    // value attribute with trailing PCDATA
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F"><constant value="5">5</constant></uInt32></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        check_invalid_compile_9B2(r, "ambiguous_operator_value");
+    }
+    TEST_PASS("9B2_value_with_later_cdata_ambiguous");
+}
+
+// Test 10: xmlns and xmlns:prefix are not ordinary attributes
+static void test_9B2_xmlns_not_ordinary_attribute() {
+    // xmlns on root
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates xmlns="http://www.fixprotocol.org/ns/fast/td/1.1">
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // xmlns:prefix on root
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates xmlns:fast="http://www.fixprotocol.org/ns/fast/td/1.1">
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // xmlns on field
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1" xmlns="http://example.com"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    TEST_PASS("9B2_xmlns_not_ordinary_attribute");
+}
+
+// === 9B3 tests ===
+
+// Test 1: Each caller limit above its hard ceiling returns compile_limit_exceeds_hard_ceiling
+static void test_hard_ceiling_max_templates() {
+    CompileLimits lim;
+    lim.max_templates = 4097;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    check_invalid_compile_9B2(r, "compile_limit_exceeds_hard_ceiling");
+    TEST_PASS("hard_ceiling_max_templates");
+}
+
+static void test_hard_ceiling_max_fields() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 65536;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    check_invalid_compile_9B2(r, "compile_limit_exceeds_hard_ceiling");
+    TEST_PASS("hard_ceiling_max_fields");
+}
+
+static void test_hard_ceiling_max_nesting() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 33;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    check_invalid_compile_9B2(r, "compile_limit_exceeds_hard_ceiling");
+    TEST_PASS("hard_ceiling_max_nesting");
+}
+
+// Test 2: Exact hard-ceiling values are accepted using small XML
+static void test_hard_ceiling_exact_templates() {
+    CompileLimits lim;
+    lim.max_templates = 4096;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    TEST_PASS("hard_ceiling_exact_templates");
+}
+
+static void test_hard_ceiling_exact_fields() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 65535;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    TEST_PASS("hard_ceiling_exact_fields");
+}
+
+static void test_hard_ceiling_exact_nesting() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 32;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="F1"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    TEST_PASS("hard_ceiling_exact_nesting");
+}
+
+// Test 3: max_templates boundary succeeds exactly at limit and fails on next
+static void test_max_templates_boundary() {
+    CompileLimits lim;
+    lim.max_templates = 1;
+    // Exactly 1 template succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.size(), 1u);
+    }
+    // 2 templates fails with excessive_templates
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg1"><uInt32 name="F1"/></template>
+  <template id="2" name="Msg2"><uInt32 name="F2"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_templates");
+    }
+    TEST_PASS("max_templates_boundary");
+}
+
+// Test 3b: max_templates counts encountered templates including invalid ones
+static void test_max_templates_includes_invalid() {
+    CompileLimits lim;
+    lim.max_templates = 1;
+    // First template is invalid (missing id), second exceeds budget
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template name="NoId"><uInt32 name="F1"/></template>
+  <template id="2" name="Msg"><uInt32 name="F2"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_templates");
+    }
+    // First template invalid (duplicate id), second exceeds budget
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="A"><uInt32 name="F1"/></template>
+  <template id="1" name="B"><uInt32 name="F2"/></template>
+  <template id="3" name="C"><uInt32 name="F3"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_templates");
+    }
+    TEST_PASS("max_templates_includes_invalid");
+}
+
+// Test 4: max_fields_per_template boundary succeeds at limit, fails on next scalar
+static void test_max_fields_boundary_scalar() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    // Exactly 1 field succeeds
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg"><uInt32 name="F1"/></template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.templates()[0].fields.size(), 1u);
+    }
+    // 2 fields fails with excessive_fields
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <uInt32 name="F2"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    TEST_PASS("max_fields_boundary_scalar");
+}
+
+// Test 5: Field accounting includes nested sequence descendants and sequence <length>
+static void test_field_accounting_nested() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 3;
+    // sequence + length + 1 entry = 3 fields exactly
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // sequence + length + 2 entries = 4 fields exceeds limit
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E1"/>
+      <uInt32 name="E2"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    // scalar + sequence with length + 1 entry = 4 fields; limit 3 → excessive_fields
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E1"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    // scalar + sequence with length only (no entry) = 3 fields exactly
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <sequence name="S">
+      <length name="L"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    TEST_PASS("field_accounting_nested");
+}
+
+// Test 6: First composite at excessive depth rejected before its entry subtree is inspected
+static void test_composite_rejected_before_subtree() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 1;
+    // Sequence at depth 0 containing nested sequence at depth 1;
+    // first valid child at depth 2 triggers excessive_nesting
+    // before the entry subtree is inspected
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Outer">
+      <length name="L"/>
+      <sequence name="Inner">
+        <length name="IL"/>
+        <uInt32 name="F1"/>
+        <bogusWidget name="X"/>
+      </sequence>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "excessive_nesting"));
+    CHECK(!has_issue(r, "unknown_element"));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("composite_rejected_before_subtree");
+}
+
+// Test 7: Nesting succeeds at configured boundary, rejects first descendant beyond
+static void test_nesting_boundary() {
+    CompileLimits lim;
+    lim.max_nesting_depth = 1;
+    // depth 0 (template) + depth 1 (sequence) = ok
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="F1"/>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+    }
+    // depth 0 + depth 1 + depth 2 (nested sequence) = excessive_nesting
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Outer">
+      <length name="L"/>
+      <sequence name="Inner">
+        <length name="IL"/>
+        <uInt32 name="F1"/>
+      </sequence>
+    </sequence>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_nesting");
+    }
+    TEST_PASS("nesting_boundary");
+}
+
+// Test 8: Decimal counts as exactly one field for the budget
+static void test_decimal_field_budget_count() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 2;
+    // decimal + scalar = 2 fields exactly
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D"/>
+    <uInt32 name="F1"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        CHECK(r.ok);
+        CHECK(r.compiled.valid());
+        CHECK_EQ(r.compiled.templates()[0].fields.size(), 2u);
+        CHECK(r.compiled.templates()[0].fields[0].is_decimal);
+        CHECK_EQ(r.compiled.templates()[0].fields[1].name, "F1");
+    }
+    // decimal + 2 scalars = 3 fields exceeds limit
+    {
+        const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="D"/>
+    <uInt32 name="F1"/>
+    <uInt32 name="F2"/>
+  </template>
+</templates>)";
+        auto r = compile_templates_from_string(xml, lim);
+        check_invalid_compile_9B2(r, "excessive_fields");
+    }
+    TEST_PASS("decimal_field_budget_count");
+}
+
+// Test 9: Mixed scalar + decimal + sequence/length indices contiguous, no decimal gap
+static void test_mixed_field_index_contiguous() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="A"/>
+    <decimal name="B"/>
+    <sequence name="C">
+      <length name="CL"/>
+      <uInt32 name="C1"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    CHECK(r.compiled.valid());
+    const auto& fields = r.compiled.templates()[0].fields;
+    CHECK_EQ(fields.size(), 3u);
+    // Decimal counts as 1 (no gap), indices are contiguous
+    CHECK_EQ(fields[0].index, 0u);  // uInt32 A
+    CHECK_EQ(fields[1].index, 1u);  // decimal B
+    CHECK_EQ(fields[2].index, 2u);  // sequence C
+    CHECK(fields[1].is_decimal);
+    CHECK(fields[2].is_sequence);
+    CHECK_EQ(fields[2].children.size(), 2u); // length + entry
+    CHECK_EQ(fields[2].children[0].index, 3u);  // CL (length)
+    CHECK_EQ(fields[2].children[1].index, 4u);  // C1 (entry)
+    TEST_PASS("mixed_field_index_contiguous");
+}
+
+// === 9B3 focused evidence ===
+
+// Field-budget precedence: sequence length child exceeding max_fields_per_template
+// returns excessive_fields before inspecting its entry subtree
+static void test_field_budget_precedence_over_subtree() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <sequence name="S">
+      <length name="L"/>
+      <bogusWidget name="X"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    CHECK(has_issue(r, "excessive_fields"));
+    CHECK(!has_issue(r, "unknown_element"));
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("field_budget_precedence_over_subtree");
+}
+
+// === RT-3 presence-map matrix tests ===
+
+// Mandatory field without operator: no field presence-map bit
+static void test_pmap_mandatory_no_operator_no_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="Val" id="1"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f = r.compiled.templates()[0].fields[0];
+    CHECK(f.is_mandatory);
+    CHECK(!f.has_pmap_bit);
+    CHECK(f.wire_type == DecWireType::uInt32);
+    TEST_PASS("pmap_mandatory_no_operator_no_bit");
+}
+
+// Optional field without operator: no pmap bit, nullable wire
+static void test_pmap_optional_no_operator_no_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="Val" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f = r.compiled.templates()[0].fields[0];
+    CHECK(!f.is_mandatory);
+    CHECK(!f.has_pmap_bit);  // optional none: no pmap bit, nullable wire
+    CHECK(f.wire_type == DecWireType::uInt32);
+    TEST_PASS("pmap_optional_no_operator_no_bit");
+}
+
+// Mandatory constant: no field presence-map bit
+static void test_pmap_mandatory_constant_no_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="Const" id="1"><constant>42</constant></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f = r.compiled.templates()[0].fields[0];
+    CHECK(f.is_mandatory);
+    CHECK(!f.has_pmap_bit);
+    CHECK(f.op.kind == OpKind::Constant);
+    TEST_PASS("pmap_mandatory_constant_no_bit");
+}
+
+// Optional constant: exactly one field presence-map bit
+static void test_pmap_optional_constant_has_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="Const" id="1" presence="optional"><constant>42</constant></uInt32>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f = r.compiled.templates()[0].fields[0];
+    CHECK(!f.is_mandatory);
+    CHECK(f.has_pmap_bit);
+    CHECK(f.op.kind == OpKind::Constant);
+    TEST_PASS("pmap_optional_constant_has_bit");
+}
+
+// Sequence itself never receives a separate presence-map bit
+static void test_pmap_sequence_no_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="NoEntries"/>
+      <uInt32 name="Val"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    CHECK(!seq.has_pmap_bit);
+    TEST_PASS("pmap_sequence_no_bit");
+}
+
+// Mandatory sequence length without operator: ordinary uInt32
+static void test_pmap_mandatory_sequence_length_ordinary() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="NoEntries"/>
+      <uInt32 name="Val"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    CHECK(seq.children[0].wire_type == DecWireType::uInt32);
+    CHECK(seq.children[0].is_mandatory);
+    CHECK(!seq.children[0].has_pmap_bit);
+    TEST_PASS("pmap_mandatory_sequence_length_ordinary");
+}
+
+// Optional sequence length without operator: nullable uInt32
+static void test_pmap_optional_sequence_length_nullable() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries" presence="optional">
+      <length name="NoEntries"/>
+      <uInt32 name="Val"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    CHECK(!seq.is_mandatory);
+    CHECK(seq.children[0].wire_type == DecWireType::uInt32);
+    CHECK(!seq.children[0].is_mandatory);
+    CHECK(!seq.children[0].has_pmap_bit);
+    TEST_PASS("pmap_optional_sequence_length_nullable");
+}
+
+// Entry with no allocating instruction: no entry presence map
+static void test_pmap_entry_without_presence_map() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="NoEntries"/>
+      <uInt32 name="Val" id="1"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    // Entry field is mandatory with no operator: no pmap bit
+    CHECK(seq.children[1].is_mandatory);
+    CHECK(!seq.children[1].has_pmap_bit);
+    TEST_PASS("pmap_entry_without_presence_map");
+}
+
+// Entry with optional constant: has entry presence map
+static void test_pmap_entry_with_optional_constant() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="NoEntries"/>
+      <uInt32 name="Val" id="1"/>
+      <string name="Const" id="2" presence="optional"><constant>ABC</constant></string>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    // Entry field Val: mandatory no-operator: no pmap bit
+    CHECK(seq.children[1].is_mandatory);
+    CHECK(!seq.children[1].has_pmap_bit);
+    // Entry field Const: optional constant: has pmap bit
+    CHECK(!seq.children[2].is_mandatory);
+    CHECK(seq.children[2].has_pmap_bit);
+    TEST_PASS("pmap_entry_with_optional_constant");
+}
+
+// Optional no-operator field decode: nullable wire NULL, no pmap bit
+static void test_pmap_optional_no_operator_decode_null() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="Val" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // Verify metadata: optional, no pmap bit
+    {
+        const auto& f = ts.find(1)->fields[0];
+        CHECK(!f.is_mandatory);
+        CHECK(!f.has_pmap_bit);
+    }
+
+    // Wire: pmap [tmpl-id=1] -> 0xC0 (no field bits)
+    // tmpl=1->0x81
+    // Optional uInt32 NULL: nullable wire 0x80
+    auto data = hex("C0" "81" "80");
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 1u);
+    CHECK(r.message.fields[0].is_null);
+
+    TEST_PASS("pmap_optional_no_operator_decode_null");
+}
+
+// Optional no-operator field decode: nullable wire non-NULL, no pmap bit
+static void test_pmap_optional_no_operator_decode_present() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="Val" id="1" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // Wire: pmap [tmpl-id=1] -> 0xC0 (no field bits)
+    // tmpl=1->0x81
+    // Optional uInt32 value 5: nullable wire raw 6 -> 0x86
+    auto data = hex("C0" "81" "86");
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 1u);
+    CHECK(!r.message.fields[0].is_null);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[0].value), 5u);
+
+    TEST_PASS("pmap_optional_no_operator_decode_present");
+}
+
+// Optional none followed by optional constant: only the constant gets a pmap bit
+static void test_pmap_optional_none_then_optional_constant_only_constant_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="NoneField" id="1" presence="optional"/>
+    <string name="ConstField" id="2" presence="optional"><constant>ABC</constant></string>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f0 = r.compiled.templates()[0].fields[0];
+    const auto& f1 = r.compiled.templates()[0].fields[1];
+    CHECK(!f0.is_mandatory);
+    CHECK(!f0.has_pmap_bit);  // optional none: no pmap bit
+    CHECK(f0.op.kind == OpKind::None);
+    CHECK(!f1.is_mandatory);
+    CHECK(f1.has_pmap_bit);   // optional constant: has pmap bit
+    CHECK(f1.op.kind == OpKind::Constant);
+    TEST_PASS("pmap_optional_none_then_optional_constant_only_constant_bit");
+}
+
+// Sequence entry with optional none only: no entry pmap
+static void test_pmap_sequence_optional_none_no_entry_pmap() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="NoEntries"/>
+      <uInt32 name="Val" id="1" presence="optional"/>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    // Entry field: optional none: no pmap bit
+    CHECK(!seq.children[1].is_mandatory);
+    CHECK(!seq.children[1].has_pmap_bit);
+    CHECK(seq.children[1].op.kind == OpKind::None);
+
+    // Decode: sequence with 1 entry, optional none NULL via nullable wire
+    // pmap [tmpl-id=1] -> 0xC0, tmpl=1->0x81
+    // seq length=1->0x81
+    // Entry: NO entry pmap (0 entry pmap bits), optional uInt32 NULL=0x80
+    auto ts = compile(xml);
+    auto data = hex("C0" "81" "81" "80");
+    DecoderSession session(ts);
+    auto dr = session.decode_exact(data.data(), data.size());
+    if (dr.status != DecodeStatus::Ok) {
+        std::cerr << "Decode failed: " << decode_status_name(dr.status) << "\n";
+        for (const auto& issue : dr.issues) {
+            std::cerr << "  [" << issue.code << "] " << issue.message << "\n";
+        }
+    }
+    CHECK(dr.status == DecodeStatus::Ok);
+    CHECK(dr.message.fields[0].is_sequence);
+    CHECK_EQ(dr.message.fields[0].entries.size(), 1u);
+    CHECK_EQ(dr.message.fields[0].entries[0].size(), 1u);
+    CHECK(dr.message.fields[0].entries[0][0].is_null);
+
+    TEST_PASS("pmap_sequence_optional_none_no_entry_pmap");
+}
+
+// Sequence entry with optional none followed by optional constant: exactly one entry pmap bit
+static void test_pmap_sequence_optional_none_then_constant_one_entry_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="NoEntries"/>
+      <uInt32 name="Val" id="1" presence="optional"/>
+      <string name="Const" id="2" presence="optional"><constant>XYZ</constant></string>
+    </sequence>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& seq = r.compiled.templates()[0].fields[0];
+    CHECK(seq.is_sequence);
+    // Val: optional none: no pmap bit
+    CHECK(!seq.children[1].has_pmap_bit);
+    CHECK(seq.children[1].op.kind == OpKind::None);
+    // Const: optional constant: has pmap bit
+    CHECK(seq.children[2].has_pmap_bit);
+    CHECK(seq.children[2].op.kind == OpKind::Constant);
+
+    // Decode: 1 entry
+    // pmap [tmpl-id=1] -> 0xC0, tmpl=1->0x81, seq length=1->0x81
+    // Entry pmap: [Const present=1] -> 0xE0 (1 bit, stop=1, value=1)
+    // Entry: optional uInt32 42 -> nullable wire raw 43 -> 0xAB
+    auto ts = compile(xml);
+    auto data = hex("C0" "81" "81" "E0" "AB");
+    DecoderSession session(ts);
+    auto dr = session.decode_exact(data.data(), data.size());
+    if (dr.status != DecodeStatus::Ok) {
+        std::cerr << "Decode failed: " << decode_status_name(dr.status) << "\n";
+        for (const auto& issue : dr.issues) {
+            std::cerr << "  [" << issue.code << "] " << issue.message << "\n";
+        }
+    }
+    CHECK(dr.status == DecodeStatus::Ok);
+    CHECK(dr.message.fields[0].is_sequence);
+    CHECK_EQ(dr.message.fields[0].entries.size(), 1u);
+    CHECK_EQ(dr.message.fields[0].entries[0].size(), 2u);
+    // Val = 42 (nullable wire: raw 43 -> value 42)
+    CHECK(!dr.message.fields[0].entries[0][0].is_null);
+    CHECK_EQ(std::get<std::uint64_t>(dr.message.fields[0].entries[0][0].value), 42u);
+    // Const = "XYZ" (from constant, pmap bit=1)
+    CHECK(dr.message.fields[0].entries[0][1].source == ValueSource::Constant);
+    CHECK_EQ(std::get<std::string>(dr.message.fields[0].entries[0][1].value), "XYZ");
+
+    TEST_PASS("pmap_sequence_optional_none_then_constant_one_entry_bit");
+}
+
+// === RT-3 accepted-profile optional no-operator wire semantics ===
+
+// Optional decimal compiler metadata: no field pmap bit
+static void test_optional_decimal_no_pmap_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="Price" id="270" presence="optional"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f = r.compiled.templates()[0].fields[0];
+    CHECK(f.is_decimal);
+    CHECK(!f.is_mandatory);
+    CHECK(!f.has_pmap_bit);  // decimal: never a field-level pmap bit
+    CHECK(f.wire_type == DecWireType::Decimal);
+    TEST_PASS("optional_decimal_no_pmap_bit");
+}
+
+// Mandatory decimal compiler metadata: no field pmap bit
+static void test_mandatory_decimal_no_pmap_bit() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <decimal name="Price" id="270"/>
+  </template>
+</templates>)";
+
+    auto r = compile_templates_from_string(xml);
+    CHECK(r.ok);
+    const auto& f = r.compiled.templates()[0].fields[0];
+    CHECK(f.is_decimal);
+    CHECK(f.is_mandatory);
+    CHECK(!f.has_pmap_bit);  // decimal: never a field-level pmap bit
+    TEST_PASS("mandatory_decimal_no_pmap_bit");
+}
+
+// Optional constant absent: is_present=false, is_null=true
+static void test_optional_constant_absent_flags() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="C" id="1" presence="optional"><constant>42</constant></uInt32>
+    <uInt32 name="V" id="2"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // pmap: [tmpl-id=1, C=0] -> C0 (stop=1, tmpl=1, C=0)
+    // pmap byte 0xC0 = 11000000: stop=1, data=1000000
+    // pmap[0]=1 (tmpl present), pmap[1]=0 (C absent)
+    // tmpl-id=1 -> 0x81
+    // V=7 -> 0x87
+    auto data = hex("C0" "81" "87");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 2u);
+    // C: optional constant absent
+    CHECK(r.message.fields[0].is_null);
+    CHECK(!r.message.fields[0].is_present);
+    CHECK(r.message.fields[0].source == ValueSource::Constant);
+    CHECK(std::holds_alternative<std::monostate>(r.message.fields[0].value));
+    // V: mandatory wire
+    CHECK(!r.message.fields[1].is_null);
+    CHECK(r.message.fields[1].is_present);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[1].value), 7u);
+    TEST_PASS("optional_constant_absent_flags");
+}
+
+// Optional constant present: is_present=true, is_null=false
+static void test_optional_constant_present_flags() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="C" id="1" presence="optional"><constant>42</constant></uInt32>
+    <uInt32 name="V" id="2"/>
+  </template>
+</templates>)";
+
+    auto ts = compile(xml);
+
+    // pmap: [tmpl-id=1, C=1] -> E0 (stop=1, tmpl=1, C=1)
+    // pmap byte 0xE0 = 11100000: stop=1, data=1100000
+    // pmap[0]=1 (tmpl present), pmap[1]=1 (C present)
+    // tmpl-id=1 -> 0x81
+    // V=7 -> 0x87
+    auto data = hex("E0" "81" "87");
+
+    DecoderSession session(ts);
+    auto r = session.decode_exact(data.data(), data.size());
+    CHECK(r.status == DecodeStatus::Ok);
+    CHECK_EQ(r.message.fields.size(), 2u);
+    // C: optional constant present
+    CHECK(!r.message.fields[0].is_null);
+    CHECK(r.message.fields[0].is_present);
+    CHECK(r.message.fields[0].source == ValueSource::Constant);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[0].value), 42u);
+    // V: mandatory wire
+    CHECK(!r.message.fields[1].is_null);
+    CHECK_EQ(std::get<std::uint64_t>(r.message.fields[1].value), 7u);
+    TEST_PASS("optional_constant_present_flags");
+}
+
+// === RT-3 generic group compile-time closure ===
+
+// Focused top-level precedence test: named group Outer whose subtree would exceed
+// field budget; verify unsupported_group, exact field_path, no subtree or budget errors
+static void test_group_reject_top_level_precedence() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <uInt32 name="F1"/>
+    <group name="Outer">
+      <uInt32 name="G1"/>
+      <uInt32 name="G2"/>
+      <bogusWidget name="X"/>
+    </group>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    // Exactly unsupported_group with field_path Outer
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "unsupported_group" && issue.field_path == "Outer") found = true;
+    }
+    CHECK(found);
+    // No subtree or budget errors
+    CHECK(!has_issue(r, "excessive_fields"));
+    CHECK(!has_issue(r, "excessive_nesting"));
+    CHECK(!has_issue(r, "unknown_element"));
+    // Full invalid/empty CompiledTemplateSet invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("group_reject_top_level_precedence");
+}
+
+// Focused test: named group Inner inside accepted sequence Entries
+// verify unsupported_group, exact field_path Entries.Inner, no child-derived error
+static void test_group_reject_inside_sequence() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="L"/>
+      <group name="Inner">
+        <uInt32 name="G1"/>
+        <bogusWidget name="X"/>
+      </group>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    // Exactly unsupported_group with field_path Entries.Inner
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "unsupported_group" && issue.field_path == "Entries.Inner") found = true;
+    }
+    CHECK(found);
+    // No child-derived error
+    CHECK(!has_issue(r, "unknown_element"));
+    CHECK(!has_issue(r, "excessive_nesting"));
+    CHECK(!has_issue(r, "excessive_fields"));
+    // Full invalid/empty handle invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("group_reject_inside_sequence");
+}
+
+// === RT-3 excessive_fields diagnostics regression ===
+
+// Top-level field overflow: exact message contains owning template name
+static void test_excessive_fields_top_level_diag() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="TopLevelDiag">
+    <uInt32 name="F1"/>
+    <uInt32 name="F2"/>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "excessive_fields" &&
+            issue.message == "Field count exceeds limit in template TopLevelDiag") {
+            found = true;
+        }
+    }
+    CHECK(found);
+    // Full invalid/empty compiled-handle invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("excessive_fields_top_level_diag");
+}
+
+// Sequence length child overflow: exact message contains owning template name
+static void test_excessive_fields_sequence_length_diag() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 1;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="SequenceDiag">
+    <sequence name="S">
+      <length name="L"/>
+      <uInt32 name="E"/>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    bool found = false;
+    for (const auto& issue : r.issues) {
+        if (issue.code == "excessive_fields" &&
+            issue.message == "Field count exceeds limit in template SequenceDiag") {
+            found = true;
+        }
+    }
+    CHECK(found);
+    // Full invalid/empty compiled-handle invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("excessive_fields_sequence_length_diag");
+}
+
+// === RT-3 byteVector compile-time closure ===
+
+// Focused top-level precedence test: named <byteVector name='Payload'> with invalid attribute
+// and invalid child while max_fields_per_template is zero.
+// Verify unsupported_byte_vector, exact field_path Payload, exact accepted-profile message,
+// no excessive_fields, excessive_nesting, unknown_attribute, unknown_element or operator-derived issue,
+// and complete invalid/empty CompiledTemplateSet invariant.
+static void test_bytevector_reject_top_level_precedence() {
+    CompileLimits lim;
+    lim.max_fields_per_template = 0;
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <byteVector name="Payload" unknown="x"><bogusChild/></byteVector>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml, lim);
+    CHECK(!r.ok);
+    // Exactly one issue: unsupported_byte_vector takes precedence over
+    // unknown_attribute, unknown_element, and excessive_fields
+    CHECK_EQ(r.issues.size(), 1u);
+    CHECK_EQ(r.issues[0].code, "unsupported_byte_vector");
+    CHECK_EQ(r.issues[0].field_path, "Payload");
+    CHECK_EQ(r.issues[0].message, "<byteVector> is outside the accepted MOEX SPECTRA T0/T1 profile (Payload)");
+    // Complete invalid/empty CompiledTemplateSet invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("bytevector_reject_top_level_precedence");
+}
+
+// Focused nested test: named <byte-vector name='Raw'> inside accepted sequence Entries
+// with a valid single length instruction and invalid content inside Raw.
+// Verify unsupported_byte_vector, exact field_path Entries.Raw, exact message using byte-vector spelling,
+// no child-derived issue, and complete invalid/empty handle invariant.
+static void test_bytevector_reject_inside_sequence() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="Msg">
+    <sequence name="Entries">
+      <length name="L"/>
+      <byte-vector name="Raw"><bogusContent/></byte-vector>
+    </sequence>
+  </template>
+</templates>)";
+    auto r = compile_templates_from_string(xml);
+    CHECK(!r.ok);
+    // Exactly one issue: unsupported_byte_vector
+    CHECK_EQ(r.issues.size(), 1u);
+    CHECK_EQ(r.issues[0].code, "unsupported_byte_vector");
+    CHECK_EQ(r.issues[0].field_path, "Entries.Raw");
+    CHECK_EQ(r.issues[0].message, "<byte-vector> is outside the accepted MOEX SPECTRA T0/T1 profile (Entries.Raw)");
+    // Complete invalid/empty handle invariant
+    CHECK(!r.compiled.valid());
+    CHECK(r.compiled.empty());
+    CHECK_EQ(r.compiled.size(), 0u);
+    CHECK(r.compiled.templates().empty());
+    CHECK(r.compiled.find(0) == nullptr);
+    CHECK(r.compiled.find(1) == nullptr);
+    TEST_PASS("bytevector_reject_inside_sequence");
+}
+
+int main() {
+    test_valid_compile();
+    test_duplicate_template_id();
+    test_missing_template_id();
+    test_invalid_xml();
+    test_empty_templates();
+    test_sequence_compile();
+    test_decimal_compile();
+    test_dictionary_collision();
+    test_reference_rejection();
+    test_template_ref_rejection();
+    test_unsupported_operator_type();
+    test_copy_with_dictionary_scope();
+    test_sha256_provenance();
+    test_compile_provenance_and_order();
+    test_fatal_path_duplicate_after_valid();
+    test_fatal_path_unknown_element();
+    test_copy_lifetime();
+    test_move_lifetime();
+    test_default_handle_invalid();
+    // 9B1 tests
+    test_template_id_uint32_max();
+    test_template_id_zero();
+    test_template_id_non_decimal();
+    test_template_id_out_of_range();
+    test_fix_tag_scalar_ok();
+    test_fix_tag_decimal_ok();
+    test_fix_tag_sequence_length_ok();
+    test_fix_tag_zero();
+    test_fix_tag_negative();
+    test_fix_tag_non_decimal();
+    test_fix_tag_out_of_range();
+    test_uint32_constant_range();
+    test_uint64_constant_range();
+    test_int32_constant_range();
+    test_int64_constant_range();
+    test_sequence_length_initial_range();
+    test_reject_hex_literal();
+    test_valid_ascii_static_values();
+    test_valid_unicode_static_values();
+    test_non_ascii_in_ascii_field();
+    test_invalid_unicode_surrogate();
+    test_oversized_static_value();
+    test_exact_1mib_static_value();
+    test_uint64_default_initial();
+    test_uint64_copy_initial();
+    test_uint64_increment_initial();
+    // 9B2 phase 1 structural validation tests
+    test_structural_comments_whitespace_pi();
+    test_structural_unknown_root_child();
+    test_structural_misplaced_operator_in_template();
+    test_structural_length_at_template_level();
+    test_structural_length_at_group_level();
+    test_structural_misplaced_exponent_in_template();
+    test_structural_misplaced_mantissa_in_template();
+    // test_structural_misplaced_operator_in_group: removed — groups rejected at compile time
+    // test_structural_misplaced_exponent_in_group: removed — groups rejected at compile time
+    test_structural_scalar_two_operators();
+    test_structural_scalar_unknown_child();
+    test_structural_operator_nested_child();
+    test_structural_duplicate_decimal_exponent();
+    test_structural_duplicate_decimal_mantissa();
+    test_structural_decimal_unknown_child();
+    test_structural_decimal_unknown_presence();
+    test_structural_exponent_two_operators();
+    test_structural_exponent_unknown_child();
+    test_structural_mantissa_two_operators();
+    test_structural_mantissa_unknown_child();
+    test_structural_sequence_missing_length();
+    test_structural_duplicate_sequence_length();
+    test_structural_sequence_misplaced_operator();
+    test_structural_sequence_misplaced_exponent();
+    test_structural_sequence_misplaced_mantissa();
+    test_structural_length_two_operators();
+    test_structural_length_unknown_child();
+    test_structural_reference_at_allowed_level();
+    test_structural_misplaced_reference_in_scalar();
+    // 9B2 phase 2 attribute/charset/operator-value tests
+    test_9B2_ns_decls_no_unknown_attribute();
+    test_9B2_moex_attr_combinations();
+    test_9B2_string_charset_unicode_wire_type();
+    test_9B2_unknown_charset();
+    test_9B2_unknown_attr_root();
+    test_9B2_unknown_attr_template();
+    test_9B2_unknown_attr_scalar_string();
+    test_9B2_unknown_attr_decimal();
+    test_9B2_unknown_attr_sequence();
+    test_9B2_unknown_attr_length();
+    test_9B2_unknown_attr_exponent();
+    test_9B2_unknown_attr_mantissa();
+    test_9B2_unknown_attr_operator();
+    test_9B2_unknown_attr_reference();
+    test_9B2_operator_attr_allowed_families();
+    test_9B2_text_value_equivalent_constant();
+    test_9B2_text_value_equivalent_default();
+    test_9B2_text_value_equivalent_copy();
+    test_9B2_text_value_equivalent_increment();
+    test_9B2_ambiguous_value_constant();
+    test_9B2_ambiguous_value_default();
+    test_9B2_ambiguous_value_copy();
+    test_9B2_ambiguous_value_increment();
+    test_9B2_value_on_delta_unknown_attribute();
+    test_9B2_value_on_tail_unknown_attribute();
+    test_9B2_split_cdata_concatenation();
+    test_9B2_value_with_later_cdata_ambiguous();
+    test_9B2_xmlns_not_ordinary_attribute();
+    // 9B2 phase 3 compiler accounting tests
+    test_hard_ceiling_max_templates();
+    test_hard_ceiling_max_fields();
+    test_hard_ceiling_max_nesting();
+    test_hard_ceiling_exact_templates();
+    test_hard_ceiling_exact_fields();
+    test_hard_ceiling_exact_nesting();
+    test_max_templates_boundary();
+    test_max_templates_includes_invalid();
+    test_max_fields_boundary_scalar();
+    test_field_accounting_nested();
+    test_composite_rejected_before_subtree();
+    test_nesting_boundary();
+    test_decimal_field_budget_count();
+    test_mixed_field_index_contiguous();
+    // 9B3 focused evidence
+    // test_nesting_depth_zero_empty_group: removed — groups rejected at compile time
+    // test_nesting_depth_one_empty_nested_group: removed — groups rejected at compile time
+    test_field_budget_precedence_over_subtree();
+    // RT-3 presence-map matrix tests
+    test_pmap_mandatory_no_operator_no_bit();
+    test_pmap_optional_no_operator_no_bit();
+    test_pmap_mandatory_constant_no_bit();
+    test_pmap_optional_constant_has_bit();
+    test_pmap_sequence_no_bit();
+    test_pmap_mandatory_sequence_length_ordinary();
+    test_pmap_optional_sequence_length_nullable();
+    test_pmap_entry_without_presence_map();
+    test_pmap_entry_with_optional_constant();
+    test_pmap_optional_no_operator_decode_null();
+    test_pmap_optional_no_operator_decode_present();
+    test_pmap_optional_none_then_optional_constant_only_constant_bit();
+    test_pmap_sequence_optional_none_no_entry_pmap();
+    test_pmap_sequence_optional_none_then_constant_one_entry_bit();
+    // RT-3 accepted-profile optional no-operator wire semantics
+    test_optional_decimal_no_pmap_bit();
+    test_mandatory_decimal_no_pmap_bit();
+    test_optional_constant_absent_flags();
+    test_optional_constant_present_flags();
+    // RT-3 generic group compile-time closure
+    test_group_reject_top_level_precedence();
+    test_group_reject_inside_sequence();
+    // RT-3 byteVector compile-time closure
+    test_bytevector_reject_top_level_precedence();
+    test_bytevector_reject_inside_sequence();
+    // RT-3 excessive_fields diagnostics regression
+    test_excessive_fields_top_level_diag();
+    test_excessive_fields_sequence_length_diag();
+    std::cout << "All decoder compiler tests passed.\n";
+    return 0;
+}

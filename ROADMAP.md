@@ -1,8 +1,8 @@
 # Roadmap
 
-Дата обновления: 2026-07-13  
-Статус: gated engineering roadmap  
-Текущий gate: RT-3 implementation correction in existing PR #23
+Дата обновления: 2026-07-14
+Статус: gated engineering roadmap
+Текущий gate: RT-3 pre-merge evidence synchronization
 
 ## Главный порядок
 
@@ -61,13 +61,31 @@ One template-driven C++20 decoder for the accepted official MOEX SPECTRA T0 and 
 ### Verified checkpoint
 
 ```text
-Issue #21: CHANGES_REQUIRED
-PR #23: open
+Issue #21: open, CHANGES_REQUIRED
+PR #23: open, not merged
 Branch: mimo/issue-21-rt3-fast-decoder
-Head: 062649476500f6060d22b9740cafa1b0250f3ba5
+Last verified implementation/evidence head: 3fde6847d652ebd5277ca03a496dc701392eb75e
+CI #155: success, all 7 jobs passed
 Corrected specification PR #27: merged
 Main merge commit: e2e616673758b1cb888f5e3b4b7844343327c579
-Post-merge CI #126: success
+```
+
+Acceptance evidence on 3fde6847d652ebd5277ca03a496dc701392eb75e:
+
+```text
+FAST Release Windows/MSVC: 6 RT-1 + 9 RT-3 = 15 tests, all passed
+FAST Release Linux/GCC: 6 RT-1 + 9 RT-3 = 15 tests, all passed
+RAW Windows: 18 tests passed
+RAW Linux: 18 tests passed
+QSH M10X regression: 20 tests passed
+Python tests/contracts: passed
+Repository hygiene: passed
+Owner-local Windows Release acceptance on 3fde6847d652ebd5277ca03a496dc701392eb75e:
+  configure/build success, inventory 15/15, PASS
+Repository: Public
+Owner server-side protection active: main branch, PR required,
+  unresolved conversations block merge, branch must be up to date,
+  7 CI checks required, deletion and force-push blocked
 ```
 
 ### Accepted profile
@@ -101,6 +119,7 @@ generic field dictionaries
 user-defined dictionaries
 references and cycle resolution
 generic groups outside T0/T1
+byteVector
 decimal component operators
 historical FAST profile compatibility
 ```
@@ -108,19 +127,27 @@ historical FAST profile compatibility
 ### RT-3 remaining sequence
 
 ```text
-1. Synchronize canonical state/workflow documents.
-2. Merge current main into PR #23 branch without force push.
-3. Re-audit the resulting implementation diff.
-4. Remove generic FAST code and tests not required by T0/T1.
-5. Correct production-critical pmap, nullable and sequence behavior.
-6. Prove T0/T1 compilation and exact test inventory on Windows/Linux.
-7. Architecture review.
-8. Owner local acceptance.
-9. Owner-authorized merge.
-10. Post-merge main CI and Issue #21 DONE.
+1. This state-sync commit: synchronize final acceptance evidence.
+2. Update evidence in Issue #21 and PR #23.
+3. Final architecture review.
+4. Explicit owner merge authorization.
+5. Manual owner merge.
+6. Post-merge main CI green.
+7. Issue #21 DONE.
 ```
 
-Each MiMo run is one small owner-authorized correction in the existing branch and PR.
+RT-3 is not declared DONE and not declared merged until all of the above are complete. Each MiMo run is one small owner-authorized task in the existing branch and PR.
+
+### Next engineering gate after RT-3 closure
+
+```text
+CI optimization:
+  job routing by changed files
+  full matrix on main and manual gate
+  vcpkg/CMake caching as a separate step
+```
+
+Not started. Not part of RT-3 or RT-4.
 
 ## RT-4 — BLOCKED
 

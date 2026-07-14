@@ -1,8 +1,8 @@
 # AI Context
 
-Дата обновления: 2026-07-13  
-Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-3 implementation correction in existing PR #23
+Дата обновления: 2026-07-14
+Репозиторий: `dvrk0726/trading-robot-lab`
+Текущий gate: RT-3 pre-merge evidence synchronization
 
 ## Источник истины
 
@@ -56,16 +56,31 @@ RT-2 payload bytes остаются opaque. `capture_index` не являетс�
 
 ```text
 Issue: #21, open, label CHANGES_REQUIRED
-Implementation PR: #23, open
+Implementation PR: #23, open, not merged
 Implementation branch: mimo/issue-21-rt3-fast-decoder
-Implementation head: 062649476500f6060d22b9740cafa1b0250f3ba5
+Last verified implementation/evidence head: 3fde6847d652ebd5277ca03a496dc701392eb75e
+CI #155: success, all 7 jobs passed
 Corrected specification PR: #27, merged
 Specification merge commit on main: e2e616673758b1cb888f5e3b4b7844343327c579
-Post-merge main CI: #126, success
 RT-4: BLOCKED
+
+Acceptance evidence on 3fde6847d652ebd5277ca03a496dc701392eb75e:
+  FAST Release Windows/MSVC: 6 RT-1 + 9 RT-3 = 15 tests, all passed
+  FAST Release Linux/GCC: 6 RT-1 + 9 RT-3 = 15 tests, all passed
+  RAW Windows: 18 tests passed
+  RAW Linux: 18 tests passed
+  QSH M10X regression: 20 tests passed
+  Python tests/contracts: passed
+  Repository hygiene: passed
+  Owner-local Windows Release acceptance on 3fde6847d652ebd5277ca03a496dc701392eb75e:
+    configure/build success, inventory 15/15, PASS
+  Repository: Public
+  Owner server-side protection active: main branch, PR required,
+    unresolved conversations block merge, branch must be up to date,
+    7 CI checks required, deletion and force-push blocked
 ```
 
-PR #23 must remain the only implementation PR for RT-3. No new implementation branch or PR is created for its corrections.
+PR #23 remains the only implementation PR for RT-3. No new branch or PR was created.
 
 ## Authoritative RT-3 target
 
@@ -126,6 +141,7 @@ templateRef
 groupRef
 reference resolution and cycle detection
 generic group instructions outside T0/T1
+byteVector
 decimal component operators
 historical FAST profile compatibility
 ```
@@ -169,10 +185,15 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-1. Merge this state/workflow synchronization PR after owner approval.
-2. Synchronize PR #23 branch with current main without force push.
-3. Re-audit the resulting diff against the corrected T0/T1 specification.
-4. Freeze one small correction task.
-5. Obtain explicit owner authorization before each MiMo run.
-6. Do not start RT-4 until RT-3 is accepted, merged and post-merge CI is green.
+1. This state-sync commit synchronizes final acceptance evidence.
+2. Update evidence in Issue #21 and PR #23.
+3. Final architecture review.
+4. Explicit owner merge authorization.
+5. Manual owner merge.
+6. Post-merge main CI green.
+7. Issue #21 may then move to DONE.
 ```
+
+RT-3 is not declared DONE and not declared merged until all of the above are complete. RT-4 remains BLOCKED until the full RT-3 sequence finishes.
+
+After RT-3 closure, the next engineering gate is CI optimization: job routing by changed files, full matrix on main/manual gate, vcpkg/CMake caching as a separate step. CI optimization is not started now.
