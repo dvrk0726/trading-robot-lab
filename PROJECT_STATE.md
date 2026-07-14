@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-14
 Репозиторий: `dvrk0726/trading-robot-lab`
-Статус: RT-1 DONE; RT-2 DONE; RT-3 DONE
+Статус: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement Stage 1 in progress
 
 ## Архитектурные границы
 
@@ -59,6 +59,34 @@ Owner server-side protection active: main branch, PR required,
 
 Accepted implementation: specialized MOEX SPECTRA T0/T1 decoder, not a general-purpose FAST 1.1 engine.
 
+## CI-1 — DONE
+
+```text
+Required-check-preserving routing
+Docs-only smoke PR #32
+Main SHA: 0699a533a1ed44a9d47e05b049aca4061bebaac0
+Post-merge CI #165: success
+```
+
+## QSH retirement — in progress
+
+```text
+Issue: #33
+Draft PR: #34, branch mimo/issue-33-qsh-retirement-stage1
+Stage 1 is in progress. Not merged. Not complete.
+
+The QSH/QScalp/OrdLog implementation, old QSH L3/L2 book,
+Trading Lab QSH integration and archive QSH documents are being
+retired. They are not part of the future architecture.
+
+The exact check name C++ QSH M10X regression (20 tests) remains
+only as a temporary tombstone because the main ruleset still
+requires seven checks. Stage 2 may remove the tombstone only after
+the Owner updates the main ruleset from seven to six.
+
+.qsh bans remain only as raw market-data safety barriers.
+```
+
 ## Authoritative RT-3 profile
 
 ```text
@@ -102,14 +130,15 @@ historical profile compatibility
 
 Unsupported XML must fail compilation explicitly.
 
-## Next engineering gate
+## Sequence
 
 ```text
-CI optimization is the next separate engineering gate:
-  job routing by changed files
-  full matrix on main and manual gate
-  vcpkg/CMake caching as a separate step
-Not started. Not authorized by this task.
+finish QSH retirement (Stage 1)
+-> synchronize, accept, merge and post-merge verify
+-> CI-2 caching
+-> separately specified and authorized RT-4
 ```
 
-RT-4 requires a separate specification and explicit Owner authorization. Not automatically authorized by RT-3 completion.
+RT-4 remains not started and not authorized. Future normalized events
+and order book (RT-5/RT-6) must be designed from official MOEX SPECTRA
+data; no automatic reuse of the old QSH book.

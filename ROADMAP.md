@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-14
 Статус: gated engineering roadmap
-Текущий gate: RT-3 DONE; CI optimization next (not started)
+Текущий gate: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement Stage 1 in progress
 
 ## Главный порядок
 
@@ -11,6 +11,8 @@ repository workflow and protection
 -> local MOEX FAST metadata inspection
 -> raw segment contract and deterministic replay
 -> specialized MOEX T0/T1 FAST decoding
+-> CI routing optimization (CI-1 DONE)
+-> QSH retirement (Stage 1 in progress)
 -> SPECTRA framing, sequencing and recovery
 -> realtime data quality and books
 -> research/backtest/paper
@@ -71,19 +73,46 @@ Accepted operators: field without operator, constant.
 
 Excluded and fail-closed: default, copy, increment, delta, tail, generic dictionaries, references, generic groups outside T0/T1, byteVector, decimal component operators, historical-profile compatibility.
 
-## Next engineering gate
+### CI-1 — DONE
 
 ```text
-CI optimization:
-  job routing by changed files
-  full matrix on main and manual gate
-  vcpkg/CMake caching as a separate step
-Not started. Not authorized by this task.
+Required-check-preserving routing
+Docs-only smoke PR #32
+Main SHA: 0699a533a1ed44a9d47e05b049aca4061bebaac0
+Post-merge CI #165: success
 ```
 
-## RT-4 — not started
+### QSH retirement — in progress
 
-Requires a separate specification and explicit Owner authorization. Not automatically authorized by RT-3 completion.
+```text
+Issue: #33
+Draft PR: #34, branch mimo/issue-33-qsh-retirement-stage1
+Stage 1 in progress. Not merged. Not complete.
+
+The QSH/QScalp/OrdLog implementation, old QSH L3/L2 book,
+Trading Lab QSH integration and archive QSH documents are being
+retired. They are not part of the future architecture.
+
+The exact check name C++ QSH M10X regression (20 tests) remains
+only as a temporary tombstone because the main ruleset still
+requires seven checks. Stage 2 may remove the tombstone only after
+the Owner updates the main ruleset from seven to six.
+
+.qsh bans remain only as raw market-data safety barriers.
+```
+
+## Current sequence
+
+```text
+finish QSH retirement (Stage 1)
+-> synchronize, accept, merge and post-merge verify
+-> CI-2 caching
+-> separately specified and authorized RT-4
+```
+
+## RT-4 — not started, not authorized
+
+Requires a separate specification and explicit Owner authorization. Not automatically authorized by prior completion.
 
 ```text
 MOEX 4-byte preamble and message boundary
@@ -104,4 +133,6 @@ RT-9 FIX/TWIME test and VPTS readiness
 RT-10 production certification and explicit owner gate
 ```
 
+Future normalized events and order book (RT-5/RT-6) must be designed
+from official MOEX SPECTRA data; no automatic reuse of the old QSH book.
 Names and scope of later stages remain provisional until the preceding gate supplies evidence.
