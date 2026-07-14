@@ -71,7 +71,7 @@ Post-merge CI #165: success
 ## QSH retirement — DONE
 
 ```text
-Issue: #33 (open until docs finalization PR #35 merges)
+Issue: #33 - QSH retirement record
 PR: #34, merged
 Main merge SHA: 7c05cfb979cd0144be508e41a6f3a6229bfab1cb
 Post-merge CI: #175 / run 29361711016 — success, exactly 6 jobs
@@ -142,8 +142,7 @@ Unsupported XML must fail compilation explicitly.
 ## Sequence
 
 ```text
-close Issue #33 after docs finalization PR #35 merges and post-merge CI verifies
--> CI-2 caching (next separate gate, not started, not authorized)
+CI-2 caching (next separate gate, not started, not authorized)
 -> separately specified and explicitly Owner-authorized RT-4
 ```
 

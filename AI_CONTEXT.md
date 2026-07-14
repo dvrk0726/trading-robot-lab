@@ -141,7 +141,7 @@ Previous-template-ID reuse is retained and is not the XML `<copy>` operator.
 ## QSH retirement — DONE
 
 ```text
-Issue: #33 (open until docs finalization PR #35 merges)
+Issue: #33 - QSH retirement record
 PR: #34, merged
 Main merge SHA: 7c05cfb979cd0144be508e41a6f3a6229bfab1cb
 Post-merge CI: #175 / run 29361711016 — success, exactly 6 jobs
@@ -170,8 +170,7 @@ product support.
 ## Sequence
 
 ```text
-close Issue #33 after docs finalization PR #35 merges and post-merge CI verifies
--> CI-2 caching (next separate gate, not started, not authorized)
+CI-2 caching (next separate gate, not started, not authorized)
 -> separately specified and explicitly Owner-authorized RT-4
 ```
 
@@ -219,9 +218,6 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 RT-1, RT-2, RT-3 DONE and merged. CI-1 DONE. QSH retirement DONE.
 PR #34 merged. Main SHA: 7c05cfb979cd0144be508e41a6f3a6229bfab1cb.
 Post-merge CI #175 / run 29361711016 success, exactly 6 jobs.
-Current gate: close Issue #33 after docs finalization PR #35 merges
-  and post-merge CI verifies.
-CI-2 caching is the next separate gate after Issue #33 closes;
-  not started and not authorized.
+CI-2 caching is the next separate gate; not started and not authorized.
 RT-4 requires a separate specification and explicit Owner authorization. Not started.
 ```
