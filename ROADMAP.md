@@ -113,9 +113,12 @@ six checks:
 ## Current sequence
 
 ```text
-CI-2 caching (next separate gate, not started, not authorized)
--> separately specified and explicitly Owner-authorized RT-4
+RT-4 research/specification (next separate gate)
+-> separately specified and explicitly Owner-authorized RT-4 implementation
 ```
+
+CI-2 caching is POSTPONED, not started and not authorized. Reconsider
+only when measured CI duration or cost materially slows development.
 
 ## RT-4 — not started, not authorized
 
