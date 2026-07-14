@@ -1,6 +1,6 @@
 # trading-robot-lab
 
-Private research and engineering repository for a two-system trading architecture:
+Research and engineering repository for a two-system trading architecture:
 
 ```text
 Trading Lab      — research, data quality, replay, backtests, reports and UI.
