@@ -23,7 +23,7 @@ route = _mod.route
 main = _mod.main
 
 # All keys returned by ``route()``.
-ALL_KEYS = {"full_matrix", "run_python", "run_qsh", "run_fast", "run_raw"}
+ALL_KEYS = {"full_matrix", "run_python", "run_fast", "run_raw"}
 
 
 # ---------------------------------------------------------------------------
@@ -94,15 +94,6 @@ class TestRawOnly:
         _assert_flags(route(paths), run_raw=True)
 
 
-class TestQshOnly:
-    def test_single_qsh_file(self) -> None:
-        _assert_flags(route(["cpp/qsh_ingest/src/main.cpp"]), run_qsh=True)
-
-    def test_multiple_qsh_files(self) -> None:
-        paths = ["cpp/qsh_ingest/src/a.cpp", "cpp/qsh_ingest/include/b.hpp"]
-        _assert_flags(route(paths), run_qsh=True)
-
-
 class TestPythonOnly:
     def test_src(self) -> None:
         _assert_flags(route(["src/strategy.py"]), run_python=True)
@@ -125,12 +116,12 @@ class TestPythonOnly:
 
 
 class TestMimoSave:
-    def test_mimo_save_triggers_python_and_qsh(self) -> None:
-        _assert_flags(route(["tools/mimo_save.ps1"]), run_python=True, run_qsh=True)
+    def test_mimo_save_triggers_python_only(self) -> None:
+        _assert_flags(route(["tools/mimo_save.ps1"]), run_python=True)
 
     def test_mimo_save_combined_with_other(self) -> None:
         paths = ["tools/mimo_save.ps1", "cpp/moex_fast/src/x.cpp"]
-        _assert_flags(route(paths), run_python=True, run_qsh=True, run_fast=True)
+        _assert_flags(route(paths), run_python=True, run_fast=True)
 
 
 class TestFastPlusPython:
@@ -211,7 +202,6 @@ class TestForcedFullMatrix:
             values = dict(line.split("=", 1) for line in lines)
             assert values["full_matrix"] == "true"
             assert values["run_python"] == "true"
-            assert values["run_qsh"] == "true"
             assert values["run_fast"] == "true"
             assert values["run_raw"] == "true"
         finally:
@@ -242,7 +232,6 @@ class TestGitHubOutput:
             values = dict(line.split("=", 1) for line in lines)
             assert values["full_matrix"] == "false"
             assert values["run_python"] == "true"
-            assert values["run_qsh"] == "false"
             assert values["run_fast"] == "false"
             assert values["run_raw"] == "false"
         finally:
@@ -251,19 +240,17 @@ class TestGitHubOutput:
 
 
 class TestMultiContourUnion:
-    def test_fast_raw_qsh_python_union(self) -> None:
-        """Multiple known contours union to all four expensive jobs."""
+    def test_fast_raw_python_union(self) -> None:
+        """Multiple known contours union to all three expensive jobs."""
         paths = [
             "cpp/moex_fast/src/a.cpp",
             "cpp/moex_raw/src/b.cpp",
-            "cpp/qsh_ingest/src/c.cpp",
             "src/d.py",
         ]
         _assert_flags(
             route(paths),
             run_fast=True,
             run_raw=True,
-            run_qsh=True,
             run_python=True,
         )
 
@@ -361,7 +348,6 @@ class TestMissingPathsFile:
             values = dict(line.split("=", 1) for line in lines)
             assert values["full_matrix"] == "true"
             assert values["run_python"] == "true"
-            assert values["run_qsh"] == "true"
             assert values["run_fast"] == "true"
             assert values["run_raw"] == "true"
         finally:
@@ -385,7 +371,6 @@ class TestMissingPathsFile:
             values = dict(line.split("=", 1) for line in lines)
             assert values["full_matrix"] == "true"
             assert values["run_python"] == "true"
-            assert values["run_qsh"] == "true"
             assert values["run_fast"] == "true"
             assert values["run_raw"] == "true"
         finally:

@@ -25,7 +25,6 @@ jobs:
     timeout-minutes: 10
     outputs:
       run_python: ${{ steps.route.outputs.run_python }}
-      run_qsh: ${{ steps.route.outputs.run_qsh }}
       run_fast: ${{ steps.route.outputs.run_fast }}
       run_raw: ${{ steps.route.outputs.run_raw }}
       full_matrix: ${{ steps.route.outputs.full_matrix }}
@@ -102,37 +101,6 @@ jobs:
 
       - name: Validate shared contract examples
         run: python shared/schemas/validate_examples.py
-
-  cpp-qsh-m10x-regression:
-    name: C++ QSH M10X regression (20 tests)
-    needs: repository-hygiene
-    if: needs.repository-hygiene.outputs.run_qsh == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 5
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Tombstone — verify QSH implementation is absent
-        run: |
-          $failed = $false
-          if (Test-Path 'cpp/qsh_ingest') {
-            Write-Error 'cpp/qsh_ingest still exists — legacy QSH implementation must be removed.'
-            $failed = $true
-          }
-          if (Test-Path 'tools/run_qsh_real_sample_checks.ps1') {
-            Write-Error 'tools/run_qsh_real_sample_checks.ps1 still exists — legacy QSH script must be removed.'
-            $failed = $true
-          }
-          if ($failed) {
-            throw 'QSH tombstone check failed: retired artifacts are still present.'
-          }
-          Write-Host 'QSH tombstone check passed: retired artifacts are absent.'
 
   # RT-1 inspector: 6 tests on Windows/MSVC, RT-3 decoder: 9 tests on Windows/MSVC
   cpp-moex-fast-inspector:
