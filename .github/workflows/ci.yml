@@ -179,14 +179,28 @@ jobs:
           }
           Write-Host "RT-4 A1 inventory verified: $($expected.Count) tests present"
 
-      - name: Verify total test count (16)
+      - name: Verify exact RT-4 A2 sequence arithmetic test inventory (1 test)
+        run: |
+          $expected = @(
+            'test_spectra_sequence_arithmetic'
+          )
+          $output = ctest --test-dir build/moex_fast -C Release -N
+          $names = ($output | Select-String '^\s*Test\s+#\d+:\s+(.+?)\s*$').ForEach({ $_.Matches.Groups[1].Value })
+          foreach ($name in $expected) {
+            if ($name -notin $names) {
+              throw "RT-4 A2 test '$name' not found in CTest inventory"
+            }
+          }
+          Write-Host "RT-4 A2 inventory verified: $($expected.Count) tests present"
+
+      - name: Verify total test count (17)
         run: |
           $output = ctest --test-dir build/moex_fast -C Release -N
           $line = $output | Select-String '^Total Tests:'
           $count = [int](($line.Line -split ':', 2)[1].Trim())
-          Write-Host "CTest inventory: $count (expected 16: 6 RT-1 + 9 RT-3 + 1 RT-4 A1)"
-          if ($count -ne 16) {
-            throw "Expected 16 moex_fast tests (6 RT-1 + 9 RT-3 + 1 RT-4 A1), found $count"
+          Write-Host "CTest inventory: $count (expected 17: 6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2)"
+          if ($count -ne 17) {
+            throw "Expected 17 moex_fast tests (6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2), found $count"
           }
 
       - name: Run all moex_fast tests (RT-1 + RT-3)
@@ -241,12 +255,22 @@ jobs:
           done
           echo "RT-4 A1 inventory verified: 1 test present"
 
-      - name: Verify total test count (16)
+      - name: Verify exact RT-4 A2 sequence arithmetic test inventory (1 test)
+        run: |
+          for name in test_spectra_sequence_arithmetic; do
+            if ! ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -q "$name"; then
+              echo "RT-4 A2 test '$name' not found in CTest inventory"
+              exit 1
+            fi
+          done
+          echo "RT-4 A2 inventory verified: 1 test present"
+
+      - name: Verify total test count (17)
         run: |
           count=$(ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
-          echo "CTest inventory: $count (expected 16: 6 RT-1 + 9 RT-3 + 1 RT-4 A1)"
-          if [ "$count" -ne 16 ]; then
-            echo "Expected 16 moex_fast tests (6 RT-1 + 9 RT-3 + 1 RT-4 A1), found $count"
+          echo "CTest inventory: $count (expected 17: 6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2)"
+          if [ "$count" -ne 17 ]; then
+            echo "Expected 17 moex_fast tests (6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2), found $count"
             exit 1
           fi
 

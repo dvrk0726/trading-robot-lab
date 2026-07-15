@@ -135,3 +135,8 @@ add_test(NAME test_decoder_reference_oracle COMMAND test_decoder_reference_oracl
 add_executable(test_spectra_udp_framing tests/test_spectra_udp_framing.cpp)
 target_link_libraries(test_spectra_udp_framing PRIVATE moex_spectra_transport)
 add_test(NAME test_spectra_udp_framing COMMAND test_spectra_udp_framing)
+
+# --- RT-4 A2 SPECTRA Sequence Arithmetic Test ---
+add_executable(test_spectra_sequence_arithmetic tests/test_spectra_sequence_arithmetic.cpp)
+target_link_libraries(test_spectra_sequence_arithmetic PRIVATE moex_spectra_transport)
+add_test(NAME test_spectra_sequence_arithmetic COMMAND test_spectra_sequence_arithmetic)
