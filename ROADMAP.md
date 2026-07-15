@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A1 DONE; Gate A2 implementation BLOCKED
+Текущий gate: RT-4 Gate A2 setup — Issue #48 / PR #49; implementation blocked
 
 ## Главный порядок
 
@@ -142,6 +142,23 @@ Post-merge main CI #200: success
 MOEX FAST inventory: 16 = RT-1 6 + RT-3 9 + RT-4 A1 1
 ```
 
+### RT-4 A2/A3 implementation-stage amendment — DONE
+
+```text
+Issue #46: closed completed
+PR #47: merged
+Reviewed PR head: 7f42d2d14e4f54ad184e64688870030ce11b5f92
+Main merge SHA: eb1e851bc685b8abefa61c4dbb0c5fc4de8f46a9
+Pre-merge CI #209: success
+Post-merge main CI #210: success
+```
+
+```text
+A2: stateless uint32 serial-relation classification only
+A3: fixed preallocated MessageStorage plus complete mutable A/B sequencer
+A4: fixed deadline and terminal fail-closed behavior
+```
+
 ## MOEX connectivity checkpoint
 
 ```text
@@ -214,21 +231,69 @@ cpp/moex_fast/CMakeLists.txt
 .github/workflows/ci.yml
 ```
 
-### Gate A2 — deterministic uint32 serial arithmetic — BLOCKED
+### Gate A2 — deterministic uint32 serial arithmetic — SETUP ACTIVE, IMPLEMENTATION BLOCKED
+
+Tracking artifacts:
 
 ```text
-stateless classification only
-observed sequence
-next expected sequence
-configured max forward window
-stable relation code and uint32 delta
+Issue #48
+PR #49
+Branch: mimo/issue-48-rt4-a2-sequence-arithmetic
+Base main SHA: eb1e851bc685b8abefa61c4dbb0c5fc4de8f46a9
+```
+
+Frozen API after separate implementation authorization:
+
+```text
+header-only spectra_sequence_arithmetic.hpp
+SequenceRelation:
+  Expected
+  FutureWithinWindow
+  FutureBeyondWindow
+  Ambiguous
+  Stale
+  InvalidConfig
+SequenceClassification:
+  relation
+  uint32 delta
+classify_sequence_relation(observed, next_expected, max_reorder_messages)
+constexpr and noexcept
+```
+
+Deterministic classification:
+
+```text
+max == 0 or max >= 0x80000000 -> InvalidConfig, delta 0
+delta == 0                     -> Expected
+1 <= delta <= max              -> FutureWithinWindow
+max < delta < 0x80000000       -> FutureBeyondWindow
+delta == 0x80000000            -> Ambiguous
+delta > 0x80000000             -> Stale
+```
+
+Frozen implementation files after separate authorization:
+
+```text
+cpp/moex_fast/include/moex_fast/spectra_sequence_arithmetic.hpp
+cpp/moex_fast/tests/test_spectra_sequence_arithmetic.cpp
+cpp/moex_fast/CMakeLists.txt
+.github/workflows/ci.yml
+```
+
+Test contract:
+
+```text
+one Release-active test_spectra_sequence_arithmetic
+invalid zero, half-range and UINT32_MAX configuration
 exact expected
-future within configured window
-future beyond configured window
-half-range ambiguity
-stale or behind relation
-natural modulo-2^32 wrap classification
-invalid zero or half-range configuration
+future at one and exact configured maximum
+future beyond maximum
+exact half-range ambiguity
+stale relation
+natural modulo-2^32 wrap
+constexpr, noexcept and trivially-copyable checks
+MOEX FAST inventory after implementation: 17 total
+required-check job names unchanged
 ```
 
 A2 explicitly excludes:
@@ -246,12 +311,22 @@ pending duplicate byte comparison
 contiguous flush
 gap deadline
 FailedClosed transition
+SequenceReset
+.mxraw or RT-3 integration
+benchmarks
+tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
-A2 classifies sequence relations only. It does not decide or perform emission, drop, buffering or failure state transitions.
+Current authorization boundary:
 
-A2 implementation requires a separate current-state review, bounded plan, new implementation Issue/branch/PR and explicit Owner authorization.
+```text
+setup documentation: authorized
+C++ implementation: not authorized
+CMake and workflow implementation changes: not authorized
+MiMo: not authorized
+merge: not authorized
+```
 
 ### Gate A3 — fixed storage and complete A/B sequencer — BLOCKED
 
@@ -323,13 +398,15 @@ explicit Owner acceptance
 
 ```text
 RT-4 Gate A1: DONE
-RT-4 Gate A2 implementation: BLOCKED — not started and not authorized
-No active A2 implementation Issue, feature branch or PR
+RT-4 Gate A2 setup: Issue #48 / PR #49
+Setup scope: AI_CONTEXT.md, PROJECT_STATE.md, ROADMAP.md
+A2 implementation: not started and not authorized
 MiMo for A2: not authorized
+A3: blocked
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
-No gate begins automatically. Before A2 implementation: independently verify current GitHub state, prepare one bounded plan, obtain explicit Owner authorization, then create a separate implementation Issue, feature branch and Draft PR.
+The next transition is separate Owner authorization for the frozen A2 implementation in the existing branch and PR after setup CI and Architecture Review.
 
 CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 
