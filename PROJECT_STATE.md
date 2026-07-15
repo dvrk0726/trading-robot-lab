@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 specification DONE; post-merge state sync — Issue #40 / Draft PR #41
+Статус: RT-4 Gate A1 UDP framing setup — Issue #42 / Draft PR #43
 
 ## Архитектурные границы
 
@@ -152,8 +152,6 @@ PR #39: merged
 Final reviewed PR head: afd128a49584fce1131323ac7b19e5b5d7b1997a
 Main merge SHA: 136293ede211619b7d9198d85ed3afb0f2577514
 Post-merge main CI #189: success
-RT-4 implementation: not started and not authorized
-MiMo: not authorized
 ```
 
 Authoritative files:
@@ -191,6 +189,16 @@ The 2026-07-11 RT-3 source audit remains historical evidence. The 2026-07-15 end
 
 Gate A uses explicit LittleEndian or BigEndian with no default. Gate B may compare both values with decoded tag 34, fail closed on ambiguity and lock one byte order after verification.
 
+### RT-4 post-merge state sync — DONE
+
+```text
+Issue #40: closed completed
+PR #41: merged
+Final reviewed PR head: 6789fb3621d70465114a32d2b146562e7f6809e8
+Main merge SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
+Post-merge main CI #194: success
+```
+
 ## MOEX access and connectivity state
 
 ```text
@@ -208,32 +216,59 @@ MOEX support follow-up: pending.
 
 The VPN endpoint, external/private IP addresses, credentials, VPN profiles and raw/decoded market-data packets are not stored.
 
-This connectivity state does not prove a framing defect and does not authorize implementation.
+This connectivity state does not prove a framing defect and does not authorize production acceptance.
 
-## Current gate — documentation state sync
+## Current gate — RT-4 Gate A1 setup
 
 ```text
-Issue #40: open
-Draft PR #41: open
-Branch: docs/issue-40-rt4-state-sync
-Base main SHA: 136293ede211619b7d9198d85ed3afb0f2577514
-Allowed files: exactly four documentation files
-Code changes: prohibited
+Issue #42: open
+Draft PR #43: setup target
+Branch: mimo/issue-42-rt4-a1-udp-framing
+Base main SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
+Setup files: AI_CONTEXT.md, PROJECT_STATE.md, ROADMAP.md
+C++ implementation: not authorized
+CI implementation changes: not authorized
 MiMo: not authorized
-RT-4 implementation: not authorized
 Merge: not authorized
 ```
+
+Approved A1 implementation boundary after separate Owner authorization:
+
+```text
+one current UDP datagram
+4-byte external MsgSeqNum preamble
+explicit LittleEndian or BigEndian; no default
+exactly one borrowed FAST body beginning at byte 4
+bounded validation and stable FrameCode result
+no payload copy and no heap allocation
+one Release-active framing CTest
+MOEX FAST inventory 15 -> 16 without changing required-check job names
+```
+
+Deterministic framing error precedence:
+
+```text
+invalid limits or invalid byte-order enum -> InvalidConfig
+payload size 0..3                       -> DatagramTooShort
+payload size 4                          -> EmptyFastBody
+payload size > max_datagram_bytes       -> DatagramTooLarge
+payload size 5..max                     -> Ok
+```
+
+A1 excludes A/B sequencing, serial arithmetic, duplicate suppression, reorder storage, gap deadlines, sockets, `.mxraw`, RT-3 integration, AutoVerify, SequenceReset, Snapshot recovery and benchmarks.
 
 ## Sequence
 
 ```text
-Issue #40 / Draft PR #41 documentation review
+Issue #42 / Draft PR #43 docs-only setup
 -> docs-only CI
+-> Architecture Review of setup state
+-> separate Owner authorization for A1 implementation and MiMo
+-> one bounded implementation commit in existing branch/PR
+-> full CI
 -> Architecture Review
--> separate Owner readiness authorization
 -> separate Owner merge authorization
 -> post-merge main CI verification
--> separate Owner authorization for RT-4 Gate A implementation
 ```
 
 CI-2 caching is POSTPONED, not started and not authorized.
