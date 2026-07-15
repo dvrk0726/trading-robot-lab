@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-4 Gate A1 post-merge state sync — Issue #44, Draft PR #45
+Текущий gate: RT-4 Gate A1 DONE; Gate A2 BLOCKED
 
 ## Источник истины
 
@@ -191,32 +191,17 @@ MOEX support follow-up: pending.
 
 Do not store the VPN endpoint, external/private IP addresses, credentials, VPN profiles, screenshots containing connection details, or raw/decoded market-data packets.
 
-## Current gate — RT-4 A1 post-merge state sync
+## Current verified boundary
 
 ```text
-Issue #44: open
-Draft PR #45: open
-Branch: docs/issue-44-rt4-a1-post-merge-state-sync
-Base main SHA: ebfb3096b8a62704e5bf57a77d7971fd36acef2a
-Scope: exactly AI_CONTEXT.md, PROJECT_STATE.md and ROADMAP.md
-Code, tests, CMake and workflow changes: prohibited
-MiMo: prohibited
-Merge: not authorized
-A2: not started and not authorized
+RT-4 Gate A1: DONE
+RT-4 Gate A2: BLOCKED — not started and not authorized
+No active A2 Issue, feature branch or PR
+MiMo for A2: not authorized
+RT-5 / RT-6 / CI-2: not authorized
 ```
 
-## Sequence
-
-```text
-complete Issue #44 three-file state synchronization
--> docs-only CI
--> Architecture Review
--> separate Owner merge authorization
--> post-merge main CI verification
--> close Issue #44 completed
-```
-
-A2 does not begin automatically. It requires a separate current-state review, bounded plan, new Issue/branch/PR and explicit Owner authorization.
+A2 does not begin automatically. Before any A2 implementation activity: independently re-check GitHub, prepare one bounded A2 plan, obtain explicit Owner authorization, then create a separate Issue, feature branch and Draft PR.
 
 CI-2 caching is POSTPONED, not started and not authorized.
 
@@ -242,9 +227,8 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-Review the exact three-file documentation diff in Draft PR #45.
-Verify docs-only CI.
-Do not modify code or launch MiMo.
-Do not merge without separate explicit Owner authorization.
-Do not begin A2.
+No implementation gate is active.
+Do not start A2.
+Do not launch MiMo.
+Wait for a separate current-state review, bounded A2 plan and explicit Owner authorization.
 ```
