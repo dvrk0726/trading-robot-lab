@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 Gate A1 UDP framing setup — Issue #42 / Draft PR #43
+Статус: RT-4 Gate A1 DONE; Gate A2 BLOCKED
 
 ## Архитектурные границы
 
@@ -199,6 +199,43 @@ Main merge SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
 Post-merge main CI #194: success
 ```
 
+### RT-4 Gate A1 UDP framing — DONE
+
+```text
+Issue #42: closed completed
+PR #43: merged
+Final reviewed PR head: fc8c42bcd34ed65851267e9fefbc379d7206d2ca
+Main merge SHA: ebfb3096b8a62704e5bf57a77d7971fd36acef2a
+Pre-merge CI #199: success
+Post-merge main CI #200: success
+MOEX FAST inventory: 16 = RT-1 6 + RT-3 9 + RT-4 A1 1
+```
+
+Accepted A1 contract:
+
+```text
+one current UDP datagram
+4-byte external MsgSeqNum preamble
+explicit LittleEndian or BigEndian; no default
+exactly one borrowed FAST body beginning at byte 4
+bounded validation and stable FrameCode result
+no payload copy and no heap allocation in production framing code
+one Release-active framing CTest
+required-check job names unchanged
+```
+
+Deterministic framing error precedence:
+
+```text
+invalid limits or invalid byte-order enum -> InvalidConfig
+payload size 0..3                       -> DatagramTooShort
+payload size 4                          -> EmptyFastBody
+payload size > max_datagram_bytes       -> DatagramTooLarge
+payload size 5..max                     -> Ok
+```
+
+A1 excludes A/B sequencing, serial arithmetic, duplicate suppression, reorder storage, gap deadlines, sockets, `.mxraw`, RT-3 integration, AutoVerify, SequenceReset, Snapshot recovery and benchmarks.
+
 ## MOEX access and connectivity state
 
 ```text
@@ -218,58 +255,17 @@ The VPN endpoint, external/private IP addresses, credentials, VPN profiles and r
 
 This connectivity state does not prove a framing defect and does not authorize production acceptance.
 
-## Current gate — RT-4 Gate A1 setup
+## Current verified boundary
 
 ```text
-Issue #42: open
-Draft PR #43: open
-Branch: mimo/issue-42-rt4-a1-udp-framing
-Base main SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
-Setup files: AI_CONTEXT.md, PROJECT_STATE.md, ROADMAP.md
-C++ implementation: not authorized
-CI implementation changes: not authorized
-MiMo: not authorized
-Merge: not authorized
+RT-4 Gate A1: DONE
+RT-4 Gate A2: BLOCKED — not started and not authorized
+No active A2 Issue, feature branch or PR
+MiMo for A2: not authorized
+RT-5 / RT-6 / CI-2: not authorized
 ```
 
-Approved A1 implementation boundary after separate Owner authorization:
-
-```text
-one current UDP datagram
-4-byte external MsgSeqNum preamble
-explicit LittleEndian or BigEndian; no default
-exactly one borrowed FAST body beginning at byte 4
-bounded validation and stable FrameCode result
-no payload copy and no heap allocation
-one Release-active framing CTest
-MOEX FAST inventory 15 -> 16 without changing required-check job names
-```
-
-Deterministic framing error precedence:
-
-```text
-invalid limits or invalid byte-order enum -> InvalidConfig
-payload size 0..3                       -> DatagramTooShort
-payload size 4                          -> EmptyFastBody
-payload size > max_datagram_bytes       -> DatagramTooLarge
-payload size 5..max                     -> Ok
-```
-
-A1 excludes A/B sequencing, serial arithmetic, duplicate suppression, reorder storage, gap deadlines, sockets, `.mxraw`, RT-3 integration, AutoVerify, SequenceReset, Snapshot recovery and benchmarks.
-
-## Sequence
-
-```text
-Issue #42 / Draft PR #43 docs-only setup
--> docs-only CI
--> Architecture Review of setup state
--> separate Owner authorization for A1 implementation and MiMo
--> one bounded implementation commit in existing branch/PR
--> full CI
--> Architecture Review
--> separate Owner merge authorization
--> post-merge main CI verification
-```
+Before any A2 implementation activity: independently verify current GitHub state, prepare one bounded A2 plan, obtain explicit Owner authorization, then create a separate Issue, feature branch and Draft PR.
 
 CI-2 caching is POSTPONED, not started and not authorized.
 
