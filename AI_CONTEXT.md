@@ -1,8 +1,8 @@
 # AI Context
 
-Дата обновления: 2026-07-14
+Дата обновления: 2026-07-15
 Репозиторий: `dvrk0726/trading-robot-lab`
-Текущий gate: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement DONE
+Текущий gate: RT-4 research/specification — Issue #38, Draft PR #39
 
 ## Источник истины
 
@@ -71,6 +71,8 @@ RT-2: DONE — .mxraw v1 raw segment and deterministic replay
 RT-3: DONE — specialized MOEX SPECTRA T0/T1 decoder
 CI-1: DONE — required-check-preserving routing, docs-only smoke PR #32,
   main SHA 0699a533a1ed44a9d47e05b049aca4061bebaac0, post-merge CI #165 success
+QSH retirement: DONE
+Performance-first documentation: DONE — Issue #36 / PR #37
 ```
 
 RT-2 payload bytes остаются opaque. `capture_index` не является FAST `MsgSeqNum` или exchange sequence.
@@ -89,14 +91,14 @@ Owner-local Windows Release acceptance on 3fde6847d652ebd5277ca03a496dc701392eb7
 Repository: Public
 Owner server-side protection active: main branch, PR required,
   unresolved conversations block merge, branch must be up to date,
-  7 CI checks required, deletion and force-push blocked
+  required checks active, deletion and force-push blocked
 ```
 
 Accepted implementation: specialized MOEX SPECTRA T0/T1 decoder, not a general-purpose FAST 1.1 engine.
 
 ## Authoritative RT-3 target
 
-Build one template-driven C++20 decoder for the two accepted official MOEX SPECTRA profiles:
+Historical accepted implementation profiles:
 
 ```text
 T0 templatesT0/templates.xml
@@ -108,7 +110,7 @@ SHA-256 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 Role: next trading-system release
 ```
 
-`FAST_9.0/templates.xml` is byte-identical to accepted T0 and is not a third profile. `FAST_8.6` and `backup/` are not RT-3 targets.
+These are the RT-3 accepted compile/test profiles. Current official endpoint contents are rechecked separately by RT-4 and do not rewrite historical acceptance evidence.
 
 Source priority:
 
@@ -176,33 +178,69 @@ The QSH/QScalp/OrdLog product support, old QSH L3/L2 book,
 Trading Lab QSH integration, tombstone job, run_qsh and QSH routing
 are retired and absent. They are not part of the future architecture.
 
-The active Protect main ruleset (ID 18924726) requires exactly
-six checks:
-  - Repository hygiene
-  - Python tests and contracts
-  - C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)
-  - C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)
-  - C++ MOEX RAW Windows/MSVC (18 tests)
-  - C++ MOEX RAW Linux/GCC (18 tests)
-
 *.qsh remains mentioned only as a raw-market-data safety ban; not
 product support.
 ```
 
+## RT-4 research/specification — CURRENT
+
+```text
+Issue: #38 open
+Draft PR: #39 open
+Branch: docs/issue-38-rt4-spec
+Base main SHA: 7a23f57eab119df98e4cea7eaf239ad504d4bb88
+Scope: documentation only
+MiMo: not authorized
+Implementation: not started and not authorized
+Merge: not authorized
+```
+
+Authoritative RT-4 documents in PR #39:
+
+```text
+docs/rt4_spectra_framing_sequencing_recovery_spec.md
+docs/rt4_moex_fast_source_update_2026-07-15.md
+```
+
+Architecture gates:
+
+```text
+Gate A: framing, A/B sequencing, bounded reordering, gaps, fail-closed
+Gate B: .mxraw + RT-3 integration and preamble AutoVerify
+Gate C: Snapshot + buffered Incremental recovery
+Gate D: Release performance and production-evidence acceptance
+```
+
+Current official-source update:
+
+```text
+MOEX SPECTRA FAST: v1.30.2, 2026-04-10
+T0 configuration SHA-256:
+AE80702BC3E179CAF5DA025E94FDAC6AC7A6A4FF1353E7FB5D0396DE987C4118
+Current T0 templates SHA-256:
+84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
+Current T1 templates SHA-256:
+84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
+External 4-byte preamble byte order: unresolved in official text
+```
+
+Official `fast_sensor` 1.30.0.1337 accepted the T0 configuration. A safe bounded gap/statistics/order-check received zero packets while MOEX access/routing confirmation remained pending. No credentials, connection addresses or raw market-data captures are stored.
+
+Gate A requires explicit LittleEndian or BigEndian configuration and no default guess. Gate B may compare both interpretations with decoded tag 34, fail closed on ambiguity, and lock one byte order per logical feed after verification.
+
 ## Sequence
 
 ```text
-RT-4 research/specification (next separate gate)
--> separately specified and explicitly Owner-authorized RT-4 implementation
+RT-4 documentation/specification PR #39
+-> Architecture Review
+-> separate Owner merge authorization
+-> post-merge main CI verification
+-> separate Owner authorization for Gate A implementation
 ```
 
-CI-2 caching is POSTPONED, not started and not authorized. Reconsider
-only when measured CI duration or cost materially slows development.
+CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 
-RT-4 implementation remains not started and not authorized and requires
-a separate specification and explicit Owner approval. Future normalized
-events and new L3/L2 book are designed from official MOEX SPECTRA data;
-no automatic reuse of the old QSH code.
+RT-4 implementation remains not started and not authorized. Future normalized events and the new L3/L2 book are designed from official MOEX SPECTRA data; no automatic reuse of old QSH code.
 
 ## Workflow
 
@@ -221,13 +259,11 @@ MiMo is launched only with an exact owner-authorized prompt supplied by Architec
 mimo --model xiaomi/mimo-v2.5-pro --prompt "<exact task>"
 ```
 
-There is no executable universal self-selection command for the current workflow.
-
 For `CHANGES_REQUIRED`:
 
 ```text
 use the existing branch and PR;
-read the merged specification and current review instruction;
+read the current specification and review instruction;
 change only allowed files;
 run exact tests;
 create one scoped commit;
@@ -241,11 +277,9 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-RT-1, RT-2, RT-3 DONE and merged. CI-1 DONE. QSH retirement DONE.
-PR #34 merged. Main SHA: 7c05cfb979cd0144be508e41a6f3a6229bfab1cb.
-Post-merge CI #175 / run 29361711016 success, exactly 6 jobs.
-CI-2 caching is POSTPONED; not started and not authorized.
-RT-4 research/specification is the next separate gate.
-RT-4 implementation remains not started and not authorized;
-  requires separate specification and explicit Owner approval.
+Current task: finish documentation-only Issue #38 / Draft PR #39.
+Review exact five-file diff and docs-only CI.
+Do not start RT-4 implementation.
+Do not launch MiMo.
+Do not merge without separate explicit Owner authorization.
 ```
