@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A1 UDP framing setup — Issue #42 / Draft PR #43
+Текущий gate: RT-4 Gate A1 post-merge state sync — Issue #44 / Draft PR #45
 
 ## Главный порядок
 
@@ -130,6 +130,18 @@ Main merge SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
 Post-merge main CI #194: success
 ```
 
+### RT-4 Gate A1 UDP framing — DONE
+
+```text
+Issue #42: closed completed
+PR #43: merged
+Reviewed PR head: fc8c42bcd34ed65851267e9fefbc379d7206d2ca
+Main merge SHA: ebfb3096b8a62704e5bf57a77d7971fd36acef2a
+Pre-merge CI #199: success
+Post-merge main CI #200: success
+MOEX FAST inventory: 16 = RT-1 6 + RT-3 9 + RT-4 A1 1
+```
+
 ## MOEX connectivity checkpoint
 
 ```text
@@ -146,39 +158,36 @@ MOEX support follow-up: pending
 
 Private connection addresses, credentials, VPN profiles and real raw/decoded market-data packets are prohibited in Git.
 
-The connectivity blocker does not prevent synthetic A1 implementation after separate Owner authorization, but production endian acceptance still requires live T0/T1 evidence, an official vector or written MOEX confirmation.
+The connectivity blocker does not invalidate synthetic A1 acceptance. Production endian acceptance still requires live T0/T1 evidence, an official vector or written MOEX confirmation.
 
-## Current gate — RT-4 A1 setup
+## Current gate — RT-4 A1 post-merge state sync
 
 ```text
-Issue #42: open
-Draft PR #43: open
-Branch: mimo/issue-42-rt4-a1-udp-framing
-Base main SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
-Current scope: exactly three state documentation files
-C++ implementation: not authorized
-CI implementation changes: not authorized
-MiMo: not authorized
+Issue #44: open
+Draft PR #45: open
+Branch: docs/issue-44-rt4-a1-post-merge-state-sync
+Base main SHA: ebfb3096b8a62704e5bf57a77d7971fd36acef2a
+Current scope: exactly AI_CONTEXT.md, PROJECT_STATE.md and ROADMAP.md
+Code, tests, CMake and workflow changes: prohibited
+MiMo: prohibited
 Merge: not authorized
+A2: not started and not authorized
 ```
 
 Required sequence:
 
 ```text
-complete docs-only setup
+complete exact three-file state synchronization
 -> docs-only CI
--> Architecture Review of setup state
--> separate Owner authorization for A1 implementation and MiMo
--> one bounded implementation commit in the existing branch/PR
--> full CI
 -> Architecture Review
 -> separate Owner merge authorization
 -> post-merge main CI verification
+-> close Issue #44 completed
 ```
 
 ## RT-4 implementation gates
 
-### Gate A1 — UDP framing — SETUP ACTIVE, IMPLEMENTATION NOT AUTHORIZED
+### Gate A1 — UDP framing — DONE
 
 ```text
 4-byte external MsgSeqNum preamble
@@ -188,9 +197,9 @@ host-endian-independent uint32 conversion
 borrowed FAST-body span beginning at byte 4
 bounded deterministic validation
 stable FrameCode and deterministic empty output on failure
-no payload copy or heap allocation
+no payload copy or heap allocation in production framing code
 one synthetic Windows/Linux Release CTest
-MOEX FAST test inventory 15 -> 16
+MOEX FAST test inventory 16 total
 required-check job names unchanged
 ```
 
@@ -220,7 +229,7 @@ Snapshot recovery
 Release benchmark claims
 ```
 
-Allowed implementation files after separate Owner authorization:
+Accepted implementation files:
 
 ```text
 cpp/moex_fast/include/moex_fast/spectra_udp_framing.hpp
@@ -238,6 +247,8 @@ A/B logical-feed arbitration
 duplicate suppression
 in-order emission
 ```
+
+A2 requires a separate current-state review, bounded plan, new Issue/branch/PR and explicit Owner authorization.
 
 ### Gate A3 — bounded reordering — BLOCKED
 
