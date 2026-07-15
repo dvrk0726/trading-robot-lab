@@ -1,8 +1,8 @@
 # Roadmap
 
-Дата обновления: 2026-07-14
+Дата обновления: 2026-07-15
 Статус: gated engineering roadmap
-Текущий gate: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement DONE
+Текущий gate: RT-4 research/specification — Issue #38, Draft PR #39
 
 ## Главный порядок
 
@@ -13,7 +13,7 @@ repository workflow and protection
 -> specialized MOEX T0/T1 FAST decoding
 -> CI routing optimization (CI-1 DONE)
 -> QSH retirement (DONE)
--> SPECTRA framing, sequencing and recovery
+-> RT-4 SPECTRA framing, sequencing and recovery
 -> realtime data quality and books
 -> research/backtest/paper
 -> VPTS/certification
@@ -67,11 +67,11 @@ Post-merge main CI #157: success, all 7 jobs passed
 Owner-local Windows Release acceptance: inventory 15/15, PASS
 ```
 
-Accepted T0/T1 SHA-256 and profile: see PROJECT_STATE.md.
+Accepted T0/T1 implementation SHA-256 and profile: see `PROJECT_STATE.md`.
 
 Accepted operators: field without operator, constant.
 
-Excluded and fail-closed: default, copy, increment, delta, tail, generic dictionaries, references, generic groups outside T0/T1, byteVector, decimal component operators, historical-profile compatibility.
+Excluded and fail-closed: default, copy, increment, delta, tail, generic dictionaries, references, generic groups outside T0/T1, byteVector, decimal component operators and historical-profile compatibility.
 
 ### CI-1 — DONE
 
@@ -85,52 +85,104 @@ Post-merge CI #165: success
 ### QSH retirement — DONE
 
 ```text
-Issue: #33 - QSH retirement record
+Issue: #33
 PR: #34, merged
 Main merge SHA: 7c05cfb979cd0144be508e41a6f3a6229bfab1cb
 Post-merge CI: #175 / run 29361711016 — success, exactly 6 jobs
 
-Historical implementation evidence:
-  Stage 2A head: 0a39e7cd5ace38adce28d32f6eb1a325a9e1d1c2
-  Stage 2A CI: #172 / run 29359345488 — success, exactly 6 jobs
-
 The QSH/QScalp/OrdLog product support, old QSH L3/L2 book,
 Trading Lab QSH integration, tombstone job, run_qsh and QSH routing
-are retired and absent. They are not part of the future architecture.
+are retired and absent.
 
-The active Protect main ruleset (ID 18924726) requires exactly
-six checks:
-  - Repository hygiene
-  - Python tests and contracts
-  - C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)
-  - C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)
-  - C++ MOEX RAW Windows/MSVC (18 tests)
-  - C++ MOEX RAW Linux/GCC (18 tests)
+*.qsh remains only a raw-market-data safety ban.
+```
 
-*.qsh remains mentioned only as a raw-market-data safety ban.
+### Performance-first documentation — DONE
+
+```text
+Issue #36
+PR #37, merged
+Main merge SHA: 7a23f57eab119df98e4cea7eaf239ad504d4bb88
+CI-2 caching postponed until a measured bottleneck
+RT-4 research/specification selected as the next gate
 ```
 
 ## Current sequence
 
 ```text
-RT-4 research/specification (next separate gate)
--> separately specified and explicitly Owner-authorized RT-4 implementation
+Issue #38 / Draft PR #39: RT-4 architecture and source evidence
+-> docs-only CI
+-> Architecture Review
+-> separate Owner merge authorization
+-> post-merge main CI verification
+-> separate Owner authorization for Gate A implementation
 ```
 
-CI-2 caching is POSTPONED, not started and not authorized. Reconsider
-only when measured CI duration or cost materially slows development.
+CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 
-## RT-4 — not started, not authorized
-
-Requires a separate specification and explicit Owner authorization. Not automatically authorized by prior completion. RT-4 remains not started and not authorized.
+## RT-4 — specification current; implementation not authorized
 
 ```text
-MOEX 4-byte preamble and message boundary
-SPECTRA packet/framing contract
-A/B sequencing and deduplication
-gap detection and recovery
-Snapshot + buffered Incremental bootstrap
+Issue: #38 open
+Draft PR: #39 open
+Branch: docs/issue-38-rt4-spec
+Base main SHA: 7a23f57eab119df98e4cea7eaf239ad504d4bb88
+Scope: documentation only
+MiMo: not authorized
+Implementation: not started and not authorized
+Merge: not authorized
 ```
+
+### Gate A — framing, sequencing and gaps
+
+```text
+4-byte UDP preamble and one current FAST body
+explicit LittleEndian or BigEndian; no default guess
+A/B logical-feed arbitration and duplicate suppression
+bounded reordering and explicit monotonic timeout
+gap confirmation and terminal fail-closed state
+fixed bounded storage and zero post-init allocations
+synthetic Windows/Linux Release tests
+Release benchmark and allocation evidence
+```
+
+### Gate B — replay and decoder integration
+
+```text
+RT-2 .mxraw A/B replay merge
+RT-3 exact-body integration
+compare external preamble with decoded tag 34
+one-time endian AutoVerify and per-feed lock
+stream initialization and SequenceReset policy
+```
+
+### Gate C — Snapshot recovery
+
+```text
+queue Incremental while recovering
+apply complete Snapshot cycle and LastFragment rules
+replay contiguous queued Incremental messages
+fail closed on ambiguity, overflow or unresolved second gap
+```
+
+### Gate D — Release acceptance
+
+```text
+Windows/MSVC and Linux/GCC end-to-end Release evidence
+latency distribution, throughput, allocations and memory behaviour
+real T0/T1 packet, official vector or written MOEX confirmation
+explicit Owner acceptance
+```
+
+No gate begins automatically. Each requires implementation, tests, commit, push, CI, Architecture Review and separate Owner approval.
+
+Current official-source evidence is recorded in:
+
+```text
+docs/rt4_moex_fast_source_update_2026-07-15.md
+```
+
+The external preamble byte order remains unresolved in official text. The current design supports both explicit byte orders and defers one-time tag-34 verification to Gate B.
 
 ## Later stages
 
@@ -143,6 +195,6 @@ RT-9 FIX/TWIME test and VPTS readiness
 RT-10 production certification and explicit owner gate
 ```
 
-Future normalized events and new L3/L2 book (RT-5/RT-6) are designed
-from official MOEX SPECTRA data; no automatic reuse of the old QSH code.
-Names and scope of later stages remain provisional until the preceding gate supplies evidence.
+RT-5 is prohibited until RT-4 is accepted, merged by the Owner and verified by post-merge CI.
+
+Future normalized events and new L3/L2 book are designed from official MOEX SPECTRA data; no automatic reuse of the old QSH code. Names and scope of later stages remain provisional until the preceding gate supplies evidence.
