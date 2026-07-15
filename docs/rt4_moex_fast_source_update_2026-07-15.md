@@ -1,12 +1,12 @@
 # RT-4 MOEX FAST source update — 2026-07-15
 
-**Issue:** #38  
+**Issues:** #38, #40  
 **Scope:** documentation and source provenance only  
-**Security:** no credentials, external/private IP addresses or raw market-data packets are recorded
+**Security:** no credentials, external/private IP addresses, VPN endpoints or raw market-data packets are recorded
 
 ## 1. Purpose
 
-This document records evidence obtained after the historical RT-3 source audit dated 2026-07-11.
+This document records evidence obtained after the historical RT-3 source audit dated 2026-07-11 and the later MOEX access/connectivity checks performed on 2026-07-15.
 
 The historical file `docs/rt3_moex_fast_authoritative_source_audit.md` remains unchanged because it correctly records what the official MOEX endpoints returned on its audit date. This update records later endpoint contents and Stage 0 connectivity checks without rewriting history.
 
@@ -16,11 +16,15 @@ The historical file `docs/rt3_moex_fast_authoritative_source_audit.md` remains u
 2. FIX FAST 1.1 only for base FAST semantics not fully specified by MOEX.
 3. Third-party implementations only as cross-check.
 
-Primary directory:
+Primary official directories:
 
 ```text
 https://ftp.moex.com/pub/FAST/Spectra/test/
+https://ftp.moex.com/pub/FAST/Spectra/test/templatesT0/
+https://ftp.moex.com/pub/FAST/Spectra/test/templatesT1/
 ```
+
+MOEX support also supplied the same directories using `ftp://` links. The repository records the public resource locations only; no private connection details are stored.
 
 ## 3. Current normative document
 
@@ -152,13 +156,13 @@ Relevant supported modes from built-in help:
 - decoded message dump;
 - TCP recovery.
 
-The Stage 0 test intentionally used only gap/statistics/order checking. Raw and decoded dump modes were not used.
+Stage 0 intentionally uses only gap/statistics/order checking. Raw and decoded dump modes are not used.
 
 ## 7. T0 configuration inspection
 
 The current T0 configuration parsed successfully.
 
-Observed structure includes separate physical A and B multicast connections. Examples of address ranges and ports are recorded only at the non-private exchange-group level:
+Observed structure includes separate physical A and B multicast connections. Examples of public exchange-group ranges and ports:
 
 ```text
 Feed A multicast groups: 239.195.12.x, ports 480xx
@@ -169,7 +173,7 @@ The configuration includes Instrument Replay, Instrument Incremental and ordinar
 
 A and B are treated as physical copies of one logical sequence, not primary and backup.
 
-## 8. Stage 0 connectivity test
+## 8. Initial Stage 0 connectivity test
 
 The Owner confirmed locally:
 
@@ -189,7 +193,7 @@ fast_sensor.exe -g -s --check_order `
   --bind_address <LOCAL_INTERFACE_IPV4>
 ```
 
-Observed result:
+Observed result before MOEX access confirmation:
 
 ```text
 configuration accepted
@@ -205,9 +209,7 @@ Interpretation:
 - no UDP market-data packet reached the process during the bounded check;
 - no FAST message was decoded;
 - preamble endian could not be verified;
-- MOEX support activation or routing for the registered external static IPv4 remained pending.
-
-This result is not evidence of a framing defect.
+- this result is not evidence of a framing defect.
 
 ## 9. Connection-service boundary
 
@@ -220,9 +222,71 @@ Credentials for these services are not FAST multicast credentials:
 
 They must not be inserted into `fast_sensor`, project commands, Issues, PRs or repository files.
 
-The FAST test depends on the service and routing assigned by MOEX to the registered external static IPv4. Support confirmation remains pending.
+## 10. MOEX access confirmation and official VPN instruction
 
-## 10. Security and repository policy
+MOEX support later confirmed that access had been opened for the registered external static IPv4 and supplied a Windows VPN instruction.
+
+The instruction specifies:
+
+```text
+connection type: workplace VPN over the existing Internet connection
+VPN type: PPTP
+data encryption: optional; connection may proceed without encryption
+authentication examples: CHAP and MS-CHAP v2 enabled, PAP disabled
+```
+
+The support reply stated that credentials may be left empty. The general instruction contains a legacy example using arbitrary placeholder values. The per-customer support reply has priority for this test.
+
+The VPN endpoint and registered external IPv4 are private connection data and are not stored.
+
+## 11. Bounded VPN diagnostics
+
+The following read-only or connection-attempt evidence was obtained from the registered home static IPv4:
+
+```text
+current external IPv4 matches the address registered with MOEX
+Windows remote-access result: error 807
+TCP connection test to VPN endpoint, port 1723: failed
+TcpTestSucceeded: False
+```
+
+Because TCP 1723 fails, the connection does not reach PPTP authentication or the later GRE data-tunnel stage. FAST reception is not tested while this control connection is unavailable.
+
+Local checks:
+
+```text
+Windows Firewall profiles: enabled
+DefaultOutboundAction: Allow for Domain, Private and Public
+explicit enabled outbound block rules targeting VPN endpoint: none found
+registered antivirus products: Windows Defender only
+third-party antivirus/network filter: not found
+```
+
+One unrelated explicit outbound block rule was inspected. It applies only to a fixed list of remote addresses; the VPN endpoint is not in that list.
+
+A mobile-network test also returned failure, but it is not acceptance evidence because MOEX access control is tied to the registered home external IPv4.
+
+Current interpretation:
+
+- Windows VPN parameters match the supplied MOEX instruction;
+- the registered home external IPv4 matches the submitted address;
+- normal Windows outbound policy does not explain the failure;
+- the unresolved boundary is the path to the PPTP control endpoint or the MOEX-side server/ACL;
+- router, firewall and system configuration must not be changed speculatively;
+- a detailed follow-up was sent to MOEX support and a reply is pending.
+
+## 12. Repository checkpoint
+
+```text
+RT-4 specification Issue #38: closed completed
+RT-4 specification PR #39: merged
+reviewed PR head: afd128a49584fce1131323ac7b19e5b5d7b1997a
+main merge SHA: 136293ede211619b7d9198d85ed3afb0f2577514
+post-merge main CI #189: success
+RT-4 implementation: not started and not authorized
+```
+
+## 13. Security and repository policy
 
 Never commit:
 
@@ -230,20 +294,21 @@ Never commit:
 logins
 passwords
 API keys
-VPN profiles or credentials
+VPN endpoints or profiles
 external or private connection addresses
 .env or credential files
 real raw market-data captures
 packet dumps containing live/test exchange payloads
 ```
 
-Synthetic byte vectors are allowed. Official public XML hashes and public multicast group ranges from MOEX configuration are allowed.
+Synthetic byte vectors are allowed. Official public XML hashes, public documentation URLs and public multicast group ranges from MOEX configuration are allowed.
 
-## 11. Consequences for RT-4
+## 14. Consequences for RT-4
 
-- Gate A can be specified and implemented synthetically after separate implementation authorization.
+- RT-4 specification is complete and merged.
+- Gate A can be implemented synthetically only after separate Owner implementation authorization.
 - Gate A cannot declare production endian acceptance without additional evidence.
 - Gate B owns one-time tag-34 byte-order verification.
 - Gate C owns Snapshot + buffered Incremental recovery.
 - Every architecture review must re-check current official MOEX files.
-- Waiting for MOEX support does not authorize code, MiMo or a later gate.
+- The pending MOEX support reply does not authorize code, MiMo or a later gate.
