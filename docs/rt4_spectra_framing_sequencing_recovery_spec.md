@@ -57,10 +57,46 @@ If MOEX later allows several FAST messages in one UDP datagram, that is a source
 ### Gate A — framing, A/B sequencing and gaps
 
 - A1: UDP framing primitive.
-- A2: A/B arbitration and duplicate suppression.
-- A3: bounded reordering.
+- A2: deterministic `std::uint32_t` serial-number classification primitive only.
+- A3: fixed preallocated `MessageStorage` plus complete A/B arbitration, duplicate suppression, in-order emission and bounded reordering.
 - A4: fixed gap deadline and fail-closed transition.
 - A5: Release benchmarks, allocation evidence and architecture review.
+
+### Gate A implementation-stage boundary
+
+The final Gate A behavior and public sequencer contract remain unchanged. The implementation stages are ordered to avoid a partial stateful sequencer with undefined handling of a valid future packet.
+
+A2 is strictly stateless:
+
+```text
+input: observed sequence, next expected sequence, configured forward window
+output: deterministic serial-relation classification and delta
+no mutable feed state
+no A/B arbitration
+no payload or metadata access
+no MessageStorage
+no pending slots
+no emission
+no duplicate-suppression state
+no gap deadline
+no FailedClosed transition
+```
+
+A3 begins only after fixed preallocated storage exists and introduces the complete mutable A/B sequencer as one coherent implementation boundary:
+
+```text
+LogicalFeedId ownership
+initialize/start/reset
+A/B first-valid-copy arbitration
+in-order synchronous emission
+stale duplicate suppression
+future-message buffering
+same-sequence pending payload comparison
+contiguous pending flush
+bounded message and byte capacity
+```
+
+A valid future packet must never be silently dropped, emitted out of order or converted into a temporary unsupported result. Temporary public APIs or result codes such as `FutureUnsupported` are prohibited. Sections describing `DualFeedSequencer`, message processing and pending storage specify the A3/A4 final system, not the A2 primitive.
 
 ### Gate B — replay and RT-3 integration
 
@@ -229,7 +265,9 @@ FrameResult frame_udp_message(
 - On failure, output has a deterministic empty state.
 - No FAST decode and no boundary guessing.
 
-## 7. A2 — A/B sequencing and deduplication
+## 7. A3 — A/B sequencing and deduplication
+
+This section defines the stateful A3 sequencer contract. It is not part of the A2 serial-arithmetic implementation.
 
 ### 7.1 Logical-feed invariant
 
@@ -268,7 +306,20 @@ Rules:
 - Gate A does not infer the initial sequence and does not process `SequenceReset`;
 - Gate B owns stream-specific initialization and reset semantics.
 
-## 8. Sequence-number arithmetic
+## 8. A2 — Sequence-number arithmetic
+
+A2 implements only this stateless classification primitive. It does not expose or instantiate `DualFeedSequencer`, `MessageStorage`, an ordered sink or any mutable logical-feed state.
+
+The implementation interface must express these stable outcomes without temporary staging codes:
+
+```text
+Expected
+FutureWithinWindow
+FutureBeyondWindow
+Ambiguous
+Stale
+InvalidConfig
+```
 
 Plain signed or unsigned `<` comparison is prohibited.
 
@@ -288,13 +339,13 @@ delta == 0
     observed is a permitted future sequence
 
 max_reorder_messages < delta < 0x80000000
-    future distance exceeds the configured bound; fail closed
+    future distance exceeds the configured bound; fail closed in the later stateful sequencer
 
 delta == 0x80000000
-    half-range relation is ambiguous; fail closed
+    half-range relation is ambiguous; fail closed in the later stateful sequencer
 
 0x80000000 < delta <= 0xFFFFFFFF
-    observed is stale or behind next_expected; duplicate/late drop
+    observed is stale or behind next_expected; duplicate/late drop in the later stateful sequencer
 ```
 
 Configuration invariant:
@@ -305,7 +356,9 @@ Configuration invariant:
 
 `next_expected` increments modulo `2^32`. This safely classifies a natural wrap only when the forward distance is inside the configured bounded window. Explicit MOEX reset semantics remain Gate B scope.
 
-## 9. Message-processing rules
+The A2 primitive classifies only. A3 owns every state transition and action associated with the classification, including emission, drop, buffering and fail-closed handling.
+
+## 9. A3 message-processing rules
 
 ```text
 delta in stale range
@@ -420,6 +473,8 @@ After fail-closed transition:
 - a deterministic recovery-required result is returned.
 
 ## 11. Sequencer interface
+
+The following interface begins in A3. A2 must not introduce a partial version of it.
 
 ```cpp
 enum class SequencerState : std::uint8_t {
@@ -587,6 +642,8 @@ The same input and configuration must produce the same ordered output, drops, bu
 - exact `0x80000000` ambiguous relation;
 - invalid configuration at zero and half-range capacity.
 
+The A2 test target covers only these stateless vectors and does not construct a sequencer or storage.
+
 ### A/B sequencing
 
 - `1A`;
@@ -598,6 +655,8 @@ The same input and configuration must produce the same ordered output, drops, bu
 - stale duplicate after emission;
 - explicit start at a value other than one;
 - wrong logical feed.
+
+These stateful tests begin in A3 together with fixed storage.
 
 ### Reordering and gaps
 
@@ -654,11 +713,13 @@ Windows and Linux results are recorded separately. The first measurement establi
 
 After separate implementation authorization:
 
-1. A1 framing types, parser and endian vectors.
-2. A2 serial arithmetic, in-order sequencing and duplicate suppression.
-3. A3 fixed pending storage and bounded reordering.
-4. A4 fixed deadline, gap confirmation and fail-closed state.
+1. A1 framing types, parser and endian vectors — completed.
+2. A2 deterministic serial-number classification primitive and boundary vectors only.
+3. A3 fixed preallocated `MessageStorage` and complete A/B sequencer integration: initialization, in-order emission, stale duplicate suppression, future buffering, pending duplicate comparison and contiguous flush.
+4. A4 fixed deadline, gap confirmation and terminal fail-closed state.
 5. A5 Release benchmarks, allocation evidence and Gate A review.
+
+A2 must not add `DualFeedSequencer`, mutable feed state, storage, payload buffering, an ordered sink or a temporary unsupported-future result. A3 must not begin until A2 is accepted, merged and post-merge verified.
 
 Each stage is one small logical task, one commit, push, CI and review. MiMo stops after each stage. Gate B cannot begin before Gate A Owner acceptance.
 

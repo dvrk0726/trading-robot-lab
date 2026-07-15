@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A1 DONE; Gate A2 BLOCKED
+Текущий gate: RT-4 Gate A1 DONE; Gate A2 implementation BLOCKED
 
 ## Главный порядок
 
@@ -214,25 +214,64 @@ cpp/moex_fast/CMakeLists.txt
 .github/workflows/ci.yml
 ```
 
-### Gate A2 — A/B sequencing and duplicate suppression — BLOCKED
+### Gate A2 — deterministic uint32 serial arithmetic — BLOCKED
 
 ```text
-uint32 serial arithmetic with fail-closed ambiguity handling
-A/B logical-feed arbitration
-duplicate suppression
+stateless classification only
+observed sequence
+next expected sequence
+configured max forward window
+stable relation code and uint32 delta
+exact expected
+future within configured window
+future beyond configured window
+half-range ambiguity
+stale or behind relation
+natural modulo-2^32 wrap classification
+invalid zero or half-range configuration
+```
+
+A2 explicitly excludes:
+
+```text
+DualFeedSequencer
+mutable logical-feed state
+A/B arbitration
+MessageStorage or pending slots
+payload or metadata access
 in-order emission
+stale duplicate action
+future buffering
+pending duplicate byte comparison
+contiguous flush
+gap deadline
+FailedClosed transition
+temporary FutureUnsupported-style API or result
 ```
 
-A2 requires a separate current-state review, bounded plan, new Issue/branch/PR and explicit Owner authorization.
+A2 classifies sequence relations only. It does not decide or perform emission, drop, buffering or failure state transitions.
 
-### Gate A3 — bounded reordering — BLOCKED
+A2 implementation requires a separate current-state review, bounded plan, new implementation Issue/branch/PR and explicit Owner authorization.
+
+### Gate A3 — fixed storage and complete A/B sequencer — BLOCKED
 
 ```text
-fixed pending storage
+fixed preallocated MessageStorage
 bounded message and byte capacity
-out-of-order insertion
-contiguous flush
+one mutable sequencer per LogicalFeedId
+explicit initialize/start/reset
+A/B first-valid-copy arbitration
+in-order synchronous emission
+stale duplicate suppression
+future-message insertion
+same pending sequence payload comparison
+out-of-order buffering
+contiguous pending flush
 ```
+
+A valid future packet is not silently dropped or emitted out of order. Stateful A/B sequencing begins only after fixed storage exists; no partial sequencer or temporary unsupported-future behavior is permitted.
+
+A3 cannot begin until A2 is accepted, merged and post-merge verified.
 
 ### Gate A4 — gap deadline and fail-closed — BLOCKED
 
@@ -284,13 +323,13 @@ explicit Owner acceptance
 
 ```text
 RT-4 Gate A1: DONE
-RT-4 Gate A2: BLOCKED — not started and not authorized
-No active A2 Issue, feature branch or PR
+RT-4 Gate A2 implementation: BLOCKED — not started and not authorized
+No active A2 implementation Issue, feature branch or PR
 MiMo for A2: not authorized
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
-No gate begins automatically. Before A2: independently verify current GitHub state, prepare one bounded plan, obtain explicit Owner authorization, then create a separate Issue, feature branch and Draft PR.
+No gate begins automatically. Before A2 implementation: independently verify current GitHub state, prepare one bounded plan, obtain explicit Owner authorization, then create a separate implementation Issue, feature branch and Draft PR.
 
 CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 
