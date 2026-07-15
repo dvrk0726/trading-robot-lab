@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A2 setup — Issue #48 / PR #49; implementation blocked
+Текущий gate: RT-4 Gate A2 DONE; Gate A3 BLOCKED
 
 ## Главный порядок
 
@@ -231,18 +231,21 @@ cpp/moex_fast/CMakeLists.txt
 .github/workflows/ci.yml
 ```
 
-### Gate A2 — deterministic uint32 serial arithmetic — SETUP ACTIVE, IMPLEMENTATION BLOCKED
+### Gate A2 — deterministic uint32 serial arithmetic — DONE
 
-Tracking artifacts:
+Verified checkpoint:
 
 ```text
-Issue #48
-PR #49
-Branch: mimo/issue-48-rt4-a2-sequence-arithmetic
-Base main SHA: eb1e851bc685b8abefa61c4dbb0c5fc4de8f46a9
+Issue #48: closed completed
+PR #49: merged
+Reviewed PR head: 8ed659ffffbf42fd0671935d53182622289b4ec6
+Main merge SHA: d026a13245ea4f92ea1fe46edf049df205f981ea
+Pre-merge CI #216: success
+Post-merge main CI #217: success
+MOEX FAST inventory: 17 total
 ```
 
-Frozen API after separate implementation authorization:
+Accepted API:
 
 ```text
 header-only spectra_sequence_arithmetic.hpp
@@ -271,7 +274,7 @@ delta == 0x80000000            -> Ambiguous
 delta > 0x80000000             -> Stale
 ```
 
-Frozen implementation files after separate authorization:
+Accepted implementation files:
 
 ```text
 cpp/moex_fast/include/moex_fast/spectra_sequence_arithmetic.hpp
@@ -280,7 +283,7 @@ cpp/moex_fast/CMakeLists.txt
 .github/workflows/ci.yml
 ```
 
-Test contract:
+Accepted test contract:
 
 ```text
 one Release-active test_spectra_sequence_arithmetic
@@ -292,7 +295,7 @@ exact half-range ambiguity
 stale relation
 natural modulo-2^32 wrap
 constexpr, noexcept and trivially-copyable checks
-MOEX FAST inventory after implementation: 17 total
+MOEX FAST inventory: 17 total
 required-check job names unchanged
 ```
 
@@ -316,16 +319,6 @@ SequenceReset
 benchmarks
 tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
-```
-
-Current authorization boundary:
-
-```text
-setup documentation: authorized
-C++ implementation: not authorized
-CMake and workflow implementation changes: not authorized
-MiMo: not authorized
-merge: not authorized
 ```
 
 ### Gate A3 — fixed storage and complete A/B sequencer — BLOCKED
@@ -398,15 +391,13 @@ explicit Owner acceptance
 
 ```text
 RT-4 Gate A1: DONE
-RT-4 Gate A2 setup: Issue #48 / PR #49
-Setup scope: AI_CONTEXT.md, PROJECT_STATE.md, ROADMAP.md
-A2 implementation: not started and not authorized
-MiMo for A2: not authorized
-A3: blocked
+RT-4 Gate A2: DONE
+RT-4 Gate A3: BLOCKED — not started and not authorized
+MiMo for A3: not authorized
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
-The next transition is separate Owner authorization for the frozen A2 implementation in the existing branch and PR after setup CI and Architecture Review.
+The next transition is a separate current-state review and one bounded A3 plan. No A3 Issue, branch, PR, implementation or MiMo launch is authorized.
 
 CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 
