@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-4 Gate A2 setup — Issue #48; implementation not authorized
+Текущий gate: RT-4 Gate A2 setup — Issue #48 / PR #49; implementation not authorized
 
 ## Источник истины
 
@@ -208,8 +208,9 @@ Do not store the VPN endpoint, external/private IP addresses, credentials, VPN p
 ## Current gate — RT-4 A2 setup
 
 ```text
-Issue #48: open
+Tracking: Issue #48 / PR #49
 Branch: mimo/issue-48-rt4-a2-sequence-arithmetic
+Base main SHA: eb1e851bc685b8abefa61c4dbb0c5fc4de8f46a9
 Setup scope: exactly AI_CONTEXT.md, PROJECT_STATE.md and ROADMAP.md
 Frozen implementation scope after separate authorization: exactly 4 files
 A2 C++ implementation: not authorized
@@ -243,7 +244,7 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-Complete Issue #48 docs-only setup and Draft PR.
+Complete Issue #48 / PR #49 docs-only setup.
 Verify exact three-file setup diff and docs-only CI.
 Do not implement C++.
 Do not change CMake or workflow.
