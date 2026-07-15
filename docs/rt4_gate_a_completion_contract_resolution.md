@@ -24,7 +24,7 @@ Required validation:
 slot_capacity >= max_reorder_messages
 max_message_bytes > 0
 checked(slot_capacity * max_message_bytes) <= payload_arena.size()
-0 < max_reorder_bytes <= payload_arena.size()
+0 < max_reorder_bytes <= checked(slot_capacity * max_message_bytes)
 ```
 
 A variable-size free-list arena is prohibited. Dedicated slices avoid fragmentation, compaction and a second payload copy.
