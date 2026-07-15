@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 Gate A2 setup — Issue #48 / PR #49; implementation blocked
+Статус: RT-4 Gate A2 DONE; Gate A3 BLOCKED
 
 ## Архитектурные границы
 
@@ -255,18 +255,21 @@ A3: fixed preallocated MessageStorage plus complete mutable A/B sequencer
 A4: fixed deadline and terminal fail-closed behavior
 ```
 
-## Current gate — RT-4 Gate A2 setup
+### RT-4 Gate A2 deterministic uint32 serial arithmetic — DONE
 
-Tracking artifacts:
+Verified checkpoint:
 
 ```text
-Issue #48
-PR #49
-Branch: mimo/issue-48-rt4-a2-sequence-arithmetic
-Base main SHA: eb1e851bc685b8abefa61c4dbb0c5fc4de8f46a9
+Issue #48: closed completed
+PR #49: merged
+Final reviewed PR head: 8ed659ffffbf42fd0671935d53182622289b4ec6
+Main merge SHA: d026a13245ea4f92ea1fe46edf049df205f981ea
+Pre-merge CI #216: success
+Post-merge main CI #217: success
+MOEX FAST inventory: 17 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1
 ```
 
-Frozen public API after separate implementation authorization:
+Accepted public API:
 
 ```cpp
 enum class SequenceRelation : std::uint8_t {
@@ -290,7 +293,7 @@ struct SequenceClassification {
 ) noexcept;
 ```
 
-Frozen implementation files after separate authorization:
+Accepted implementation files:
 
 ```text
 cpp/moex_fast/include/moex_fast/spectra_sequence_arithmetic.hpp
@@ -309,7 +312,7 @@ invalid max: 0, 0x80000000, UINT32_MAX
 Expected, bounded future, beyond-window, ambiguous and stale vectors
 natural modulo-2^32 wrap vectors
 constexpr, noexcept and trivially-copyable checks
-expected MOEX FAST inventory after implementation: 17
+MOEX FAST inventory: 17
 required-check job names unchanged
 ```
 
@@ -331,15 +334,13 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
-Current authorization boundary:
+Current verified boundary:
 
 ```text
-Setup documentation: authorized
-A2 C++ implementation: not authorized
-CMake and workflow implementation changes: not authorized
-MiMo: not authorized
-Merge: not authorized
-A3: blocked
+RT-4 Gate A1: DONE
+RT-4 Gate A2: DONE
+RT-4 Gate A3: BLOCKED — not started and not authorized
+MiMo for A3: not authorized
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
