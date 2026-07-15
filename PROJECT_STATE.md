@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 Gate A1 post-merge state sync — Issue #44 / Draft PR #45
+Статус: RT-4 Gate A1 DONE; Gate A2 BLOCKED
 
 ## Архитектурные границы
 
@@ -255,32 +255,17 @@ The VPN endpoint, external/private IP addresses, credentials, VPN profiles and r
 
 This connectivity state does not prove a framing defect and does not authorize production acceptance.
 
-## Current gate — RT-4 Gate A1 post-merge state sync
+## Current verified boundary
 
 ```text
-Issue #44: open
-Draft PR #45: open
-Branch: docs/issue-44-rt4-a1-post-merge-state-sync
-Base main SHA: ebfb3096b8a62704e5bf57a77d7971fd36acef2a
-Allowed files: AI_CONTEXT.md, PROJECT_STATE.md, ROADMAP.md
-Code, tests, CMake and workflow changes: prohibited
-MiMo: prohibited
-Merge: not authorized
-A2: not started and not authorized
+RT-4 Gate A1: DONE
+RT-4 Gate A2: BLOCKED — not started and not authorized
+No active A2 Issue, feature branch or PR
+MiMo for A2: not authorized
+RT-5 / RT-6 / CI-2: not authorized
 ```
 
-## Sequence
-
-```text
-complete Issue #44 exact three-file documentation diff
--> docs-only CI
--> Architecture Review
--> separate Owner merge authorization
--> post-merge main CI verification
--> close Issue #44 completed
-```
-
-A2 requires a separate current-state review, bounded plan, new Issue/branch/PR and explicit Owner authorization.
+Before any A2 implementation activity: independently verify current GitHub state, prepare one bounded A2 plan, obtain explicit Owner authorization, then create a separate Issue, feature branch and Draft PR.
 
 CI-2 caching is POSTPONED, not started and not authorized.
 
