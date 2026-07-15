@@ -15,6 +15,30 @@ Production order entry требует VPTS/certification и решения Owner
 Secrets, private connection data and raw market data не хранятся в Git.
 ```
 
+## Performance-first development policy
+
+```text
+C++20 owns every latency-critical realtime/hot-path component:
+  MOEX packet/framing, sequencing and recovery, FAST decoding,
+  normalized realtime market-data events, future L3/L2 books,
+  realtime state, RiskEngine, OrderManager and future runtime
+  execution components.
+Python is not used in the hot path; it is used for research,
+  analysis, reports, UI, orchestration and offline tooling.
+Correctness, deterministic behavior and fail-closed validation
+  are mandatory and cannot be sacrificed for speed.
+Performance claims are accepted only from measured Release benchmarks;
+  relevant metrics include latency distribution and tail latency,
+  throughput, allocations, memory behavior and execution-time
+  predictability.
+Do not add speculative abstractions, genericity, compatibility layers
+  or unnecessary allocations to the critical path without measured
+  necessity.
+Development velocity is a priority; prefer small functional gates
+  that advance the MOEX system over premature infrastructure
+  complexity.
+```
+
 ## Завершённые этапы
 
 ### RT-1 — DONE
@@ -142,10 +166,14 @@ Unsupported XML must fail compilation explicitly.
 ## Sequence
 
 ```text
-CI-2 caching (next separate gate, not started, not authorized)
--> separately specified and explicitly Owner-authorized RT-4
+RT-4 research/specification (next separate gate)
+-> separately specified and explicitly Owner-authorized RT-4 implementation
 ```
 
-RT-4 remains not started and not authorized. Future normalized events
-and new L3/L2 book are designed from official MOEX SPECTRA data; no
-automatic reuse of the old QSH code.
+CI-2 caching is POSTPONED, not started and not authorized. Reconsider
+only when measured CI duration or cost materially slows development.
+
+RT-4 implementation remains not started and not authorized and requires
+a separate specification and explicit Owner approval. Future normalized
+events and new L3/L2 book are designed from official MOEX SPECTRA data;
+no automatic reuse of the old QSH code.
