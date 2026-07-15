@@ -1,8 +1,8 @@
 # Project State
 
-Дата обновления: 2026-07-14
+Дата обновления: 2026-07-15
 Репозиторий: `dvrk0726/trading-robot-lab`
-Статус: RT-1 DONE; RT-2 DONE; RT-3 DONE; CI-1 DONE; QSH retirement DONE
+Статус: RT-4 research/specification — Issue #38, Draft PR #39
 
 ## Архитектурные границы
 
@@ -78,7 +78,7 @@ Owner-local Windows Release acceptance on 3fde6847d652ebd5277ca03a496dc701392eb7
 Repository: Public
 Owner server-side protection active: main branch, PR required,
   unresolved conversations block merge, branch must be up to date,
-  7 CI checks required, deletion and force-push blocked
+  required checks active, deletion and force-push blocked
 ```
 
 Accepted implementation: specialized MOEX SPECTRA T0/T1 decoder, not a general-purpose FAST 1.1 engine.
@@ -108,19 +108,22 @@ The QSH/QScalp/OrdLog product support, old QSH L3/L2 book,
 Trading Lab QSH integration, tombstone job, run_qsh and QSH routing
 are retired and absent. They are not part of the future architecture.
 
-The active Protect main ruleset (ID 18924726) requires exactly
-six checks:
-  - Repository hygiene
-  - Python tests and contracts
-  - C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)
-  - C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)
-  - C++ MOEX RAW Windows/MSVC (18 tests)
-  - C++ MOEX RAW Linux/GCC (18 tests)
-
 *.qsh remains mentioned only as a raw-market-data safety ban.
 ```
 
+## Performance-first documentation — DONE
+
+```text
+Issue #36: closed completed
+PR #37: merged
+Main merge SHA: 7a23f57eab119df98e4cea7eaf239ad504d4bb88
+CI-2 caching: POSTPONED
+RT-4 research/specification selected as next gate
+```
+
 ## Authoritative RT-3 profile
+
+Historical accepted implementation profiles:
 
 ```text
 T0 SHA-256:
@@ -130,7 +133,9 @@ T1 SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 ```
 
-Required:
+These hashes remain the accepted RT-3 compile/test evidence. Current official endpoint contents are tracked separately by RT-4.
+
+Required RT-3 scope:
 
 ```text
 one bounded FAST message body
@@ -147,7 +152,7 @@ T0/T1 official XML compilation
 Windows/Linux Release tests
 ```
 
-Excluded and to be removed from positive implementation claims:
+Excluded and fail-closed:
 
 ```text
 default/copy/increment/delta/tail
@@ -163,17 +168,70 @@ historical profile compatibility
 
 Unsupported XML must fail compilation explicitly.
 
+## RT-4 research/specification — CURRENT
+
+```text
+Issue: #38 open
+Draft PR: #39 open
+Branch: docs/issue-38-rt4-spec
+Base main SHA: 7a23f57eab119df98e4cea7eaf239ad504d4bb88
+Scope: exactly five documentation files
+RT-4 implementation: not started and not authorized
+MiMo: not authorized
+Merge: not authorized
+```
+
+Authoritative files under review:
+
+```text
+docs/rt4_spectra_framing_sequencing_recovery_spec.md
+docs/rt4_moex_fast_source_update_2026-07-15.md
+AI_CONTEXT.md
+PROJECT_STATE.md
+ROADMAP.md
+```
+
+Approved architecture structure:
+
+```text
+Gate A: UDP framing, A/B sequencing, bounded reordering,
+        gap detection, explicit monotonic timeout and fail-closed
+Gate B: RT-2 .mxraw + RT-3 integration, tag-34 verification,
+        one-time preamble endian AutoVerify
+Gate C: Snapshot + buffered Incremental recovery
+Gate D: Windows/Linux Release performance and production evidence
+```
+
+Current official-source evidence:
+
+```text
+MOEX SPECTRA FAST document: v1.30.2, 2026-04-10
+T0 configuration SHA-256:
+AE80702BC3E179CAF5DA025E94FDAC6AC7A6A4FF1353E7FB5D0396DE987C4118
+Current T0 templates SHA-256:
+84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
+Current T1 templates SHA-256:
+84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
+External UDP preamble byte order: unresolved in official text
+```
+
+The 2026-07-11 RT-3 source audit remains unchanged as historical evidence. The 2026-07-15 endpoint update is recorded in a separate RT-4 document.
+
+Official `fast_sensor` 1.30.0.1337 accepted current T0 configuration. A safe gap/statistics/order-check test received zero packets while MOEX access/routing confirmation remained pending. No credentials, connection addresses or raw captures are stored.
+
+Gate A uses explicit LittleEndian or BigEndian with no default. Gate B may compare both values with decoded tag 34, fail closed on ambiguity and lock one byte order after verification.
+
 ## Sequence
 
 ```text
-RT-4 research/specification (next separate gate)
--> separately specified and explicitly Owner-authorized RT-4 implementation
+Issue #38 / Draft PR #39 documentation review
+-> docs-only CI
+-> Architecture Review
+-> separate Owner merge authorization
+-> post-merge main CI verification
+-> separate Owner authorization for RT-4 Gate A implementation
 ```
 
-CI-2 caching is POSTPONED, not started and not authorized. Reconsider
-only when measured CI duration or cost materially slows development.
+CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 
-RT-4 implementation remains not started and not authorized and requires
-a separate specification and explicit Owner approval. Future normalized
-events and new L3/L2 book are designed from official MOEX SPECTRA data;
-no automatic reuse of the old QSH code.
+Future normalized events and new L3/L2 book are designed from official MOEX SPECTRA data; no automatic reuse of the old QSH code.
