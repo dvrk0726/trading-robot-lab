@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 Gate A1 DONE; Gate A2 BLOCKED
+Статус: RT-4 Gate A2 setup — Issue #48 / PR #49; implementation blocked
 
 ## Архитектурные границы
 
@@ -236,6 +236,113 @@ payload size 5..max                     -> Ok
 
 A1 excludes A/B sequencing, serial arithmetic, duplicate suppression, reorder storage, gap deadlines, sockets, `.mxraw`, RT-3 integration, AutoVerify, SequenceReset, Snapshot recovery and benchmarks.
 
+### RT-4 A2/A3 implementation-stage amendment — DONE
+
+```text
+Issue #46: closed completed
+PR #47: merged
+Final reviewed PR head: 7f42d2d14e4f54ad184e64688870030ce11b5f92
+Main merge SHA: eb1e851bc685b8abefa61c4dbb0c5fc4de8f46a9
+Pre-merge CI #209: success
+Post-merge main CI #210: success
+```
+
+Accepted stage boundary:
+
+```text
+A2: stateless uint32 serial-relation classification only
+A3: fixed preallocated MessageStorage plus complete mutable A/B sequencer
+A4: fixed deadline and terminal fail-closed behavior
+```
+
+## Current gate — RT-4 Gate A2 setup
+
+Tracking artifacts:
+
+```text
+Issue #48
+PR #49
+Branch: mimo/issue-48-rt4-a2-sequence-arithmetic
+Base main SHA: eb1e851bc685b8abefa61c4dbb0c5fc4de8f46a9
+```
+
+Frozen public API after separate implementation authorization:
+
+```cpp
+enum class SequenceRelation : std::uint8_t {
+    Expected,
+    FutureWithinWindow,
+    FutureBeyondWindow,
+    Ambiguous,
+    Stale,
+    InvalidConfig
+};
+
+struct SequenceClassification {
+    SequenceRelation relation{SequenceRelation::InvalidConfig};
+    std::uint32_t delta{};
+};
+
+[[nodiscard]] constexpr SequenceClassification classify_sequence_relation(
+    std::uint32_t observed,
+    std::uint32_t next_expected,
+    std::uint32_t max_reorder_messages
+) noexcept;
+```
+
+Frozen implementation files after separate authorization:
+
+```text
+cpp/moex_fast/include/moex_fast/spectra_sequence_arithmetic.hpp
+cpp/moex_fast/tests/test_spectra_sequence_arithmetic.cpp
+cpp/moex_fast/CMakeLists.txt
+.github/workflows/ci.yml
+```
+
+The primitive is header-only. No production `.cpp` is permitted. It performs one unsigned modulo subtraction and deterministic classification only. Invalid configuration returns `InvalidConfig` with `delta = 0`.
+
+Test contract:
+
+```text
+one Release-active test_spectra_sequence_arithmetic
+invalid max: 0, 0x80000000, UINT32_MAX
+Expected, bounded future, beyond-window, ambiguous and stale vectors
+natural modulo-2^32 wrap vectors
+constexpr, noexcept and trivially-copyable checks
+expected MOEX FAST inventory after implementation: 17
+required-check job names unchanged
+```
+
+Explicitly excluded from A2:
+
+```text
+DualFeedSequencer
+mutable logical-feed state
+LogicalFeedId, FeedSide, payload or metadata access
+A/B arbitration
+MessageStorage or pending slots
+emission, drop actions or sink
+future buffering or contiguous flush
+gap deadline, clocks or FailedClosed
+SequenceReset
+.mxraw or RT-3 integration
+benchmarks
+tools/ci_route.py changes
+temporary FutureUnsupported-style API or result
+```
+
+Current authorization boundary:
+
+```text
+Setup documentation: authorized
+A2 C++ implementation: not authorized
+CMake and workflow implementation changes: not authorized
+MiMo: not authorized
+Merge: not authorized
+A3: blocked
+RT-5 / RT-6 / CI-2: not authorized
+```
+
 ## MOEX access and connectivity state
 
 ```text
@@ -254,18 +361,6 @@ MOEX support follow-up: pending.
 The VPN endpoint, external/private IP addresses, credentials, VPN profiles and raw/decoded market-data packets are not stored.
 
 This connectivity state does not prove a framing defect and does not authorize production acceptance.
-
-## Current verified boundary
-
-```text
-RT-4 Gate A1: DONE
-RT-4 Gate A2: BLOCKED — not started and not authorized
-No active A2 Issue, feature branch or PR
-MiMo for A2: not authorized
-RT-5 / RT-6 / CI-2: not authorized
-```
-
-Before any A2 implementation activity: independently verify current GitHub state, prepare one bounded A2 plan, obtain explicit Owner authorization, then create a separate Issue, feature branch and Draft PR.
 
 CI-2 caching is POSTPONED, not started and not authorized.
 
