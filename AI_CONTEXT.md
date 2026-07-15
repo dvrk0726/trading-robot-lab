@@ -195,7 +195,7 @@ Do not store the VPN endpoint, external/private IP addresses, credentials, VPN p
 
 ```text
 Issue #44: open
-Draft PR #45: expected open
+Draft PR #45: open
 Branch: docs/issue-44-rt4-a1-post-merge-state-sync
 Base main SHA: ebfb3096b8a62704e5bf57a77d7971fd36acef2a
 Scope: exactly AI_CONTEXT.md, PROJECT_STATE.md and ROADMAP.md
