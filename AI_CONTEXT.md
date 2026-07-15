@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-4 Gate A1 DONE; Gate A2 BLOCKED
+Текущий gate: RT-4 Gate A2 setup — Issue #48; implementation not authorized
 
 ## Источник истины
 
@@ -68,6 +68,7 @@ Performance-first documentation: DONE — Issue #36 / PR #37
 RT-4 specification: DONE — Issue #38 / PR #39
 RT-4 post-merge state sync: DONE — Issue #40 / PR #41
 RT-4 Gate A1 UDP framing: DONE — Issue #42 / PR #43
+RT-4 A2/A3 boundary amendment: DONE — Issue #46 / PR #47
 ```
 
 RT-2 payload bytes остаются opaque. `capture_index` не является FAST `MsgSeqNum` или exchange sequence.
@@ -175,6 +176,19 @@ MOEX FAST inventory: 16 = RT-1 6 + RT-3 9 + RT-4 A1 1
 
 Accepted A1 implementation: explicit-endian 4-byte external MsgSeqNum framing, one borrowed FAST body beginning at byte four, bounded deterministic validation and empty output on failure. Production framing code performs no payload copy or heap allocation. A2 sequencing and duplicate suppression are not included.
 
+## RT-4 A2/A3 boundary amendment — DONE
+
+```text
+Issue #46: closed completed
+PR #47: merged
+Reviewed PR head: 7f42d2d14e4f54ad184e64688870030ce11b5f92
+Main merge SHA: eb1e851bc685b8abefa61c4dbb0c5fc4de8f46a9
+Pre-merge CI #209: success
+Post-merge main CI #210: success
+```
+
+A2 is strictly a stateless uint32 serial-relation classifier. Fixed `MessageStorage` and the complete mutable A/B sequencer begin together in A3. Partial sequencer APIs and temporary unsupported-future results are prohibited.
+
 ## MOEX connectivity checkpoint
 
 ```text
@@ -191,19 +205,21 @@ MOEX support follow-up: pending.
 
 Do not store the VPN endpoint, external/private IP addresses, credentials, VPN profiles, screenshots containing connection details, or raw/decoded market-data packets.
 
-## Current verified boundary
+## Current gate — RT-4 A2 setup
 
 ```text
-RT-4 Gate A1: DONE
-RT-4 Gate A2: BLOCKED — not started and not authorized
-No active A2 Issue, feature branch or PR
-MiMo for A2: not authorized
-RT-5 / RT-6 / CI-2: not authorized
+Issue #48: open
+Branch: mimo/issue-48-rt4-a2-sequence-arithmetic
+Setup scope: exactly AI_CONTEXT.md, PROJECT_STATE.md and ROADMAP.md
+Frozen implementation scope after separate authorization: exactly 4 files
+A2 C++ implementation: not authorized
+CI implementation changes: not authorized
+MiMo: not authorized
+Merge: not authorized
+A3: blocked
 ```
 
-A2 does not begin automatically. Before any A2 implementation activity: independently re-check GitHub, prepare one bounded A2 plan, obtain explicit Owner authorization, then create a separate Issue, feature branch and Draft PR.
-
-CI-2 caching is POSTPONED, not started and not authorized.
+Frozen A2 production contract: header-only `spectra_sequence_arithmetic.hpp`, `SequenceRelation`, `SequenceClassification`, and `classify_sequence_relation(...) noexcept`; one Release-active `test_spectra_sequence_arithmetic`; expected CTest inventory after implementation is 17.
 
 ## Workflow
 
@@ -227,8 +243,10 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-No implementation gate is active.
-Do not start A2.
+Complete Issue #48 docs-only setup and Draft PR.
+Verify exact three-file setup diff and docs-only CI.
+Do not implement C++.
+Do not change CMake or workflow.
 Do not launch MiMo.
-Wait for a separate current-state review, bounded A2 plan and explicit Owner authorization.
+Wait for separate explicit Owner implementation authorization.
 ```
