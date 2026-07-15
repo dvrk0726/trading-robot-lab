@@ -180,7 +180,7 @@ Do not store the VPN endpoint, external/private IP addresses, credentials, VPN p
 
 ```text
 Issue #42: open
-Draft PR #43: setup target
+Draft PR #43: open
 Branch: mimo/issue-42-rt4-a1-udp-framing
 Base main SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
 Scope now: exactly AI_CONTEXT.md, PROJECT_STATE.md and ROADMAP.md
