@@ -152,7 +152,7 @@ The connectivity blocker does not prevent synthetic A1 implementation after sepa
 
 ```text
 Issue #42: open
-Draft PR #43: setup target
+Draft PR #43: open
 Branch: mimo/issue-42-rt4-a1-udp-framing
 Base main SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
 Current scope: exactly three state documentation files
@@ -166,7 +166,6 @@ Required sequence:
 
 ```text
 complete docs-only setup
--> open Draft PR #43
 -> docs-only CI
 -> Architecture Review of setup state
 -> separate Owner authorization for A1 implementation and MiMo
