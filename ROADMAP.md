@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A1 post-merge state sync — Issue #44 / Draft PR #45
+Текущий gate: RT-4 Gate A1 DONE; Gate A2 BLOCKED
 
 ## Главный порядок
 
@@ -160,31 +160,6 @@ Private connection addresses, credentials, VPN profiles and real raw/decoded mar
 
 The connectivity blocker does not invalidate synthetic A1 acceptance. Production endian acceptance still requires live T0/T1 evidence, an official vector or written MOEX confirmation.
 
-## Current gate — RT-4 A1 post-merge state sync
-
-```text
-Issue #44: open
-Draft PR #45: open
-Branch: docs/issue-44-rt4-a1-post-merge-state-sync
-Base main SHA: ebfb3096b8a62704e5bf57a77d7971fd36acef2a
-Current scope: exactly AI_CONTEXT.md, PROJECT_STATE.md and ROADMAP.md
-Code, tests, CMake and workflow changes: prohibited
-MiMo: prohibited
-Merge: not authorized
-A2: not started and not authorized
-```
-
-Required sequence:
-
-```text
-complete exact three-file state synchronization
--> docs-only CI
--> Architecture Review
--> separate Owner merge authorization
--> post-merge main CI verification
--> close Issue #44 completed
-```
-
 ## RT-4 implementation gates
 
 ### Gate A1 — UDP framing — DONE
@@ -305,7 +280,17 @@ real T0/T1 packet, official vector or written MOEX confirmation
 explicit Owner acceptance
 ```
 
-No gate begins automatically. Each implementation stage requires an existing Issue, feature branch and PR, tests, commit, push, CI, Architecture Review and Owner approval.
+## Current verified boundary
+
+```text
+RT-4 Gate A1: DONE
+RT-4 Gate A2: BLOCKED — not started and not authorized
+No active A2 Issue, feature branch or PR
+MiMo for A2: not authorized
+RT-5 / RT-6 / CI-2: not authorized
+```
+
+No gate begins automatically. Before A2: independently verify current GitHub state, prepare one bounded plan, obtain explicit Owner authorization, then create a separate Issue, feature branch and Draft PR.
 
 CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 
