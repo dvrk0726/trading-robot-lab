@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-4 post-merge state sync — Issue #40, Draft PR #41
+Текущий gate: RT-4 Gate A1 UDP framing setup — Issue #42, Draft PR #43
 
 ## Источник истины
 
@@ -66,6 +66,7 @@ CI-1: DONE — required-check-preserving routing
 QSH retirement: DONE
 Performance-first documentation: DONE — Issue #36 / PR #37
 RT-4 specification: DONE — Issue #38 / PR #39
+RT-4 post-merge state sync: DONE — Issue #40 / PR #41
 ```
 
 RT-2 payload bytes остаются opaque. `capture_index` не является FAST `MsgSeqNum` или exchange sequence.
@@ -115,8 +116,6 @@ PR #39: merged
 Reviewed PR head: afd128a49584fce1131323ac7b19e5b5d7b1997a
 Main merge SHA: 136293ede211619b7d9198d85ed3afb0f2577514
 Post-merge main CI #189: success
-Implementation: not started and not authorized
-MiMo: not authorized
 ```
 
 Authoritative RT-4 documents:
@@ -150,6 +149,17 @@ External 4-byte preamble byte order: unresolved in official text
 
 Gate A requires explicit LittleEndian or BigEndian configuration and no default guess. Gate B may compare both interpretations with decoded tag 34, fail closed on ambiguity, and lock one byte order per logical feed after verification.
 
+## RT-4 state-sync verified checkpoint
+
+```text
+Issue #40: closed completed
+PR #41: merged
+Reviewed PR head: 6789fb3621d70465114a32d2b146562e7f6809e8
+Main merge SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
+Post-merge main CI #194: success
+RT-4 implementation before Issue #42: not started
+```
+
 ## MOEX connectivity checkpoint
 
 ```text
@@ -166,30 +176,34 @@ MOEX support follow-up: pending.
 
 Do not store the VPN endpoint, external/private IP addresses, credentials, VPN profiles, screenshots containing connection details, or raw/decoded market-data packets.
 
-## Current documentation gate
+## Current gate — RT-4 A1 setup
 
 ```text
-Issue #40: open
-Draft PR #41: open
-Branch: docs/issue-40-rt4-state-sync
-Base main SHA: 136293ede211619b7d9198d85ed3afb0f2577514
-Scope: exactly four documentation files
-Code changes: prohibited
+Issue #42: open
+Draft PR #43: open
+Branch: mimo/issue-42-rt4-a1-udp-framing
+Base main SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
+Scope now: exactly AI_CONTEXT.md, PROJECT_STATE.md and ROADMAP.md
+C++ implementation: not authorized
+CI implementation changes: not authorized
 MiMo: not authorized
-RT-4 implementation: not authorized
 Merge: not authorized
 ```
+
+A1 implementation scope after separate Owner authorization is limited to the UDP framing primitive, one Release-active CTest and the exact MOEX FAST CI inventory update. A2 sequencing, reordering, gaps, sockets, `.mxraw`, RT-3 integration and endian AutoVerify remain prohibited.
 
 ## Sequence
 
 ```text
-finish Issue #40 / Draft PR #41
+complete Issue #42 docs-only setup and Draft PR #43
 -> docs-only CI
+-> Architecture Review of setup state
+-> separate Owner authorization for A1 implementation and MiMo
+-> one bounded MiMo implementation commit in the existing branch/PR
+-> full CI
 -> Architecture Review
--> separate Owner readiness authorization
 -> separate Owner merge authorization
 -> post-merge main CI verification
--> separate Owner authorization for RT-4 Gate A implementation
 ```
 
 CI-2 caching is POSTPONED, not started and not authorized.
@@ -216,9 +230,10 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-Review exact four-file documentation diff in PR #41.
-Verify docs-only CI.
-Do not start RT-4 implementation.
+Finish docs-only setup for Issue #42 / Draft PR #43.
+Verify exact three-file setup diff and docs-only CI.
+Do not implement C++.
 Do not launch MiMo.
-Do not merge without separate explicit Owner authorization.
+Do not merge.
+Wait for separate explicit Owner authorization before A1 implementation.
 ```

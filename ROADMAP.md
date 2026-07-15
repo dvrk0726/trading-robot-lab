@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-15  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 post-merge state sync — Issue #40 / Draft PR #41
+Текущий gate: RT-4 Gate A1 UDP framing setup — Issue #42 / Draft PR #43
 
 ## Главный порядок
 
@@ -111,8 +111,6 @@ PR #39: merged
 Reviewed PR head: afd128a49584fce1131323ac7b19e5b5d7b1997a
 Main merge SHA: 136293ede211619b7d9198d85ed3afb0f2577514
 Post-merge main CI #189: success
-Implementation: not started and not authorized
-MiMo: not authorized
 ```
 
 Authoritative documents:
@@ -122,29 +120,14 @@ docs/rt4_spectra_framing_sequencing_recovery_spec.md
 docs/rt4_moex_fast_source_update_2026-07-15.md
 ```
 
-## Current documentation gate
+### RT-4 post-merge state sync — DONE
 
 ```text
-Issue #40: open
-Draft PR #41: open
-Branch: docs/issue-40-rt4-state-sync
-Base main SHA: 136293ede211619b7d9198d85ed3afb0f2577514
-Scope: state synchronization and bounded MOEX VPN evidence only
-Allowed files: exactly four documentation files
-Code, MiMo and RT-4 implementation: not authorized
-Merge: not authorized
-```
-
-Required sequence:
-
-```text
-complete four-file documentation diff
--> docs-only CI
--> Architecture Review
--> separate Owner readiness authorization
--> separate Owner merge authorization
--> post-merge main CI verification
--> separate Owner authorization for RT-4 Gate A implementation
+Issue #40: closed completed
+PR #41: merged
+Reviewed PR head: 6789fb3621d70465114a32d2b146562e7f6809e8
+Main merge SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
+Post-merge main CI #194: success
 ```
 
 ## MOEX connectivity checkpoint
@@ -163,25 +146,127 @@ MOEX support follow-up: pending
 
 Private connection addresses, credentials, VPN profiles and real raw/decoded market-data packets are prohibited in Git.
 
-The connectivity blocker does not prevent synthetic Gate A implementation after separate Owner authorization, but production endian acceptance still requires live T0/T1 evidence, an official vector or written MOEX confirmation.
+The connectivity blocker does not prevent synthetic A1 implementation after separate Owner authorization, but production endian acceptance still requires live T0/T1 evidence, an official vector or written MOEX confirmation.
 
-## RT-4 implementation gates — NOT STARTED
-
-### Gate A — framing, sequencing and gaps
+## Current gate — RT-4 A1 setup
 
 ```text
-4-byte UDP preamble and one current FAST body
-explicit LittleEndian or BigEndian; no default guess
-uint32 serial arithmetic with fail-closed ambiguity handling
-A/B logical-feed arbitration and duplicate suppression
-bounded reordering and fixed monotonic deadline
-gap confirmation and terminal fail-closed state
-fixed bounded storage and zero post-init allocations
-synthetic Windows/Linux Release tests
-Release benchmark and allocation evidence
+Issue #42: open
+Draft PR #43: open
+Branch: mimo/issue-42-rt4-a1-udp-framing
+Base main SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
+Current scope: exactly three state documentation files
+C++ implementation: not authorized
+CI implementation changes: not authorized
+MiMo: not authorized
+Merge: not authorized
 ```
 
-### Gate B — replay and decoder integration
+Required sequence:
+
+```text
+complete docs-only setup
+-> docs-only CI
+-> Architecture Review of setup state
+-> separate Owner authorization for A1 implementation and MiMo
+-> one bounded implementation commit in the existing branch/PR
+-> full CI
+-> Architecture Review
+-> separate Owner merge authorization
+-> post-merge main CI verification
+```
+
+## RT-4 implementation gates
+
+### Gate A1 — UDP framing — SETUP ACTIVE, IMPLEMENTATION NOT AUTHORIZED
+
+```text
+4-byte external MsgSeqNum preamble
+one current UDP datagram and exactly one FAST body
+explicit LittleEndian or BigEndian; no default guess
+host-endian-independent uint32 conversion
+borrowed FAST-body span beginning at byte 4
+bounded deterministic validation
+stable FrameCode and deterministic empty output on failure
+no payload copy or heap allocation
+one synthetic Windows/Linux Release CTest
+MOEX FAST test inventory 15 -> 16
+required-check job names unchanged
+```
+
+Deterministic error precedence:
+
+```text
+invalid limits or invalid byte-order enum -> InvalidConfig
+payload size 0..3                       -> DatagramTooShort
+payload size 4                          -> EmptyFastBody
+payload size > max_datagram_bytes       -> DatagramTooLarge
+payload size 5..max                     -> Ok
+```
+
+Excluded from A1:
+
+```text
+A/B sequencing and duplicate suppression
+serial arithmetic
+bounded reordering
+gap deadline and FailedClosed state
+sockets and multicast
+.mxraw integration
+RT-3 decode integration
+preamble AutoVerify
+SequenceReset
+Snapshot recovery
+Release benchmark claims
+```
+
+Allowed implementation files after separate Owner authorization:
+
+```text
+cpp/moex_fast/include/moex_fast/spectra_udp_framing.hpp
+cpp/moex_fast/src/spectra_udp_framing.cpp
+cpp/moex_fast/tests/test_spectra_udp_framing.cpp
+cpp/moex_fast/CMakeLists.txt
+.github/workflows/ci.yml
+```
+
+### Gate A2 — A/B sequencing and duplicate suppression — BLOCKED
+
+```text
+uint32 serial arithmetic with fail-closed ambiguity handling
+A/B logical-feed arbitration
+duplicate suppression
+in-order emission
+```
+
+### Gate A3 — bounded reordering — BLOCKED
+
+```text
+fixed pending storage
+bounded message and byte capacity
+out-of-order insertion
+contiguous flush
+```
+
+### Gate A4 — gap deadline and fail-closed — BLOCKED
+
+```text
+fixed monotonic non-extendable deadline
+gap confirmation
+terminal FailedClosed state
+explicit reset/restart only
+```
+
+### Gate A5 — Release benchmarks and Gate A review — BLOCKED
+
+```text
+Windows/Linux Release measurements
+allocation evidence
+latency distribution and variability
+Owner acceptance before Gate B
+```
+
+### Gate B — replay and decoder integration — BLOCKED
 
 ```text
 RT-2 .mxraw A/B replay merge
@@ -191,7 +276,7 @@ one-time endian AutoVerify and per-feed lock
 stream initialization and SequenceReset policy
 ```
 
-### Gate C — Snapshot recovery
+### Gate C — Snapshot recovery — BLOCKED
 
 ```text
 queue Incremental while recovering
@@ -200,7 +285,7 @@ replay contiguous queued Incremental messages
 fail closed on ambiguity, overflow or unresolved second gap
 ```
 
-### Gate D — Release acceptance
+### Gate D — Release acceptance — BLOCKED
 
 ```text
 Windows/MSVC and Linux/GCC end-to-end Release evidence
@@ -209,7 +294,7 @@ real T0/T1 packet, official vector or written MOEX confirmation
 explicit Owner acceptance
 ```
 
-No gate begins automatically. Each implementation stage requires a separate Issue, feature branch, existing PR workflow, tests, commit, push, CI, Architecture Review and Owner approval.
+No gate begins automatically. Each implementation stage requires an existing Issue, feature branch and PR, tests, commit, push, CI, Architecture Review and Owner approval.
 
 CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 

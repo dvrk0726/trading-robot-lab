@@ -51,6 +51,12 @@ target_link_libraries(moex-fast-inspect PRIVATE moex_inspect)
 add_executable(moex-fast-decode src/decode_main.cpp)
 target_link_libraries(moex-fast-decode PRIVATE moex_decode)
 
+# --- RT-4 A1 SPECTRA UDP Transport Library (no dependency on moex_decode or pugixml) ---
+add_library(moex_spectra_transport STATIC
+    src/spectra_udp_framing.cpp
+)
+target_include_directories(moex_spectra_transport PUBLIC include)
+
 # --- Tests ---
 enable_testing()
 
@@ -124,3 +130,8 @@ add_test(NAME test_decoder_limits COMMAND test_decoder_limits)
 add_executable(test_decoder_reference_oracle tests/test_decoder_reference_oracle.cpp)
 target_include_directories(test_decoder_reference_oracle PRIVATE ${MOEX_FAST_TEST_DIR})
 add_test(NAME test_decoder_reference_oracle COMMAND test_decoder_reference_oracle)
+
+# --- RT-4 A1 SPECTRA UDP Framing Test ---
+add_executable(test_spectra_udp_framing tests/test_spectra_udp_framing.cpp)
+target_link_libraries(test_spectra_udp_framing PRIVATE moex_spectra_transport)
+add_test(NAME test_spectra_udp_framing COMMAND test_spectra_udp_framing)
