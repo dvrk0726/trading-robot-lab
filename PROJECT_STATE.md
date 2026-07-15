@@ -222,7 +222,7 @@ This connectivity state does not prove a framing defect and does not authorize p
 
 ```text
 Issue #42: open
-Draft PR #43: setup target
+Draft PR #43: open
 Branch: mimo/issue-42-rt4-a1-udp-framing
 Base main SHA: acb74763e7dd395f210ac738c425c7d544a6cb51
 Setup files: AI_CONTEXT.md, PROJECT_STATE.md, ROADMAP.md
