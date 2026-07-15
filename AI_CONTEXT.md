@@ -218,9 +218,12 @@ CI implementation changes: not authorized
 MiMo: not authorized
 Merge: not authorized
 A3: blocked
+RT-5 / RT-6 / CI-2: not authorized
 ```
 
 Frozen A2 production contract: header-only `spectra_sequence_arithmetic.hpp`, `SequenceRelation`, `SequenceClassification`, and `classify_sequence_relation(...) noexcept`; one Release-active `test_spectra_sequence_arithmetic`; expected CTest inventory after implementation is 17.
+
+CI-2 caching is POSTPONED, not started and not authorized.
 
 ## Workflow
 
