@@ -220,6 +220,9 @@ jobs:
       - name: Run all moex_fast tests (RT-1 + RT-3)
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
 
+      - name: Run Gate A benchmark (zero-allocation evidence)
+        run: build\moex_fast\Release\bench_spectra_gate_a.exe
+
   # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 9 tests, RT-4 A1: 1, RT-4 A2: 1, Gate A: 1
   cpp-moex-fast-inspector-linux:
     name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)"
@@ -300,6 +303,9 @@ jobs:
 
       - name: Run all moex_fast tests (RT-1 + RT-3)
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
+
+      - name: Run Gate A benchmark (zero-allocation evidence)
+        run: ./build/moex_fast/bench/bench_spectra_gate_a
 
   cpp-moex-raw-windows:
     name: C++ MOEX RAW Windows/MSVC (18 tests)

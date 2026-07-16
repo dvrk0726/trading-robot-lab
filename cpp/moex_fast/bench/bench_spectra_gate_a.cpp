@@ -1,5 +1,5 @@
 // Benchmark harness for RT-4 SPECTRA transport / Gate A
-// Phase 3A: latency distribution, throughput, high-water marks
+// Phase 3B1: zero-allocation evidence, correct timing
 //
 // Portable: Windows/MSVC, Linux/GCC. Release execution.
 // No heap allocation inside measured loops.
@@ -12,6 +12,139 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <new>
+
+#ifdef _WIN32
+#include <malloc.h>
+#else
+#include <cstdlib>
+#endif
+
+// --- Allocation tracking state ---
+// Single-threaded; no lock or atomic required.
+
+static bool g_tracking_enabled = false;
+static std::size_t g_allocation_count = 0;
+
+// --- Portable aligned allocation helpers ---
+
+#ifdef _WIN32
+static void* platform_aligned_alloc(std::size_t alignment,
+                                     std::size_t size) noexcept {
+    return _aligned_malloc(size, alignment);
+}
+static void platform_aligned_free(void* ptr) noexcept {
+    _aligned_free(ptr);
+}
+#else
+static void* platform_aligned_alloc(std::size_t alignment,
+                                     std::size_t size) noexcept {
+    std::size_t rounded = (size + alignment - 1) & ~(alignment - 1);
+    return std::aligned_alloc(alignment, rounded);
+}
+static void platform_aligned_free(void* ptr) noexcept {
+    std::free(ptr);
+}
+#endif
+
+// --- Global operator new/delete replacements ---
+// Intercept all standard forms: scalar, array, nothrow, sized, aligned.
+
+void* operator new(std::size_t size) {
+    void* p = std::malloc(size);
+    if (!p) throw std::bad_alloc();
+    if (g_tracking_enabled) ++g_allocation_count;
+    return p;
+}
+
+void* operator new[](std::size_t size) {
+    void* p = std::malloc(size);
+    if (!p) throw std::bad_alloc();
+    if (g_tracking_enabled) ++g_allocation_count;
+    return p;
+}
+
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    void* p = std::malloc(size);
+    if (g_tracking_enabled && p) ++g_allocation_count;
+    return p;
+}
+
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+    void* p = std::malloc(size);
+    if (g_tracking_enabled && p) ++g_allocation_count;
+    return p;
+}
+
+void* operator new(std::size_t size, std::align_val_t alignment) {
+    void* p = platform_aligned_alloc(
+        static_cast<std::size_t>(alignment), size);
+    if (!p) throw std::bad_alloc();
+    if (g_tracking_enabled) ++g_allocation_count;
+    return p;
+}
+
+void* operator new[](std::size_t size, std::align_val_t alignment) {
+    void* p = platform_aligned_alloc(
+        static_cast<std::size_t>(alignment), size);
+    if (!p) throw std::bad_alloc();
+    if (g_tracking_enabled) ++g_allocation_count;
+    return p;
+}
+
+void* operator new(std::size_t size, std::align_val_t alignment,
+                    const std::nothrow_t&) noexcept {
+    void* p = platform_aligned_alloc(
+        static_cast<std::size_t>(alignment), size);
+    if (g_tracking_enabled && p) ++g_allocation_count;
+    return p;
+}
+
+void* operator new[](std::size_t size, std::align_val_t alignment,
+                      const std::nothrow_t&) noexcept {
+    void* p = platform_aligned_alloc(
+        static_cast<std::size_t>(alignment), size);
+    if (g_tracking_enabled && p) ++g_allocation_count;
+    return p;
+}
+
+void operator delete(void* ptr) noexcept { std::free(ptr); }
+void operator delete[](void* ptr) noexcept { std::free(ptr); }
+
+void operator delete(void* ptr, const std::nothrow_t&) noexcept {
+    std::free(ptr);
+}
+void operator delete[](void* ptr, const std::nothrow_t&) noexcept {
+    std::free(ptr);
+}
+
+void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+
+void operator delete(void* ptr, std::align_val_t) noexcept {
+    platform_aligned_free(ptr);
+}
+void operator delete[](void* ptr, std::align_val_t) noexcept {
+    platform_aligned_free(ptr);
+}
+
+void operator delete(void* ptr, std::size_t,
+                      std::align_val_t) noexcept {
+    platform_aligned_free(ptr);
+}
+void operator delete[](void* ptr, std::size_t,
+                        std::align_val_t) noexcept {
+    platform_aligned_free(ptr);
+}
+
+void operator delete(void* ptr, std::align_val_t,
+                      const std::nothrow_t&) noexcept {
+    platform_aligned_free(ptr);
+}
+void operator delete[](void* ptr, std::align_val_t,
+                        const std::nothrow_t&) noexcept {
+    platform_aligned_free(ptr);
+}
 
 namespace {
 
@@ -40,6 +173,21 @@ std::array<std::int64_t, SAMPLE_COUNT> g_samples;
 std::uint64_t g_sink_count;
 std::uint64_t g_sink_bytes;
 int g_result_xor;
+
+// --- Allocation tracking helpers ---
+
+void enable_tracking() noexcept {
+    g_tracking_enabled = true;
+    g_allocation_count = 0;
+}
+
+void disable_tracking() noexcept {
+    g_tracking_enabled = false;
+}
+
+std::size_t current_alloc_count() noexcept {
+    return g_allocation_count;
+}
 
 // --- Noexcept sink, does not retain body spans ---
 
@@ -97,6 +245,7 @@ struct ScenarioResult {
     std::size_t max_pending_messages{};
     std::size_t max_pending_bytes{};
     std::uint64_t checksum{};
+    std::size_t allocation_count{};
     bool functional_ok{true};
 };
 
@@ -108,20 +257,32 @@ void compute_percentiles(ScenarioResult& r) {
 }
 
 ScenarioResult finalize(const char* name, std::uint64_t ops,
-                         std::int64_t total_ns, const HighWaterMarks& hwm) {
+                         std::int64_t measured_total_ns,
+                         std::size_t alloc_count,
+                         const HighWaterMarks& hwm) {
     ScenarioResult r{};
     r.name = name;
     r.operations = ops;
     r.samples = SAMPLE_COUNT;
-    r.total_elapsed_ns = total_ns;
-    r.ns_per_op = static_cast<double>(total_ns) / static_cast<double>(ops);
-    r.throughput_ops_per_sec =
-        static_cast<double>(ops) * 1e9 / static_cast<double>(total_ns);
+    r.total_elapsed_ns = measured_total_ns;
+    r.allocation_count = alloc_count;
+    if (ops == 0 || measured_total_ns <= 0) {
+        r.ns_per_op = 0;
+        r.throughput_ops_per_sec = 0;
+        r.functional_ok = false;
+    } else {
+        r.ns_per_op = static_cast<double>(measured_total_ns) /
+                       static_cast<double>(ops);
+        r.throughput_ops_per_sec =
+            static_cast<double>(ops) * 1e9 /
+            static_cast<double>(measured_total_ns);
+    }
     compute_percentiles(r);
     r.max_pending_messages = hwm.max_pending_messages;
     r.max_pending_bytes = hwm.max_pending_bytes;
     r.checksum = g_sink_count ^ g_sink_bytes ^
                  static_cast<std::uint64_t>(g_result_xor);
+    if (alloc_count != 0) r.functional_ok = false;
     return r;
 }
 
@@ -192,7 +353,8 @@ ScenarioResult scenario_ordered_emission() {
     }
 
     // Measured: 1 op per iteration
-    auto t0 = std::chrono::steady_clock::now();
+    std::int64_t measured_total_ns = 0;
+    enable_tracking();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         auto s = std::chrono::steady_clock::now();
         auto v = make_view(
@@ -201,21 +363,21 @@ ScenarioResult scenario_ordered_emission() {
         auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
         record_result(r);
         auto e = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            e - s).count();
         g_samples[i] = elapsed / 1;
+        measured_total_ns += elapsed;
         update_hwm(ctx.hwm, ctx.storage);
         ++ctx.ops;
         advance_time(ctx);
         if (r.code != SequencerCode::Emitted) ctx.functional_ok = false;
     }
-    auto t1 = std::chrono::steady_clock::now();
+    disable_tracking();
 
+    auto alloc_count = current_alloc_count();
     auto res = finalize("ordered_first_copy_emission", ctx.ops,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0)
-                        .count(),
-                    ctx.hwm);
-    res.functional_ok = ctx.functional_ok;
+                    measured_total_ns, alloc_count, ctx.hwm);
+    res.functional_ok = res.functional_ok && ctx.functional_ok;
     return res;
 }
 
@@ -244,7 +406,8 @@ ScenarioResult scenario_expected_a_then_stale_b() {
     }
 
     // Measured: 2 ops per iteration
-    auto t0 = std::chrono::steady_clock::now();
+    std::int64_t measured_total_ns = 0;
+    enable_tracking();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         auto seq = static_cast<std::uint32_t>(WARMUP_COUNT + i);
         auto s = std::chrono::steady_clock::now();
@@ -256,22 +419,22 @@ ScenarioResult scenario_expected_a_then_stale_b() {
         auto rb = ctx.seq.on_message(v2, ctx.event_time, ctx.sink);
         record_result(rb);
         auto e = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            e - s).count();
         g_samples[i] = elapsed / 2;
+        measured_total_ns += elapsed;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 2;
         advance_time(ctx);
         if (ra.code != SequencerCode::Emitted) ctx.functional_ok = false;
         if (rb.code != SequencerCode::DuplicateDropped) ctx.functional_ok = false;
     }
-    auto t1 = std::chrono::steady_clock::now();
+    disable_tracking();
 
+    auto alloc_count = current_alloc_count();
     auto res = finalize("expected_a_then_stale_b", ctx.ops,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0)
-                        .count(),
-                    ctx.hwm);
-    res.functional_ok = ctx.functional_ok;
+                    measured_total_ns, alloc_count, ctx.hwm);
+    res.functional_ok = res.functional_ok && ctx.functional_ok;
     return res;
 }
 
@@ -296,7 +459,8 @@ ScenarioResult scenario_alternating_ab() {
     }
 
     // Measured: 1 op per iteration
-    auto t0 = std::chrono::steady_clock::now();
+    std::int64_t measured_total_ns = 0;
+    enable_tracking();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         auto side = (i % 2 == 0) ? FeedSide::A : FeedSide::B;
         auto s = std::chrono::steady_clock::now();
@@ -306,21 +470,21 @@ ScenarioResult scenario_alternating_ab() {
         auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
         record_result(r);
         auto e = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            e - s).count();
         g_samples[i] = elapsed / 1;
+        measured_total_ns += elapsed;
         update_hwm(ctx.hwm, ctx.storage);
         ++ctx.ops;
         advance_time(ctx);
         if (r.code != SequencerCode::Emitted) ctx.functional_ok = false;
     }
-    auto t1 = std::chrono::steady_clock::now();
+    disable_tracking();
 
+    auto alloc_count = current_alloc_count();
     auto res = finalize("alternating_ab_winning_side", ctx.ops,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0)
-                        .count(),
-                    ctx.hwm);
-    res.functional_ok = ctx.functional_ok;
+                    measured_total_ns, alloc_count, ctx.hwm);
+    res.functional_ok = res.functional_ok && ctx.functional_ok;
     return res;
 }
 
@@ -352,7 +516,8 @@ ScenarioResult scenario_reorder_flush_depth_1() {
 
     // Measured: 2 ops per iteration
     std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 2);
-    auto t0 = std::chrono::steady_clock::now();
+    std::int64_t measured_total_ns = 0;
+    enable_tracking();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         std::uint32_t base = measured_base + static_cast<std::uint32_t>(i * 2);
         auto s = std::chrono::steady_clock::now();
@@ -365,8 +530,10 @@ ScenarioResult scenario_reorder_flush_depth_1() {
         auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
         record_result(re);
         auto e = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            e - s).count();
         g_samples[i] = elapsed / 2;
+        measured_total_ns += elapsed;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 2;
         advance_time(ctx);
@@ -376,14 +543,12 @@ ScenarioResult scenario_reorder_flush_depth_1() {
         if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
         if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
-    auto t1 = std::chrono::steady_clock::now();
+    disable_tracking();
 
+    auto alloc_count = current_alloc_count();
     auto res = finalize("reorder_flush_depth_1", ctx.ops,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0)
-                        .count(),
-                    ctx.hwm);
-    res.functional_ok = ctx.functional_ok;
+                    measured_total_ns, alloc_count, ctx.hwm);
+    res.functional_ok = res.functional_ok && ctx.functional_ok;
     return res;
 }
 
@@ -418,7 +583,8 @@ ScenarioResult scenario_reorder_flush_depth_4() {
 
     // Measured: 5 ops per iteration
     std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 5);
-    auto t0 = std::chrono::steady_clock::now();
+    std::int64_t measured_total_ns = 0;
+    enable_tracking();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         std::uint32_t base =
             measured_base + static_cast<std::uint32_t>(i * 5);
@@ -436,8 +602,10 @@ ScenarioResult scenario_reorder_flush_depth_4() {
         auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
         record_result(re);
         auto e = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            e - s).count();
         g_samples[i] = elapsed / 5;
+        measured_total_ns += elapsed;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 5;
         advance_time(ctx);
@@ -446,14 +614,12 @@ ScenarioResult scenario_reorder_flush_depth_4() {
         if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
         if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
-    auto t1 = std::chrono::steady_clock::now();
+    disable_tracking();
 
+    auto alloc_count = current_alloc_count();
     auto res = finalize("reorder_flush_depth_4", ctx.ops,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0)
-                        .count(),
-                    ctx.hwm);
-    res.functional_ok = ctx.functional_ok;
+                    measured_total_ns, alloc_count, ctx.hwm);
+    res.functional_ok = res.functional_ok && ctx.functional_ok;
     return res;
 }
 
@@ -490,7 +656,8 @@ ScenarioResult scenario_equal_pending_duplicate() {
 
     // Measured: 3 ops per iteration. base = i * 2.
     std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 2);
-    auto t0 = std::chrono::steady_clock::now();
+    std::int64_t measured_total_ns = 0;
+    enable_tracking();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         std::uint32_t base =
             measured_base + static_cast<std::uint32_t>(i * 2);
@@ -508,8 +675,10 @@ ScenarioResult scenario_equal_pending_duplicate() {
         auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
         record_result(re);
         auto e = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            e - s).count();
         g_samples[i] = elapsed / 3;
+        measured_total_ns += elapsed;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 3;
         advance_time(ctx);
@@ -520,14 +689,12 @@ ScenarioResult scenario_equal_pending_duplicate() {
         if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
         if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
-    auto t1 = std::chrono::steady_clock::now();
+    disable_tracking();
 
+    auto alloc_count = current_alloc_count();
     auto res = finalize("equal_pending_duplicate_drop", ctx.ops,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0)
-                        .count(),
-                    ctx.hwm);
-    res.functional_ok = ctx.functional_ok;
+                    measured_total_ns, alloc_count, ctx.hwm);
+    res.functional_ok = res.functional_ok && ctx.functional_ok;
     return res;
 }
 
@@ -563,7 +730,8 @@ ScenarioResult scenario_gapwait_ontime() {
 
     // Measured: 3 ops per iteration
     std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 2);
-    auto t0 = std::chrono::steady_clock::now();
+    std::int64_t measured_total_ns = 0;
+    enable_tracking();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         std::uint32_t base = measured_base + static_cast<std::uint32_t>(i * 2);
         auto s = std::chrono::steady_clock::now();
@@ -579,8 +747,10 @@ ScenarioResult scenario_gapwait_ontime() {
         auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
         record_result(re);
         auto e = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            e - s).count();
         g_samples[i] = elapsed / 3;
+        measured_total_ns += elapsed;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 3;
         advance_time(ctx);
@@ -591,14 +761,12 @@ ScenarioResult scenario_gapwait_ontime() {
         if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
         if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
-    auto t1 = std::chrono::steady_clock::now();
+    disable_tracking();
 
+    auto alloc_count = current_alloc_count();
     auto res = finalize("gapwait_ontime_before_deadline", ctx.ops,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0)
-                        .count(),
-                    ctx.hwm);
-    res.functional_ok = ctx.functional_ok;
+                    measured_total_ns, alloc_count, ctx.hwm);
+    res.functional_ok = res.functional_ok && ctx.functional_ok;
     return res;
 }
 
@@ -623,6 +791,8 @@ ScenarioResult scenario_failedclosed_steady() {
         if (ctx.seq.state() != SequencerState::FailedClosed) trigger_ok = false;
         advance_time(ctx);
     }
+    // Verify g_sink_count is zero after trigger
+    if (g_sink_count != 0) trigger_ok = false;
 
     // Warm-up: every call must return FailedClosed
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
@@ -632,9 +802,12 @@ ScenarioResult scenario_failedclosed_steady() {
         if (r.code != SequencerCode::FailedClosed) trigger_ok = false;
         advance_time(ctx);
     }
+    // Verify g_sink_count is zero after warm-up
+    if (g_sink_count != 0) trigger_ok = false;
 
     // Measured: 1 op per iteration, all FailedClosed, no sink emission
-    auto t0 = std::chrono::steady_clock::now();
+    std::int64_t measured_total_ns = 0;
+    enable_tracking();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         auto saved_sink = g_sink_count;
         auto s = std::chrono::steady_clock::now();
@@ -644,21 +817,21 @@ ScenarioResult scenario_failedclosed_steady() {
         auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
         record_result(r);
         auto e = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            e - s).count();
         g_samples[i] = elapsed / 1;
+        measured_total_ns += elapsed;
         ++ctx.ops;
         advance_time(ctx);
         if (r.code != SequencerCode::FailedClosed) trigger_ok = false;
         if (g_sink_count != saved_sink) trigger_ok = false;
     }
-    auto t1 = std::chrono::steady_clock::now();
+    disable_tracking();
 
+    auto alloc_count = current_alloc_count();
     auto res = finalize("failedclosed_steady_state", ctx.ops,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0)
-                        .count(),
-                    ctx.hwm);
-    res.functional_ok = trigger_ok;
+                    measured_total_ns, alloc_count, ctx.hwm);
+    res.functional_ok = res.functional_ok && trigger_ok;
     return res;
 }
 
@@ -666,7 +839,8 @@ ScenarioResult scenario_failedclosed_steady() {
 
 void print_result(const ScenarioResult& r) {
     std::printf(
-        "%s %llu %llu %lld %.2f %.2f %lld %lld %lld %llu %llu %llu\n",
+        "%s %llu %llu %lld %.2f %.2f %lld %lld %lld %llu %llu %llu"
+        " %llu\n",
         r.name, static_cast<unsigned long long>(r.operations),
         static_cast<unsigned long long>(r.samples),
         static_cast<long long>(r.total_elapsed_ns), r.ns_per_op,
@@ -674,7 +848,8 @@ void print_result(const ScenarioResult& r) {
         static_cast<long long>(r.p95_ns), static_cast<long long>(r.p99_ns),
         static_cast<unsigned long long>(r.max_pending_messages),
         static_cast<unsigned long long>(r.max_pending_bytes),
-        static_cast<unsigned long long>(r.checksum));
+        static_cast<unsigned long long>(r.checksum),
+        static_cast<unsigned long long>(r.allocation_count));
 }
 
 } // namespace
@@ -695,6 +870,11 @@ int main() {
         total_ops += r.operations;
         if (r.operations == 0) {
             std::fprintf(stderr, "FAIL: %s produced zero operations\n", label);
+            exit_code = 1;
+        }
+        if (r.allocation_count != 0) {
+            std::fprintf(stderr, "FAIL: %s had %zu allocations (expected 0)\n",
+                         label, r.allocation_count);
             exit_code = 1;
         }
         if (!r.functional_ok) {
