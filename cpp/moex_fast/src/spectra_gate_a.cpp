@@ -2,6 +2,8 @@
 
 namespace moex::spectra {
 
+// --- MessageStorage ---
+
 void MessageStorage::initialize(
     std::span<SlotMetadata> slots,
     std::span<std::uint8_t> arena,
@@ -175,6 +177,99 @@ StoredMessageView MessageStorage::view_message(std::uint32_t msg_seq_num) const 
     v.body = std::span<const std::uint8_t>(
         payload_arena_.data() + slot.payload_offset, slot.payload_length);
     return v;
+}
+
+// --- DualFeedSequencer (non-template methods) ---
+
+SequencerCode DualFeedSequencer::initialize(
+    LogicalFeedId feed,
+    SequencerConfig config,
+    MessageStorage& storage
+) noexcept {
+    if (state_ != SequencerState::Uninitialized)
+        return SequencerCode::InvalidTransition;
+
+    // Feed identity
+    if (feed.value != config.logical_feed.value)
+        return SequencerCode::InvalidConfig;
+
+    // Valid nonzero configuration values below half-range
+    if (config.max_reorder_distance == 0 || config.max_reorder_distance >= 0x80000000u)
+        return SequencerCode::InvalidConfig;
+    if (config.reorder_wait_ns == 0)
+        return SequencerCode::InvalidConfig;
+    if (config.storage.max_reorder_messages == 0 || config.storage.max_reorder_messages >= 0x80000000u)
+        return SequencerCode::InvalidConfig;
+    if (config.storage.max_message_bytes == 0)
+        return SequencerCode::InvalidConfig;
+    if (config.storage.max_reorder_bytes == 0)
+        return SequencerCode::InvalidConfig;
+
+    // Storage must be initialized and empty
+    if (!storage.initialized())
+        return SequencerCode::InvalidConfig;
+    if (storage.pending_count() != 0)
+        return SequencerCode::InvalidConfig;
+    if (storage.pending_bytes() != 0)
+        return SequencerCode::InvalidConfig;
+
+    // Storage capacity must cover the reorder distance
+    if (storage.slot_capacity() < static_cast<std::size_t>(config.max_reorder_distance))
+        return SequencerCode::InvalidConfig;
+
+    // Actual storage limits must cover declared limits
+    if (storage.max_reorder_messages() < config.storage.max_reorder_messages)
+        return SequencerCode::InvalidConfig;
+    if (storage.max_reorder_bytes() < config.storage.max_reorder_bytes)
+        return SequencerCode::InvalidConfig;
+    if (storage.max_message_bytes() < config.storage.max_message_bytes)
+        return SequencerCode::InvalidConfig;
+
+    feed_ = feed;
+    max_reorder_distance_ = config.max_reorder_distance;
+    reorder_wait_ns_ = config.reorder_wait_ns;
+    storage_ = &storage;
+    declared_max_reorder_messages_ = config.storage.max_reorder_messages;
+    declared_max_reorder_bytes_ = config.storage.max_reorder_bytes;
+    declared_max_message_bytes_ = config.storage.max_message_bytes;
+
+    state_ = SequencerState::Stopped;
+    return SequencerCode::Initialized;
+}
+
+SequencerCode DualFeedSequencer::start(std::uint32_t initial_expected_seq) noexcept {
+    if (state_ == SequencerState::Uninitialized)
+        return SequencerCode::NotInitialized;
+    if (state_ != SequencerState::Stopped)
+        return SequencerCode::InvalidTransition;
+
+    next_expected_ = initial_expected_seq;
+    has_deadline_ = false;
+    gap_start_ns_ = 0;
+    gap_deadline_ns_ = 0;
+    last_event_ns_ = 0;
+    terminal_code_ = SequencerCode::NoAction;
+
+    state_ = SequencerState::Running;
+    return SequencerCode::Started;
+}
+
+SequencerCode DualFeedSequencer::reset() noexcept {
+    if (state_ == SequencerState::Uninitialized)
+        return SequencerCode::NotInitialized;
+
+    if (storage_)
+        storage_->reset();
+
+    next_expected_ = 0;
+    has_deadline_ = false;
+    gap_start_ns_ = 0;
+    gap_deadline_ns_ = 0;
+    last_event_ns_ = 0;
+    terminal_code_ = SequencerCode::NoAction;
+
+    state_ = SequencerState::Stopped;
+    return SequencerCode::Reset;
 }
 
 } // namespace moex::spectra

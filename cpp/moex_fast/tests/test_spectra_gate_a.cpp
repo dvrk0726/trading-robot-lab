@@ -10,6 +10,8 @@ namespace {
 
 using namespace moex::spectra;
 
+// --- Test helpers ---
+
 std::vector<std::uint8_t> make_body(std::size_t size, std::uint8_t fill = 0xAB) {
     return std::vector<std::uint8_t>(size, fill);
 }
@@ -20,6 +22,63 @@ std::vector<std::uint8_t> make_seq_body(std::uint32_t seq, std::size_t size) {
         body[i] = static_cast<std::uint8_t>((seq + i) & 0xFF);
     return body;
 }
+
+constexpr std::uint32_t FEED_ID = 42;
+
+struct EmissionSink {
+    struct Entry {
+        std::uint32_t sequence;
+        FeedSide side;
+        std::uint64_t capture_index;
+        std::uint64_t capture_monotonic_ns;
+        std::vector<std::uint8_t> body;
+    };
+    std::vector<Entry>* log;
+    void operator()(const OrderedMessageMetadata& meta, std::span<const std::uint8_t> body) noexcept {
+        log->push_back({meta.msg_seq_num, meta.side, meta.capture_index,
+                        meta.capture_monotonic_ns,
+                        std::vector<std::uint8_t>(body.begin(), body.end())});
+    }
+};
+
+struct SequencerFixture {
+    std::vector<SlotMetadata> slots;
+    std::vector<std::uint8_t> arena;
+    MessageStorage storage;
+    DualFeedSequencer seq;
+    std::vector<EmissionSink::Entry> emissions;
+    EmissionSink sink;
+
+    SequencerFixture(std::uint32_t max_reorder = 4,
+                     std::size_t max_msg_bytes = 64,
+                     std::uint64_t wait_ns = 1000)
+        : slots(max_reorder), arena(max_reorder * max_msg_bytes), sink{&emissions} {
+        storage.initialize(slots, arena,
+                           {max_reorder, max_reorder * max_msg_bytes, max_msg_bytes});
+        SequencerConfig cfg{};
+        cfg.logical_feed.value = FEED_ID;
+        cfg.max_reorder_distance = max_reorder;
+        cfg.reorder_wait_ns = wait_ns;
+        cfg.storage = {max_reorder, max_reorder * max_msg_bytes, max_msg_bytes};
+        (void)seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+        (void)seq.start(1);
+    }
+};
+
+FramedMessageView make_view(std::uint32_t seq_num, FeedSide side,
+                             std::span<const std::uint8_t> body,
+                             std::uint64_t cap_idx = 0) {
+    FramedMessageView v{};
+    v.feed.value = FEED_ID;
+    v.side = side;
+    v.msg_seq_num = seq_num;
+    v.capture_index = cap_idx;
+    v.capture_monotonic_ns = cap_idx * 100;
+    v.fast_body = body;
+    return v;
+}
+
+// --- MessageStorage tests (Phase 1, preserved) ---
 
 void test_valid_init_and_reset() {
     std::vector<SlotMetadata> slots(8);
@@ -794,6 +853,1117 @@ void test_checked_pending_byte_helper() {
     TEST_PASS("test_checked_pending_byte_helper");
 }
 
+// --- DualFeedSequencer tests ---
+
+// Lifecycle tests
+
+void test_sequencer_init_start_running() {
+    SequencerFixture f;
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Running));
+    CHECK_EQ(f.seq.next_expected_seq(), 1u);
+    TEST_PASS("test_sequencer_init_start_running");
+}
+
+void test_sequencer_reset_preserves_config_restart() {
+    auto body1 = make_body(10);
+    SequencerFixture f;
+    auto r1 = f.seq.on_message(make_view(3, FeedSide::A, body1), 100, f.sink);
+    CHECK_EQ(static_cast<int>(r1.code), static_cast<int>(SequencerCode::BufferedOutOfOrder));
+    CHECK_EQ(f.storage.pending_count(), 1u);
+
+    CHECK_EQ(static_cast<int>(f.seq.reset()), static_cast<int>(SequencerCode::Reset));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Stopped));
+    CHECK_EQ(f.storage.pending_count(), 0u);
+
+    CHECK_EQ(static_cast<int>(f.seq.start(10)), static_cast<int>(SequencerCode::Started));
+    CHECK_EQ(f.seq.next_expected_seq(), 10u);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Running));
+    TEST_PASS("test_sequencer_reset_preserves_config_restart");
+}
+
+void test_sequencer_failed_closed_requires_reset() {
+    SequencerFixture f;
+    auto body = make_body(10);
+    auto wrong = make_view(99, FeedSide::A, body);
+    wrong.feed.value = 999;
+    (void)f.seq.on_message(wrong, 100, f.sink);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+
+    auto r = f.seq.on_message(make_view(1, FeedSide::A, body), 200, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::FailedClosed));
+
+    auto rt = f.seq.on_time(300, f.sink);
+    CHECK_EQ(static_cast<int>(rt.code), static_cast<int>(SequencerCode::FailedClosed));
+
+    CHECK_EQ(static_cast<int>(f.seq.reset()), static_cast<int>(SequencerCode::Reset));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Stopped));
+    TEST_PASS("test_sequencer_failed_closed_requires_reset");
+}
+
+void test_sequencer_invalid_init_remains_uninitialized() {
+    DualFeedSequencer seq;
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::Uninitialized));
+    std::vector<SlotMetadata> slots(4);
+    std::vector<std::uint8_t> arena(4 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    SequencerConfig bad{};
+    bad.logical_feed.value = 1;
+    bad.max_reorder_distance = 0;
+    bad.reorder_wait_ns = 1000;
+    bad.storage = {4, 4 * 64, 64};
+    CHECK_EQ(static_cast<int>(seq.initialize(LogicalFeedId{1}, bad, storage)),
+             static_cast<int>(SequencerCode::InvalidConfig));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::Uninitialized));
+    TEST_PASS("test_sequencer_invalid_init_remains_uninitialized");
+}
+
+void test_sequencer_calls_before_init() {
+    DualFeedSequencer seq;
+    auto body = make_body(10);
+    std::vector<EmissionSink::Entry> log;
+    EmissionSink sink{&log};
+
+    auto r = seq.on_message(make_view(1, FeedSide::A, body), 100, sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::NotInitialized));
+
+    auto rt = seq.on_time(100, sink);
+    CHECK_EQ(static_cast<int>(rt.code), static_cast<int>(SequencerCode::NotInitialized));
+
+    CHECK_EQ(static_cast<int>(seq.reset()), static_cast<int>(SequencerCode::NotInitialized));
+    CHECK_EQ(static_cast<int>(seq.start(1)), static_cast<int>(SequencerCode::NotInitialized));
+    TEST_PASS("test_sequencer_calls_before_init");
+}
+
+void test_sequencer_no_emission_after_failed_closed() {
+    SequencerFixture f;
+    auto body = make_body(10);
+    auto bad = make_view(99, FeedSide::A, body);
+    bad.feed.value = 999;
+    (void)f.seq.on_message(bad, 100, f.sink);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    f.emissions.clear();
+
+    auto r = f.seq.on_message(make_view(1, FeedSide::A, body), 200, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::FailedClosed));
+    CHECK(f.emissions.empty());
+
+    auto rt = f.seq.on_time(300, f.sink);
+    CHECK_EQ(static_cast<int>(rt.code), static_cast<int>(SequencerCode::FailedClosed));
+    CHECK(f.emissions.empty());
+    TEST_PASS("test_sequencer_no_emission_after_failed_closed");
+}
+
+// Ordered/A-B behavior tests
+
+void test_ab_first_valid_copy_wins() {
+    SequencerFixture f;
+    auto bodyA = make_body(10, 0xAA);
+    auto bodyB = make_body(10, 0xBB);
+    auto rA = f.seq.on_message(make_view(1, FeedSide::A, bodyA, 1), 100, f.sink);
+    CHECK_EQ(static_cast<int>(rA.code), static_cast<int>(SequencerCode::Emitted));
+    CHECK_EQ(f.emissions.size(), 1u);
+    CHECK_EQ(static_cast<int>(f.emissions[0].side), static_cast<int>(FeedSide::A));
+
+    (void)f.seq.on_message(make_view(2, FeedSide::B, bodyB, 2), 200, f.sink);
+    CHECK_EQ(f.emissions.size(), 2u);
+    CHECK_EQ(static_cast<int>(f.emissions[1].side), static_cast<int>(FeedSide::B));
+    TEST_PASS("test_ab_first_valid_copy_wins");
+}
+
+void test_alternating_winning_side() {
+    SequencerFixture f;
+    auto body = make_body(5);
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body, 1), 100, f.sink);
+    (void)f.seq.on_message(make_view(2, FeedSide::B, body, 2), 200, f.sink);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body, 3), 300, f.sink);
+    CHECK_EQ(f.emissions.size(), 3u);
+    CHECK_EQ(static_cast<int>(f.emissions[0].side), static_cast<int>(FeedSide::A));
+    CHECK_EQ(static_cast<int>(f.emissions[1].side), static_cast<int>(FeedSide::B));
+    CHECK_EQ(static_cast<int>(f.emissions[2].side), static_cast<int>(FeedSide::A));
+    TEST_PASS("test_alternating_winning_side");
+}
+
+void test_duplicate_second_copy_stale_dropped() {
+    SequencerFixture f;
+    auto body = make_body(10);
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body, 1), 100, f.sink);
+    CHECK_EQ(f.emissions.size(), 1u);
+
+    auto r = f.seq.on_message(make_view(1, FeedSide::B, body, 2), 200, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::DuplicateDropped));
+    CHECK_EQ(f.emissions.size(), 1u);
+    TEST_PASS("test_duplicate_second_copy_stale_dropped");
+}
+
+void test_wrong_logical_feed() {
+    SequencerFixture f;
+    auto body = make_body(10);
+    auto bad = make_view(1, FeedSide::A, body);
+    bad.feed.value = 999;
+    auto r = f.seq.on_message(bad, 100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::WrongLogicalFeed));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_wrong_logical_feed");
+}
+
+void test_invalid_side_and_empty_body() {
+    SequencerFixture f;
+    auto body = make_body(10);
+    auto bad_side = make_view(1, FeedSide::A, body);
+    bad_side.side = static_cast<FeedSide>(99);
+    auto r1 = f.seq.on_message(bad_side, 100, f.sink);
+    CHECK_EQ(static_cast<int>(r1.code), static_cast<int>(SequencerCode::InternalInvariantViolation));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+
+    SequencerFixture f2;
+    auto empty = make_view(1, FeedSide::A, std::span<const std::uint8_t>{});
+    auto r2 = f2.seq.on_message(empty, 100, f2.sink);
+    CHECK_EQ(static_cast<int>(r2.code), static_cast<int>(SequencerCode::InternalInvariantViolation));
+    CHECK_EQ(static_cast<int>(f2.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_invalid_side_and_empty_body");
+}
+
+// Reordering tests
+
+void test_reorder_1_3_2() {
+    SequencerFixture f;
+    auto body1 = make_body(10, 0x01);
+    auto body2 = make_body(10, 0x02);
+    auto body3 = make_body(10, 0x03);
+
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body1, 1), 100, f.sink);
+    CHECK_EQ(f.emissions.size(), 1u);
+
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body3, 3), 200, f.sink);
+    CHECK_EQ(f.emissions.size(), 1u);
+    CHECK_EQ(f.storage.pending_count(), 1u);
+
+    (void)f.seq.on_message(make_view(2, FeedSide::A, body2, 2), 300, f.sink);
+    CHECK_EQ(f.emissions.size(), 3u);
+    CHECK_EQ(f.emissions[0].sequence, 1u);
+    CHECK_EQ(f.emissions[1].sequence, 2u);
+    CHECK_EQ(f.emissions[2].sequence, 3u);
+    CHECK_EQ(f.storage.pending_count(), 0u);
+    TEST_PASS("test_reorder_1_3_2");
+}
+
+void test_reorder_1_4_3_2_contiguous_flush() {
+    SequencerFixture f(8);
+    auto body1 = make_body(5, 0x01);
+    auto body2 = make_body(5, 0x02);
+    auto body3 = make_body(5, 0x03);
+    auto body4 = make_body(5, 0x04);
+
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body1, 1), 100, f.sink);
+    (void)f.seq.on_message(make_view(4, FeedSide::A, body4, 4), 200, f.sink);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body3, 3), 300, f.sink);
+    CHECK_EQ(f.emissions.size(), 1u);
+
+    (void)f.seq.on_message(make_view(2, FeedSide::A, body2, 2), 400, f.sink);
+    CHECK_EQ(f.emissions.size(), 4u);
+    CHECK_EQ(f.emissions[0].sequence, 1u);
+    CHECK_EQ(f.emissions[1].sequence, 2u);
+    CHECK_EQ(f.emissions[2].sequence, 3u);
+    CHECK_EQ(f.emissions[3].sequence, 4u);
+    TEST_PASS("test_reorder_1_4_3_2_contiguous_flush");
+}
+
+void test_deeper_contiguous_flush() {
+    SequencerFixture f(8);
+    for (std::uint32_t s = 1; s <= 5; ++s) {
+        auto body = make_body(5, static_cast<std::uint8_t>(s));
+        if (s == 1) {
+            (void)f.seq.on_message(make_view(s, FeedSide::A, body, s), s * 100, f.sink);
+        }
+    }
+    CHECK_EQ(f.emissions.size(), 1u);
+
+    auto b5 = make_body(5, 0x05);
+    (void)f.seq.on_message(make_view(5, FeedSide::A, b5, 5), 500, f.sink);
+    auto b4 = make_body(5, 0x04);
+    (void)f.seq.on_message(make_view(4, FeedSide::A, b4, 4), 600, f.sink);
+    auto b3 = make_body(5, 0x03);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, b3, 3), 700, f.sink);
+    CHECK_EQ(f.emissions.size(), 1u);
+
+    auto b2 = make_body(5, 0x02);
+    (void)f.seq.on_message(make_view(2, FeedSide::A, b2, 2), 800, f.sink);
+    CHECK_EQ(f.emissions.size(), 5u);
+    for (std::uint32_t i = 0; i < 5; ++i)
+        CHECK_EQ(f.emissions[i].sequence, i + 1);
+    TEST_PASS("test_deeper_contiguous_flush");
+}
+
+void test_future_duplicate_equal_bytes() {
+    SequencerFixture f;
+    auto body = make_body(10, 0xCC);
+
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body, 3), 100, f.sink);
+    CHECK_EQ(f.storage.pending_count(), 1u);
+
+    auto r = f.seq.on_message(make_view(3, FeedSide::B, body, 4), 200, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::DuplicateDropped));
+    CHECK_EQ(f.storage.pending_count(), 1u);
+    TEST_PASS("test_future_duplicate_equal_bytes");
+}
+
+void test_future_duplicate_different_length() {
+    SequencerFixture f;
+    auto body8 = make_body(8, 0xCC);
+    auto body10 = make_body(10, 0xCC);
+
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body8, 3), 100, f.sink);
+    CHECK_EQ(f.storage.pending_count(), 1u);
+
+    auto r = f.seq.on_message(make_view(3, FeedSide::B, body10, 4), 200, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::DuplicatePayloadMismatch));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_future_duplicate_different_length");
+}
+
+void test_future_duplicate_different_bytes() {
+    SequencerFixture f;
+    auto bodyA = make_body(10, 0xCC);
+    auto bodyB = make_body(10, 0xDD);
+
+    (void)f.seq.on_message(make_view(3, FeedSide::A, bodyA, 3), 100, f.sink);
+    auto r = f.seq.on_message(make_view(3, FeedSide::B, bodyB, 4), 200, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::DuplicatePayloadMismatch));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_future_duplicate_different_bytes");
+}
+
+void test_pending_metadata_preserved() {
+    SequencerFixture f;
+    auto body = make_seq_body(3, 10);
+    (void)f.seq.on_message(make_view(3, FeedSide::B, body, 100), 500, f.sink);
+
+    auto v = f.storage.view_message(3);
+    CHECK(v.found);
+    CHECK_EQ(v.sequence, 3u);
+    CHECK_EQ(static_cast<int>(v.side), static_cast<int>(FeedSide::B));
+    CHECK_EQ(v.capture_index, 100u);
+    CHECK_EQ(v.capture_monotonic_ns, 10000u);
+    TEST_PASS("test_pending_metadata_preserved");
+}
+
+void test_future_beyond_window() {
+    SequencerFixture f(4);
+    auto body = make_body(10);
+    auto r = f.seq.on_message(make_view(10, FeedSide::A, body, 10), 100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::ReorderDistanceExceeded));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_future_beyond_window");
+}
+
+void test_ambiguous_half_range() {
+    SequencerFixture f(4);
+    auto body = make_body(10);
+    auto r = f.seq.on_message(
+        make_view(1u + 0x80000000u, FeedSide::A, body, 1), 100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::AmbiguousSequenceRelation));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_ambiguous_half_range");
+}
+
+void test_natural_uint32_wrap() {
+    SequencerFixture f(8);
+    std::vector<SlotMetadata> slots2(8);
+    std::vector<std::uint8_t> arena2(8 * 64);
+    MessageStorage storage2;
+    storage2.initialize(slots2, arena2, {4, 4 * 64, 64});
+
+    DualFeedSequencer seq2;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 4 * 64, 64};
+    (void)seq2.initialize(LogicalFeedId{FEED_ID}, cfg, storage2);
+    (void)seq2.start(0xFFFFFFFEu);
+
+    std::vector<EmissionSink::Entry> log2;
+    EmissionSink sink2{&log2};
+
+    auto b_max = make_body(5, 0xFE);
+    (void)seq2.on_message(make_view(0xFFFFFFFFu, FeedSide::A, b_max, 1), 100, sink2);
+    CHECK_EQ(log2.size(), 0u);
+
+    auto b_zero = make_body(5, 0x00);
+    (void)seq2.on_message(make_view(0u, FeedSide::A, b_zero, 2), 200, sink2);
+    CHECK_EQ(log2.size(), 0u);
+
+    auto b_expected = make_body(5, 0xFE);
+    (void)seq2.on_message(make_view(0xFFFFFFFEu, FeedSide::A, b_expected, 3), 300, sink2);
+    CHECK_EQ(log2.size(), 3u);
+    CHECK_EQ(log2[0].sequence, 0xFFFFFFFEu);
+    CHECK_EQ(log2[1].sequence, 0xFFFFFFFFu);
+    CHECK_EQ(log2[2].sequence, 0u);
+    CHECK_EQ(seq2.next_expected_seq(), 1u);
+    TEST_PASS("test_natural_uint32_wrap");
+}
+
+void test_modulo_slot_lookup_across_wrap() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 4 * 64, 64};
+    (void)seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    (void)seq.start(0xFFFFFFFCu);
+
+    std::vector<EmissionSink::Entry> log;
+    EmissionSink sink{&log};
+
+    auto body_fe = make_body(5, 0xFE);
+    (void)seq.on_message(make_view(0xFFFFFFFEu, FeedSide::A, body_fe, 1), 100, sink);
+
+    CHECK_EQ(static_cast<std::size_t>(0xFFFFFFFEu) % 8,
+              static_cast<std::size_t>(6u) % 8);
+    CHECK(storage.is_occupied(0xFFFFFFFEu));
+    TEST_PASS("test_modulo_slot_lookup_across_wrap");
+}
+
+// Capacity tests
+
+void test_pending_message_capacity_precedes_byte_capacity() {
+    // Config: max_reorder_messages=3, max_reorder_bytes=3*32=96, max_message_bytes=32.
+    // max_reorder_distance=8 so seq 6 is FutureWithinWindow (delta=5 <= 8).
+    // Fill all 3 pending-message slots with small bodies, then submit a 4th message
+    // that is also oversized (>32 bytes). PendingMessageCapacityExceeded must win.
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 32);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {3, 3 * 32, 32});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 8;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {3, 3 * 32, 32};
+    (void)seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    (void)seq.start(1);
+
+    std::vector<EmissionSink::Entry> log;
+    EmissionSink sink{&log};
+
+    auto small = make_body(5);
+    (void)seq.on_message(make_view(3, FeedSide::A, small, 3), 100, sink);
+    (void)seq.on_message(make_view(4, FeedSide::A, small, 4), 200, sink);
+    (void)seq.on_message(make_view(5, FeedSide::A, small, 5), 300, sink);
+    CHECK_EQ(storage.pending_count(), 3u);
+
+    auto oversized = make_body(40);
+    auto r = seq.on_message(make_view(6, FeedSide::A, oversized, 6), 400, sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::PendingMessageCapacityExceeded));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    CHECK_EQ(storage.pending_count(), 3u);
+    CHECK_EQ(log.size(), 0u);
+    CHECK(!storage.is_occupied(6));
+    TEST_PASS("test_pending_message_capacity_precedes_byte_capacity");
+}
+
+void test_pending_byte_limit() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 50, 64});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 50, 64};
+    (void)seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    (void)seq.start(1);
+
+    std::vector<EmissionSink::Entry> log;
+    EmissionSink sink{&log};
+
+    auto big = make_body(30);
+    (void)seq.on_message(make_view(3, FeedSide::A, big, 3), 100, sink);
+    CHECK_EQ(storage.pending_bytes(), 30u);
+
+    auto over = make_body(35);
+    auto r = seq.on_message(make_view(4, FeedSide::A, over, 4), 200, sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::PendingByteCapacityExceeded));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_pending_byte_limit");
+}
+
+void test_per_message_body_limit() {
+    SequencerFixture f(4, 32, 1000);
+    auto too_big = make_body(33);
+    auto r = f.seq.on_message(make_view(3, FeedSide::A, too_big, 3), 100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::PendingByteCapacityExceeded));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_per_message_body_limit");
+}
+
+void test_storage_slot_conflict_invariant() {
+    // Valid config: slot_capacity >= max_reorder_distance.
+    // Simulate the impossible conflicting slot after successful initialization.
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {8, 8 * 64, 64});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 8;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {8, 8 * 64, 64};
+    (void)seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    (void)seq.start(1);
+
+    std::vector<EmissionSink::Entry> log;
+    EmissionSink sink{&log};
+
+    // Directly insert seq 1 into storage, creating an impossible state
+    // where the expected sequence occupies a slot.
+    auto body1 = make_body(5);
+    CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body1)),
+             static_cast<int>(InsertResult::Ok));
+    CHECK_EQ(storage.pending_count(), 1u);
+
+    // seq 9 hashes to same slot as seq 1 (9%8=1, 1%8=1) and is within window (delta=8)
+    auto body9 = make_body(5);
+    auto r = seq.on_message(make_view(9, FeedSide::A, body9, 9), 100, sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::InternalInvariantViolation));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_storage_slot_conflict_invariant");
+}
+
+void test_no_partial_state_on_failure() {
+    // Custom fixture: max_reorder_messages=2 but max_reorder_distance=4
+    std::vector<SlotMetadata> slots(4);
+    std::vector<std::uint8_t> arena(4 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {2, 2 * 64, 64});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {2, 2 * 64, 64};
+    (void)seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    (void)seq.start(1);
+
+    std::vector<EmissionSink::Entry> log;
+    EmissionSink sink{&log};
+
+    auto body = make_body(5);
+    (void)seq.on_message(make_view(3, FeedSide::A, body, 3), 100, sink);
+    (void)seq.on_message(make_view(4, FeedSide::A, body, 4), 200, sink);
+    CHECK_EQ(storage.pending_count(), 2u);
+
+    auto r = seq.on_message(make_view(5, FeedSide::A, body, 5), 300, sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::PendingMessageCapacityExceeded));
+    CHECK_EQ(storage.pending_count(), 2u);
+    CHECK_EQ(log.size(), 0u);
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_no_partial_state_on_failure");
+}
+
+// Deadline/time tests
+
+void test_first_future_creates_deadline() {
+    SequencerFixture f(4, 64, 1000);
+    auto body = make_body(5);
+    auto r = f.seq.on_message(make_view(3, FeedSide::A, body, 3), 100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::BufferedOutOfOrder));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::GapWait));
+    TEST_PASS("test_first_future_creates_deadline");
+}
+
+void test_later_future_does_not_extend_deadline() {
+    SequencerFixture f(8, 64, 1000);
+    auto body3 = make_body(5, 0x03);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body3, 3), 100, f.sink);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::GapWait));
+
+    auto body4 = make_body(5, 0x04);
+    (void)f.seq.on_message(make_view(4, FeedSide::A, body4, 4), 500, f.sink);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::GapWait));
+
+    auto r = f.seq.on_time(1100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::GapConfirmed));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_later_future_does_not_extend_deadline");
+}
+
+void test_equal_duplicate_does_not_extend_deadline() {
+    SequencerFixture f(8, 64, 1000);
+    auto body = make_body(5, 0xCC);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body, 3), 100, f.sink);
+    (void)f.seq.on_message(make_view(3, FeedSide::B, body, 4), 500, f.sink);
+
+    auto r = f.seq.on_time(1100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::GapConfirmed));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_equal_duplicate_does_not_extend_deadline");
+}
+
+void test_partial_resolution_does_not_extend_deadline() {
+    SequencerFixture f(8, 64, 1000);
+    auto body1 = make_body(5, 0x01);
+    auto body2 = make_body(5, 0x02);
+    auto body3 = make_body(5, 0x03);
+    auto body5 = make_body(5, 0x05);
+
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body1, 1), 100, f.sink);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body3, 3), 200, f.sink);
+    (void)f.seq.on_message(make_view(5, FeedSide::A, body5, 5), 300, f.sink);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::GapWait));
+    CHECK_EQ(f.storage.pending_count(), 2u);
+
+    // Partial resolution: seq 2 arrives, flushes 2 and 3, but seq 5 remains pending
+    (void)f.seq.on_message(make_view(2, FeedSide::A, body2, 500), 500, f.sink);
+    CHECK_EQ(f.storage.pending_count(), 1u);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::GapWait));
+
+    // Original deadline was 200 + 1000 = 1200. Must not be extended.
+    auto r = f.seq.on_time(1200, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::GapConfirmed));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_partial_resolution_does_not_extend_deadline");
+}
+
+void test_pending_becomes_empty_returns_running() {
+    SequencerFixture f(8, 64, 1000);
+    auto body1 = make_body(5, 0x01);
+    auto body3 = make_body(5, 0x03);
+    auto body2 = make_body(5, 0x02);
+
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body1, 1), 100, f.sink);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body3, 3), 200, f.sink);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::GapWait));
+
+    (void)f.seq.on_message(make_view(2, FeedSide::A, body2, 2), 300, f.sink);
+    CHECK_EQ(f.storage.pending_count(), 0u);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Running));
+    TEST_PASS("test_pending_becomes_empty_returns_running");
+}
+
+void test_ontime_before_deadline_gap_waiting() {
+    SequencerFixture f(8, 64, 1000);
+    auto body = make_body(5);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body, 3), 100, f.sink);
+
+    auto r = f.seq.on_time(500, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::GapWaiting));
+    CHECK_EQ(r.observed_seq, 1u);
+    CHECK_EQ(r.expected_seq, 1u);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::GapWait));
+    TEST_PASS("test_ontime_before_deadline_gap_waiting");
+}
+
+void test_ontime_running_no_action() {
+    SequencerFixture f;
+    auto r = f.seq.on_time(100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::NoAction));
+    CHECK_EQ(r.observed_seq, 1u);
+    CHECK_EQ(r.expected_seq, 1u);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Running));
+    TEST_PASS("test_ontime_running_no_action");
+}
+
+void test_event_exactly_at_deadline_gap_confirmed() {
+    SequencerFixture f(8, 64, 1000);
+    auto body = make_body(5);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body, 3), 100, f.sink);
+
+    auto r = f.seq.on_time(1100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::GapConfirmed));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_event_exactly_at_deadline_gap_confirmed");
+}
+
+void test_expected_message_at_deadline_rejected() {
+    SequencerFixture f(8, 64, 1000);
+    auto body1 = make_body(5, 0x01);
+    auto body3 = make_body(5, 0x03);
+    auto body2 = make_body(5, 0x02);
+
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body1, 1), 100, f.sink);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body3, 3), 200, f.sink);
+
+    std::size_t count_before = f.emissions.size();
+    auto r = f.seq.on_message(make_view(2, FeedSide::A, body2, 2), 1200, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::GapConfirmed));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    CHECK_EQ(f.emissions.size(), count_before);
+    TEST_PASS("test_expected_message_at_deadline_rejected");
+}
+
+void test_clock_regression_running() {
+    SequencerFixture f;
+    auto body = make_body(5);
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body, 1), 200, f.sink);
+    CHECK_EQ(f.emissions.size(), 1u);
+
+    auto r = f.seq.on_message(make_view(2, FeedSide::A, body, 2), 100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::ClockRegression));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_clock_regression_running");
+}
+
+void test_clock_regression_gap_wait() {
+    SequencerFixture f(8, 64, 1000);
+    auto body = make_body(5);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body, 3), 200, f.sink);
+
+    auto r = f.seq.on_time(100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::ClockRegression));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_clock_regression_gap_wait");
+}
+
+void test_deadline_overflow() {
+    SequencerFixture f(4, 64, 1000);
+    auto body = make_body(5);
+    auto view = make_view(3, FeedSide::A, body, 3);
+    auto r = f.seq.on_message(view, std::numeric_limits<std::uint64_t>::max(), f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::DeadlineOverflow));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    CHECK_EQ(f.storage.pending_count(), 0u);
+    TEST_PASS("test_deadline_overflow");
+}
+
+// Determinism tests
+
+void test_deterministic_replay() {
+    struct RunRecord {
+        SequencerCode code;
+        std::uint32_t observed_seq;
+        std::uint32_t expected_seq;
+    };
+    struct RunOutcome {
+        std::vector<RunRecord> results;
+        std::vector<EmissionSink::Entry> emissions;
+        SequencerState final_state;
+        std::uint32_t final_next_expected;
+    };
+
+    auto run_once = []() -> RunOutcome {
+        SequencerFixture f(8, 64, 1000);
+        auto b1 = make_body(5, 0x01);
+        auto b3 = make_body(5, 0x03);
+        auto b2 = make_body(5, 0x02);
+        auto b5 = make_body(5, 0x05);
+
+        RunOutcome out;
+        SequencerResult r;
+
+        r = f.seq.on_message(make_view(1, FeedSide::A, b1, 1), 100, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+
+        r = f.seq.on_message(make_view(3, FeedSide::B, b3, 3), 200, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+
+        r = f.seq.on_message(make_view(5, FeedSide::A, b5, 5), 300, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+
+        r = f.seq.on_message(make_view(2, FeedSide::A, b2, 2), 400, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+
+        r = f.seq.on_message(make_view(4, FeedSide::B, b3, 4), 500, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+
+        out.emissions = f.emissions;
+        out.final_state = f.seq.state();
+        out.final_next_expected = f.seq.next_expected_seq();
+        return out;
+    };
+
+    auto run1 = run_once();
+    auto run2 = run_once();
+
+    // Compare every SequencerResult
+    CHECK(run1.results.size() == run2.results.size());
+    for (std::size_t i = 0; i < run1.results.size(); ++i) {
+        CHECK_EQ(static_cast<int>(run1.results[i].code), static_cast<int>(run2.results[i].code));
+        CHECK_EQ(run1.results[i].observed_seq, run2.results[i].observed_seq);
+        CHECK_EQ(run1.results[i].expected_seq, run2.results[i].expected_seq);
+    }
+
+    // Compare complete ordered emissions
+    CHECK(run1.emissions.size() == run2.emissions.size());
+    for (std::size_t i = 0; i < run1.emissions.size(); ++i) {
+        CHECK_EQ(run1.emissions[i].sequence, run2.emissions[i].sequence);
+        CHECK_EQ(static_cast<int>(run1.emissions[i].side), static_cast<int>(run2.emissions[i].side));
+        CHECK_EQ(run1.emissions[i].capture_index, run2.emissions[i].capture_index);
+        CHECK_EQ(run1.emissions[i].capture_monotonic_ns, run2.emissions[i].capture_monotonic_ns);
+        CHECK(run1.emissions[i].body == run2.emissions[i].body);
+    }
+
+    // Compare final state and next_expected
+    CHECK_EQ(static_cast<int>(run1.final_state), static_cast<int>(run2.final_state));
+    CHECK_EQ(run1.final_next_expected, run2.final_next_expected);
+    TEST_PASS("test_deterministic_replay");
+}
+
+void test_exact_emitted_sequence_order() {
+    SequencerFixture f(8, 64, 1000);
+    auto b1 = make_body(5, 0x01);
+    auto b3 = make_body(5, 0x03);
+    auto b2 = make_body(5, 0x02);
+
+    (void)f.seq.on_message(make_view(1, FeedSide::A, b1, 10), 100, f.sink);
+    (void)f.seq.on_message(make_view(3, FeedSide::B, b3, 30), 200, f.sink);
+    (void)f.seq.on_message(make_view(2, FeedSide::A, b2, 20), 300, f.sink);
+
+    CHECK_EQ(f.emissions.size(), 3u);
+    CHECK_EQ(f.emissions[0].sequence, 1u);
+    CHECK_EQ(f.emissions[0].capture_index, 10u);
+    CHECK_EQ(f.emissions[1].sequence, 2u);
+    CHECK_EQ(f.emissions[1].capture_index, 20u);
+    CHECK_EQ(f.emissions[2].sequence, 3u);
+    CHECK_EQ(f.emissions[2].capture_index, 30u);
+    TEST_PASS("test_exact_emitted_sequence_order");
+}
+
+void test_compile_time_checks() {
+    static_assert(!std::is_copy_constructible_v<DualFeedSequencer>);
+    static_assert(!std::is_copy_assignable_v<DualFeedSequencer>);
+    static_assert(!std::is_move_constructible_v<DualFeedSequencer>);
+    static_assert(!std::is_move_assignable_v<DualFeedSequencer>);
+
+    static_assert(noexcept(std::declval<DualFeedSequencer&>().state()));
+    static_assert(noexcept(std::declval<DualFeedSequencer&>().next_expected_seq()));
+
+    static_assert(noexcept(std::declval<DualFeedSequencer&>().initialize(
+        std::declval<LogicalFeedId>(),
+        std::declval<SequencerConfig>(),
+        std::declval<MessageStorage&>())));
+
+    static_assert(noexcept(std::declval<DualFeedSequencer&>().start(
+        std::declval<std::uint32_t>())));
+
+    static_assert(noexcept(std::declval<DualFeedSequencer&>().reset()));
+
+    using TestSink = EmissionSink;
+    static_assert(std::is_nothrow_invocable_r_v<void, TestSink&,
+        const OrderedMessageMetadata&, std::span<const std::uint8_t>>);
+
+    static_assert(noexcept(std::declval<DualFeedSequencer&>().on_message(
+        std::declval<const FramedMessageView&>(),
+        std::declval<std::uint64_t>(),
+        std::declval<TestSink&>())));
+
+    static_assert(noexcept(std::declval<DualFeedSequencer&>().on_time(
+        std::declval<std::uint64_t>(),
+        std::declval<TestSink&>())));
+
+    TEST_PASS("test_compile_time_checks");
+}
+
+void test_result_field_entry_state() {
+    SequencerFixture f;
+    auto body = make_body(5);
+    (void)f.seq.on_message(make_view(1, FeedSide::A, body, 1), 100, f.sink);
+
+    auto r = f.seq.on_message(make_view(5, FeedSide::A, body, 5), 200, f.sink);
+    CHECK_EQ(r.observed_seq, 5u);
+    CHECK_EQ(r.expected_seq, 2u);
+
+    auto rt = f.seq.on_time(300, f.sink);
+    CHECK_EQ(rt.observed_seq, 2u);
+    CHECK_EQ(rt.expected_seq, 2u);
+    CHECK_EQ(f.seq.next_expected_seq(), 2u);
+    TEST_PASS("test_result_field_entry_state");
+}
+
+void test_init_zero_reorder_wait_invalid() {
+    std::vector<SlotMetadata> slots(4);
+    std::vector<std::uint8_t> arena(4 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = 1;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 0;
+    cfg.storage = {4, 4 * 64, 64};
+    auto r = seq.initialize(LogicalFeedId{1}, cfg, storage);
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::InvalidConfig));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::Uninitialized));
+    TEST_PASS("test_init_zero_reorder_wait_invalid");
+}
+
+void test_double_init_invalid() {
+    SequencerFixture f;
+    std::vector<SlotMetadata> slots2(4);
+    std::vector<std::uint8_t> arena2(4 * 64);
+    MessageStorage storage2;
+    storage2.initialize(slots2, arena2, {4, 4 * 64, 64});
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 4 * 64, 64};
+    auto r = f.seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage2);
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::InvalidTransition));
+    TEST_PASS("test_double_init_invalid");
+}
+
+void test_start_from_non_stopped() {
+    SequencerFixture f;
+    auto r = f.seq.start(100);
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::InvalidTransition));
+    TEST_PASS("test_start_from_non_stopped");
+}
+
+void test_reset_from_running() {
+    SequencerFixture f;
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Running));
+    auto r = f.seq.reset();
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::Reset));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Stopped));
+    TEST_PASS("test_reset_from_running");
+}
+
+void test_reset_from_gap_wait() {
+    SequencerFixture f(8, 64, 1000);
+    auto body = make_body(5);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body, 3), 100, f.sink);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::GapWait));
+
+    auto r = f.seq.reset();
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::Reset));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Stopped));
+    CHECK_EQ(f.storage.pending_count(), 0u);
+    TEST_PASS("test_reset_from_gap_wait");
+}
+
+void test_reset_from_failed_closed() {
+    SequencerFixture f;
+    auto body = make_body(10);
+    auto bad = make_view(1, FeedSide::A, body);
+    bad.feed.value = 999;
+    (void)f.seq.on_message(bad, 100, f.sink);
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+
+    auto r = f.seq.reset();
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::Reset));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::Stopped));
+    TEST_PASS("test_reset_from_failed_closed");
+}
+
+void test_result_fields_on_time() {
+    SequencerFixture f(8, 64, 1000);
+    auto body = make_body(5);
+    (void)f.seq.on_message(make_view(3, FeedSide::A, body, 3), 100, f.sink);
+    CHECK_EQ(f.seq.next_expected_seq(), 1u);
+
+    auto r = f.seq.on_time(500, f.sink);
+    CHECK_EQ(r.observed_seq, 1u);
+    CHECK_EQ(r.expected_seq, 1u);
+    TEST_PASS("test_result_fields_on_time");
+}
+
+// --- Architecture-review correction tests ---
+
+void test_feed_mismatch_invalid_config() {
+    std::vector<SlotMetadata> slots(4);
+    std::vector<std::uint8_t> arena(4 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 4 * 64, 64};
+
+    // Feed argument does not match config.logical_feed
+    auto r = seq.initialize(LogicalFeedId{999}, cfg, storage);
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::InvalidConfig));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::Uninitialized));
+    TEST_PASS("test_feed_mismatch_invalid_config");
+}
+
+void test_insufficient_storage_capacity() {
+    // Storage max_reorder_messages (2) < declared config (4)
+    std::vector<SlotMetadata> slots(4);
+    std::vector<std::uint8_t> arena(4 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {2, 2 * 64, 64});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 4 * 64, 64};
+
+    auto r = seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::InvalidConfig));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::Uninitialized));
+    TEST_PASS("test_insufficient_storage_capacity");
+}
+
+void test_slot_capacity_below_reorder_distance() {
+    // slot_capacity(4) < max_reorder_distance(6)
+    std::vector<SlotMetadata> slots(4);
+    std::vector<std::uint8_t> arena(4 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 6;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 4 * 64, 64};
+
+    auto r = seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::InvalidConfig));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::Uninitialized));
+    TEST_PASS("test_slot_capacity_below_reorder_distance");
+}
+
+void test_non_empty_storage_rejected() {
+    std::vector<SlotMetadata> slots(4);
+    std::vector<std::uint8_t> arena(4 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    auto body = make_body(5);
+    CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
+             static_cast<int>(InsertResult::Ok));
+    CHECK_EQ(storage.pending_count(), 1u);
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 4 * 64, 64};
+
+    auto r = seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    CHECK_EQ(static_cast<int>(r), static_cast<int>(SequencerCode::InvalidConfig));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::Uninitialized));
+    TEST_PASS("test_non_empty_storage_rejected");
+}
+
+void test_declared_limits_enforced_with_larger_storage() {
+    // Actual storage is larger than declared limits.
+    // Sequencer must enforce declared limits, not storage's larger limits.
+    std::vector<SlotMetadata> slots(16);
+    std::vector<std::uint8_t> arena(16 * 128);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {8, 8 * 128, 128});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 8;
+    cfg.reorder_wait_ns = 1000;
+    // Declared limits are smaller than actual storage
+    cfg.storage = {3, 3 * 32, 32};
+    (void)seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    (void)seq.start(1);
+
+    std::vector<EmissionSink::Entry> log;
+    EmissionSink sink{&log};
+
+    // Insert future messages up to declared message limit (3)
+    auto body10 = make_body(20);
+    (void)seq.on_message(make_view(3, FeedSide::A, body10, 3), 100, sink);
+    (void)seq.on_message(make_view(4, FeedSide::A, body10, 4), 200, sink);
+    (void)seq.on_message(make_view(5, FeedSide::A, body10, 5), 300, sink);
+    CHECK_EQ(storage.pending_count(), 3u);
+
+    // 4th future message exceeds declared message limit (3), even though
+    // actual storage could hold more (8)
+    auto r = seq.on_message(make_view(6, FeedSide::A, body10, 6), 400, sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::PendingMessageCapacityExceeded));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    TEST_PASS("test_declared_limits_enforced_with_larger_storage");
+}
+
+void test_b_copy_first_expected_wins() {
+    // B copy arrives first for expected sequence; later A copy is stale-dropped.
+    SequencerFixture f;
+    auto bodyB = make_body(10, 0xBB);
+    auto bodyA = make_body(10, 0xAA);
+
+    auto rB = f.seq.on_message(make_view(1, FeedSide::B, bodyB, 1), 100, f.sink);
+    CHECK_EQ(static_cast<int>(rB.code), static_cast<int>(SequencerCode::Emitted));
+    CHECK_EQ(f.emissions.size(), 1u);
+    CHECK_EQ(static_cast<int>(f.emissions[0].side), static_cast<int>(FeedSide::B));
+
+    // Later A copy is stale (next_expected already advanced to 2)
+    auto rA = f.seq.on_message(make_view(1, FeedSide::A, bodyA, 2), 200, f.sink);
+    CHECK_EQ(static_cast<int>(rA.code), static_cast<int>(SequencerCode::DuplicateDropped));
+    CHECK_EQ(f.emissions.size(), 1u);
+    TEST_PASS("test_b_copy_first_expected_wins");
+}
+
+void test_oversized_expected_rejected() {
+    // Expected message exceeding declared max_message_bytes must fail
+    // without emission or sequence advance.
+    SequencerFixture f(4, 32, 1000);
+    auto too_big = make_body(33);
+
+    auto r = f.seq.on_message(make_view(1, FeedSide::A, too_big, 1), 100, f.sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::PendingByteCapacityExceeded));
+    CHECK_EQ(static_cast<int>(f.seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    CHECK(f.emissions.empty());
+    CHECK_EQ(f.seq.next_expected_seq(), 1u);
+    TEST_PASS("test_oversized_expected_rejected");
+}
+
+void test_deadline_overflow_arena_unchanged() {
+    // Deadline overflow must leave the target arena slice byte-for-byte unchanged.
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    // Fill arena with a known pattern
+    for (std::size_t i = 0; i < arena.size(); ++i)
+        arena[i] = static_cast<std::uint8_t>(i & 0xFF);
+
+    std::vector<std::uint8_t> arena_snapshot = arena;
+
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    DualFeedSequencer seq;
+    SequencerConfig cfg{};
+    cfg.logical_feed.value = FEED_ID;
+    cfg.max_reorder_distance = 4;
+    cfg.reorder_wait_ns = 1000;
+    cfg.storage = {4, 4 * 64, 64};
+    (void)seq.initialize(LogicalFeedId{FEED_ID}, cfg, storage);
+    (void)seq.start(1);
+
+    std::vector<EmissionSink::Entry> log;
+    EmissionSink sink{&log};
+
+    auto body = make_body(10);
+    auto r = seq.on_message(make_view(3, FeedSide::A, body, 3),
+                            std::numeric_limits<std::uint64_t>::max(), sink);
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(SequencerCode::DeadlineOverflow));
+    CHECK_EQ(static_cast<int>(seq.state()), static_cast<int>(SequencerState::FailedClosed));
+    CHECK_EQ(storage.pending_count(), 0u);
+
+    // Arena must be byte-for-byte unchanged
+    CHECK(arena == arena_snapshot);
+    TEST_PASS("test_deadline_overflow_arena_unchanged");
+}
+
 } // namespace
 
 #ifdef _MSC_VER
@@ -801,6 +1971,7 @@ void test_checked_pending_byte_helper() {
 #pragma warning(disable : 4702)
 #endif
 int main() {
+    // MessageStorage tests (Phase 1)
     test_valid_init_and_reset();
     test_zero_max_reorder_messages();
     test_half_range_max_reorder_messages();
@@ -836,7 +2007,69 @@ int main() {
     test_noncopyable_nonmovable();
     test_checked_pending_byte_helper();
 
-    std::printf("All %d test cases passed.\n", 35);
+    // DualFeedSequencer tests (Phase 2)
+    test_sequencer_init_start_running();
+    test_sequencer_reset_preserves_config_restart();
+    test_sequencer_failed_closed_requires_reset();
+    test_sequencer_invalid_init_remains_uninitialized();
+    test_sequencer_calls_before_init();
+    test_sequencer_no_emission_after_failed_closed();
+    test_ab_first_valid_copy_wins();
+    test_alternating_winning_side();
+    test_duplicate_second_copy_stale_dropped();
+    test_wrong_logical_feed();
+    test_invalid_side_and_empty_body();
+    test_reorder_1_3_2();
+    test_reorder_1_4_3_2_contiguous_flush();
+    test_deeper_contiguous_flush();
+    test_future_duplicate_equal_bytes();
+    test_future_duplicate_different_length();
+    test_future_duplicate_different_bytes();
+    test_pending_metadata_preserved();
+    test_future_beyond_window();
+    test_ambiguous_half_range();
+    test_natural_uint32_wrap();
+    test_modulo_slot_lookup_across_wrap();
+    test_pending_message_capacity_precedes_byte_capacity();
+    test_pending_byte_limit();
+    test_per_message_body_limit();
+    test_storage_slot_conflict_invariant();
+    test_no_partial_state_on_failure();
+    test_first_future_creates_deadline();
+    test_later_future_does_not_extend_deadline();
+    test_equal_duplicate_does_not_extend_deadline();
+    test_partial_resolution_does_not_extend_deadline();
+    test_pending_becomes_empty_returns_running();
+    test_ontime_before_deadline_gap_waiting();
+    test_ontime_running_no_action();
+    test_event_exactly_at_deadline_gap_confirmed();
+    test_expected_message_at_deadline_rejected();
+    test_clock_regression_running();
+    test_clock_regression_gap_wait();
+    test_deadline_overflow();
+    test_deterministic_replay();
+    test_exact_emitted_sequence_order();
+    test_compile_time_checks();
+    test_result_field_entry_state();
+    test_init_zero_reorder_wait_invalid();
+    test_double_init_invalid();
+    test_start_from_non_stopped();
+    test_reset_from_running();
+    test_reset_from_gap_wait();
+    test_reset_from_failed_closed();
+    test_result_fields_on_time();
+
+    // Architecture-review correction tests
+    test_feed_mismatch_invalid_config();
+    test_insufficient_storage_capacity();
+    test_slot_capacity_below_reorder_distance();
+    test_non_empty_storage_rejected();
+    test_declared_limits_enforced_with_larger_storage();
+    test_b_copy_first_expected_wins();
+    test_oversized_expected_rejected();
+    test_deadline_overflow_arena_unchanged();
+
+    std::printf("All %d test cases passed.\n", 93);
     return 0;
 }
 #ifdef _MSC_VER
