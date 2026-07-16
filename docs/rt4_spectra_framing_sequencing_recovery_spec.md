@@ -3,7 +3,7 @@
 **Date:** 2026-07-16
 **Issues:** #38, #51
 **PR:** #52
-**Status:** `GATE_A_IMPLEMENTATION_AND_DOCUMENTATION_COMPLETE - ARCHITECTURE_REVIEW_PENDING`
+**Status:** `GATE_A_DONE - MERGED - POST_MERGE_CI_PASS`
 
 ## 1. Purpose
 
@@ -20,7 +20,7 @@ UDP datagram
 → later RT-3 integration and Snapshot recovery
 ```
 
-Gate A implementation and documentation are complete in Draft PR #52. Final Architecture Review is pending. Ready-for-review is not authorized. Merge is not authorized. Gate B, Gate C and Gate D remain blocked.
+Gate A implementation and documentation are complete. Final Architecture Review passed. PR #52 merged. Post-merge CI #238 passed on main. Gate B, Gate C and Gate D remain blocked.
 
 This document is the sole authoritative Gate A contract.
 
@@ -68,7 +68,7 @@ Subsumed historical phases:
 
 - A1: UDP framing primitive — done.
 - A2: deterministic `std::uint32_t` serial-number classification primitive — done.
-- A3/A4/A5: implementation and acceptance-evidence phases are complete in Draft PR #52; final Architecture Review is pending; Ready is not authorized; merge is not authorized.
+- A3/A4/A5: implementation and acceptance-evidence phases are complete; PR #52 merged; Final Architecture Review passed; post-merge CI #238 passed.
 
 Gate A is a single coherent transport-control subsystem:
 
@@ -982,9 +982,9 @@ Historical internal phases (now consolidated into Gate A Completion):
 
 1. A1 framing types, parser and little-endian decoding — done.
 2. A2 deterministic serial-number classification primitive — done.
-3. A3/A4/A5: bounded `MessageStorage`, complete A/B sequencer, gap recovery, Release benchmarks and allocation evidence — done in Draft PR #52.
+3. A3/A4/A5: bounded `MessageStorage`, complete A/B sequencer, gap recovery, Release benchmarks and allocation evidence — done; PR #52 merged.
 
-The work is one Issue (#51), one branch, one Draft PR (#52) and one final merge. Gate B cannot begin before Gate A Owner acceptance.
+The work is one Issue (#51), one branch, one merged PR (#52) and one final merge. Gate B cannot begin before Gate A Owner acceptance.
 
 ## 18. Gate A acceptance review
 

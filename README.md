@@ -19,10 +19,10 @@ QSH retirement: DONE (PR #34 merged, main SHA 7c05cfb979cd0144be508e41a6f3a6229b
   post-merge CI #175 / run 29361711016 success, 6 jobs)
   Active Protect main ruleset (ID 18924726): 6 required checks.
 CI-2 caching: POSTPONED, not started, not authorized
-RT-4 Gate A: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR #52
-  Final Architecture Review pending; Ready not authorized; merge not authorized
-  Gate B, Gate C, Gate D blocked
-  Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
+RT-4 Gate A Completion: DONE
+  PR #52 merged; Final Architecture Review PASS; post-merge CI #238 success
+  Gate B, Gate C, Gate D: BLOCKED
+  Next implementation task not authorized
 ```
 
 Read before work:
