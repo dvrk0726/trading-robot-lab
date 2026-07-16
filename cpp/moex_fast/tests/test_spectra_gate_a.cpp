@@ -12,6 +12,10 @@ using namespace moex::spectra;
 
 // --- Test helpers ---
 
+#define CHECK_STORAGE_INIT(result) \
+    CHECK_EQ(static_cast<int>((result).code), static_cast<int>(StorageInitCode::Ok)); \
+    CHECK_EQ(static_cast<int>((result).geometry_code), static_cast<int>(GeometryCode::Ok))
+
 std::vector<std::uint8_t> make_body(std::size_t size, std::uint8_t fill = 0xAB) {
     return std::vector<std::uint8_t>(size, fill);
 }
@@ -53,8 +57,11 @@ struct SequencerFixture {
                      std::size_t max_msg_bytes = 64,
                      std::uint64_t wait_ns = 1000)
         : slots(max_reorder), arena(max_reorder * max_msg_bytes), sink{&emissions} {
-        storage.initialize(slots, arena,
+        auto init_result = storage.initialize(slots, arena,
                            {max_reorder, max_reorder * max_msg_bytes, max_msg_bytes});
+        if (init_result.code != StorageInitCode::Ok ||
+            init_result.geometry_code != GeometryCode::Ok)
+            std::abort();
         SequencerConfig cfg{};
         cfg.logical_feed.value = FEED_ID;
         cfg.max_reorder_distance = max_reorder;
@@ -89,7 +96,7 @@ void test_valid_init_and_reset() {
     CHECK_EQ(storage.pending_bytes(), 0u);
     CHECK_EQ(storage.slot_capacity(), 0u);
 
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
     CHECK(storage.initialized());
     CHECK_EQ(storage.pending_count(), 0u);
     CHECK_EQ(storage.pending_bytes(), 0u);
@@ -179,7 +186,7 @@ void test_exact_capacity_boundaries() {
     CHECK_EQ(static_cast<int>(code), static_cast<int>(GeometryCode::Ok));
 
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 32, 32});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 32, 32}));
     CHECK(storage.initialized());
 
     // Use non-colliding sequence numbers (1..4 map to indices 1..4 in 8-slot)
@@ -202,7 +209,7 @@ void test_exact_capacity_boundaries() {
     std::vector<SlotMetadata> slots2(8);
     std::vector<std::uint8_t> arena2(8 * 64);
     MessageStorage storage2;
-    storage2.initialize(slots2, arena2, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage2.initialize(slots2, arena2, {4, 4 * 64, 64}));
     CHECK_EQ(static_cast<int>(storage2.insert(1, FeedSide::A, 1, 100, big)),
              static_cast<int>(InsertResult::BodyTooLarge));
     CHECK_EQ(storage2.pending_count(), 0u);
@@ -221,7 +228,7 @@ void test_modulo_lookup_wrap() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     // 0xFFFFFFFA % 8 == 2, so this occupies slot index 2
     auto body = make_seq_body(0xFFFFFFFA, 10);
@@ -250,7 +257,7 @@ void test_insert_and_view_metadata() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_body(16, 0xCC);
     CHECK_EQ(static_cast<int>(storage.insert(42, FeedSide::B, 100, 9999, body)),
@@ -270,7 +277,7 @@ void test_source_bytes_unchanged() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_seq_body(10, 20);
     std::vector<std::uint8_t> original = body;
@@ -284,7 +291,7 @@ void test_exactly_one_copy() {
     std::vector<SlotMetadata> slots(4);
     std::vector<std::uint8_t> arena(4 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {2, 2 * 32, 32});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {2, 2 * 32, 32}));
 
     auto body = make_seq_body(5, 24);
     CHECK_EQ(static_cast<int>(storage.insert(5, FeedSide::A, 1, 100, body)),
@@ -303,7 +310,7 @@ void test_equal_duplicate() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_body(10, 0xDD);
     CHECK_EQ(static_cast<int>(storage.insert(50, FeedSide::A, 1, 100, body)),
@@ -319,7 +326,7 @@ void test_mismatched_duplicate() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_body(10, 0xEE);
     CHECK_EQ(static_cast<int>(storage.insert(50, FeedSide::A, 1, 100, body)),
@@ -343,7 +350,7 @@ void test_occupied_index_conflict() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body10 = make_seq_body(10, 8);
     CHECK_EQ(static_cast<int>(storage.insert(10, FeedSide::A, 1, 100, body10)),
@@ -367,7 +374,7 @@ void test_message_count_capacity() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 32);
     MessageStorage storage;
-    storage.initialize(slots, arena, {3, 3 * 32, 32});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {3, 3 * 32, 32}));
 
     for (std::uint32_t i = 1; i <= 3; ++i) {
         auto body = make_body(10);
@@ -387,7 +394,7 @@ void test_actual_pending_byte_capacity() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 100, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 100, 64}));
 
     auto body1 = make_body(60);
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body1)),
@@ -418,7 +425,7 @@ void test_per_message_size_rejection() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 32});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 32}));
 
     auto ok = make_body(32);
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, ok)),
@@ -443,7 +450,7 @@ void test_future_style_size_rejection() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 32});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 32}));
 
     auto ok_future = make_body(20);
     CHECK_EQ(static_cast<int>(storage.insert(10, FeedSide::A, 1, 100, ok_future)),
@@ -462,7 +469,7 @@ void test_no_partial_publication_after_failure() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {2, 2 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {2, 2 * 64, 64}));
 
     auto body = make_body(10);
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
@@ -478,7 +485,7 @@ void test_no_partial_publication_after_failure() {
     std::vector<SlotMetadata> slots2(8);
     std::vector<std::uint8_t> arena2(8 * 64);
     MessageStorage storage2;
-    storage2.initialize(slots2, arena2, {4, 20, 64});
+    CHECK_STORAGE_INIT(storage2.initialize(slots2, arena2, {4, 20, 64}));
 
     auto big = make_body(15);
     CHECK_EQ(static_cast<int>(storage2.insert(1, FeedSide::A, 1, 100, big)),
@@ -506,7 +513,7 @@ void test_release_and_slot_reuse() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body1 = make_body(10, 0x11);
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body1)),
@@ -539,7 +546,7 @@ void test_deterministic_reset_and_reuse() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_body(10);
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
@@ -575,6 +582,13 @@ void test_noexcept_and_noncopyable() {
     static_assert(!std::is_copy_assignable_v<MessageStorage>);
     static_assert(!std::is_move_constructible_v<MessageStorage>);
     static_assert(!std::is_move_assignable_v<MessageStorage>);
+
+    static_assert(std::is_same_v<
+        decltype(std::declval<MessageStorage&>().initialize(
+            std::declval<std::span<SlotMetadata>>(),
+            std::declval<std::span<std::uint8_t>>(),
+            std::declval<MessageStorageConfig>())),
+        StorageInitResult>);
 
     static_assert(noexcept(std::declval<MessageStorage&>().initialize(
         std::declval<std::span<SlotMetadata>>(),
@@ -628,7 +642,7 @@ void test_pre_init_safety() {
 
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
     CHECK(storage.initialized());
     CHECK(!storage.is_occupied(0));
     TEST_PASS("test_pre_init_safety");
@@ -638,7 +652,7 @@ void test_colliding_sequence_not_occupied() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_seq_body(10, 8);
     CHECK_EQ(static_cast<int>(storage.insert(10, FeedSide::A, 1, 100, body)),
@@ -660,7 +674,7 @@ void test_release_colliding_returns_false() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_body(10, 0xAA);
     CHECK_EQ(static_cast<int>(storage.insert(10, FeedSide::A, 1, 100, body)),
@@ -684,7 +698,7 @@ void test_release_reuse_preserves_slice() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     // Insert seq 1 at index 1, payload at offset 1*64=64
     auto body1 = make_body(10, 0x11);
@@ -730,7 +744,7 @@ void test_reset_leaves_initialized_and_reusable() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_body(10);
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
@@ -757,7 +771,7 @@ void test_borrowed_view_metadata() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_seq_body(42, 16);
     CHECK_EQ(static_cast<int>(storage.insert(42, FeedSide::B, 100, 9999, body)),
@@ -786,7 +800,7 @@ void test_empty_view_absent_and_colliding() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     // Absent sequence
     auto v1 = storage.view_message(5);
@@ -906,7 +920,7 @@ void test_sequencer_invalid_init_remains_uninitialized() {
     std::vector<SlotMetadata> slots(4);
     std::vector<std::uint8_t> arena(4 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
     SequencerConfig bad{};
     bad.logical_feed.value = 1;
     bad.max_reorder_distance = 0;
@@ -1172,7 +1186,7 @@ void test_natural_uint32_wrap() {
     std::vector<SlotMetadata> slots2(8);
     std::vector<std::uint8_t> arena2(8 * 64);
     MessageStorage storage2;
-    storage2.initialize(slots2, arena2, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage2.initialize(slots2, arena2, {4, 4 * 64, 64}));
 
     DualFeedSequencer seq2;
     SequencerConfig cfg{};
@@ -1208,7 +1222,7 @@ void test_modulo_slot_lookup_across_wrap() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1241,7 +1255,7 @@ void test_pending_message_capacity_precedes_byte_capacity() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 32);
     MessageStorage storage;
-    storage.initialize(slots, arena, {3, 3 * 32, 32});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {3, 3 * 32, 32}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1275,7 +1289,7 @@ void test_pending_byte_limit() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 50, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 50, 64}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1315,7 +1329,7 @@ void test_storage_slot_conflict_invariant() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {8, 8 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {8, 8 * 64, 64}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1349,7 +1363,7 @@ void test_no_partial_state_on_failure() {
     std::vector<SlotMetadata> slots(4);
     std::vector<std::uint8_t> arena(4 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {2, 2 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {2, 2 * 64, 64}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1710,7 +1724,7 @@ void test_init_zero_reorder_wait_invalid() {
     std::vector<SlotMetadata> slots(4);
     std::vector<std::uint8_t> arena(4 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
     DualFeedSequencer seq;
     SequencerConfig cfg{};
     cfg.logical_feed.value = 1;
@@ -1728,7 +1742,7 @@ void test_double_init_invalid() {
     std::vector<SlotMetadata> slots2(4);
     std::vector<std::uint8_t> arena2(4 * 64);
     MessageStorage storage2;
-    storage2.initialize(slots2, arena2, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage2.initialize(slots2, arena2, {4, 4 * 64, 64}));
     SequencerConfig cfg{};
     cfg.logical_feed.value = FEED_ID;
     cfg.max_reorder_distance = 4;
@@ -1800,7 +1814,7 @@ void test_feed_mismatch_invalid_config() {
     std::vector<SlotMetadata> slots(4);
     std::vector<std::uint8_t> arena(4 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1821,7 +1835,7 @@ void test_insufficient_storage_capacity() {
     std::vector<SlotMetadata> slots(4);
     std::vector<std::uint8_t> arena(4 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {2, 2 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {2, 2 * 64, 64}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1841,7 +1855,7 @@ void test_slot_capacity_below_reorder_distance() {
     std::vector<SlotMetadata> slots(4);
     std::vector<std::uint8_t> arena(4 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1860,7 +1874,7 @@ void test_non_empty_storage_rejected() {
     std::vector<SlotMetadata> slots(4);
     std::vector<std::uint8_t> arena(4 * 64);
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     auto body = make_body(5);
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
@@ -1886,7 +1900,7 @@ void test_declared_limits_enforced_with_larger_storage() {
     std::vector<SlotMetadata> slots(16);
     std::vector<std::uint8_t> arena(16 * 128);
     MessageStorage storage;
-    storage.initialize(slots, arena, {8, 8 * 128, 128});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {8, 8 * 128, 128}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1959,7 +1973,7 @@ void test_deadline_overflow_arena_unchanged() {
     std::vector<std::uint8_t> arena_snapshot = arena;
 
     MessageStorage storage;
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
     DualFeedSequencer seq;
     SequencerConfig cfg{};
@@ -1983,6 +1997,177 @@ void test_deadline_overflow_arena_unchanged() {
     // Arena must be byte-for-byte unchanged
     CHECK(arena == arena_snapshot);
     TEST_PASS("test_deadline_overflow_arena_unchanged");
+}
+
+// --- RT4 Gate A: StorageInitResult contract tests ---
+
+void test_storage_initialize_invalid_geometry_is_observable() {
+    struct Case {
+        std::uint32_t max_reorder_messages;
+        std::size_t max_reorder_bytes;
+        std::size_t max_message_bytes;
+        std::size_t slot_capacity;
+        std::size_t arena_size;
+        GeometryCode expected;
+    };
+    Case cases[] = {
+        {0, 4*32, 32, 4, 4*32, GeometryCode::ZeroMaxReorderMessages},
+        {0x80000000u, 4*32, 32, 4, 4*32, GeometryCode::MaxReorderMessagesTooLarge},
+        {4, 4*32, 0, 4, 4*32, GeometryCode::ZeroMaxMessageBytes},
+        {4, 4*32, 32, 3, 3*32, GeometryCode::SlotCapacityTooSmall},
+        {2, 128, std::numeric_limits<std::size_t>::max() / 2 + 2, 2, 128, GeometryCode::CapacityOverflow},
+        {4, 4*64, 64, 4, 100, GeometryCode::ArenaTooSmall},
+        {4, 0, 32, 4, 4*32, GeometryCode::ZeroMaxReorderBytes},
+        {4, 4*32+1, 32, 4, 4*32, GeometryCode::MaxReorderBytesExceedsCapacity},
+    };
+
+    for (const auto& c : cases) {
+        std::vector<SlotMetadata> slots(c.slot_capacity);
+        std::vector<std::uint8_t> arena(c.arena_size);
+        // Fill arena with a sentinel pattern
+        for (auto& b : arena) b = 0xDE;
+
+        std::vector<std::uint8_t> arena_snap = arena;
+
+        MessageStorage storage;
+        auto r = storage.initialize(slots, arena,
+            {c.max_reorder_messages, c.max_reorder_bytes, c.max_message_bytes});
+        CHECK_EQ(static_cast<int>(r.code), static_cast<int>(StorageInitCode::InvalidGeometry));
+        CHECK_EQ(static_cast<int>(r.geometry_code), static_cast<int>(c.expected));
+
+        // Object must remain completely uninitialized
+        CHECK(!storage.initialized());
+        CHECK_EQ(storage.pending_count(), 0u);
+        CHECK_EQ(storage.pending_bytes(), 0u);
+        CHECK_EQ(storage.slot_capacity(), 0u);
+
+        // Arena must be unchanged
+        CHECK(arena == arena_snap);
+    }
+    TEST_PASS("test_storage_initialize_invalid_geometry_is_observable");
+}
+
+void test_storage_initialize_valid_retry_after_invalid_geometry() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+
+    // First attempt with invalid geometry
+    auto r1 = storage.initialize(slots, arena, {0, 0, 0});
+    CHECK_EQ(static_cast<int>(r1.code), static_cast<int>(StorageInitCode::InvalidGeometry));
+    CHECK(!storage.initialized());
+
+    // Retry with valid geometry
+    auto r2 = storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK_EQ(static_cast<int>(r2.code), static_cast<int>(StorageInitCode::Ok));
+    CHECK_EQ(static_cast<int>(r2.geometry_code), static_cast<int>(GeometryCode::Ok));
+    CHECK(storage.initialized());
+    CHECK_EQ(storage.slot_capacity(), 8u);
+    TEST_PASS("test_storage_initialize_valid_retry_after_invalid_geometry");
+}
+
+void test_storage_initialize_second_valid_call_preserves_state() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
+
+    // Insert a pending message
+    auto body = make_body(10, 0xAB);
+    CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
+             static_cast<int>(InsertResult::Ok));
+    CHECK_EQ(storage.pending_count(), 1u);
+    CHECK_EQ(storage.pending_bytes(), 10u);
+
+    // Capture old state
+    auto old_slots = slots;
+    auto old_arena = arena;
+    auto old_pending_count = storage.pending_count();
+    auto old_pending_bytes = storage.pending_bytes();
+    auto old_capacity = storage.slot_capacity();
+
+    // Second valid call must return AlreadyInitialized
+    std::vector<SlotMetadata> new_slots(16);
+    std::vector<std::uint8_t> new_arena(16 * 128);
+    auto r = storage.initialize(new_slots, new_arena, {8, 8 * 128, 128});
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(StorageInitCode::AlreadyInitialized));
+    CHECK_EQ(static_cast<int>(r.geometry_code), static_cast<int>(GeometryCode::Ok));
+
+    // Old state must be fully preserved
+    CHECK(storage.initialized());
+    CHECK_EQ(storage.pending_count(), old_pending_count);
+    CHECK_EQ(storage.pending_bytes(), old_pending_bytes);
+    CHECK_EQ(storage.slot_capacity(), old_capacity);
+    CHECK(storage.is_occupied(1));
+
+    // Old payload must remain in old arena
+    const auto& slot = storage.view(1);
+    CHECK_EQ(slot.sequence, 1u);
+    CHECK_EQ(slot.payload_length, 10u);
+
+    // New buffers must be unchanged
+    for (auto& s : new_slots)
+        CHECK_EQ(s.occupied, false);
+    for (auto& b : new_arena)
+        CHECK_EQ(b, static_cast<std::uint8_t>(0));
+
+    TEST_PASS("test_storage_initialize_second_valid_call_preserves_state");
+}
+
+void test_storage_initialize_second_invalid_call_has_lifecycle_precedence() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
+
+    // Insert a pending message
+    auto body = make_body(10, 0xCD);
+    CHECK_EQ(static_cast<int>(storage.insert(3, FeedSide::B, 5, 500, body)),
+             static_cast<int>(InsertResult::Ok));
+    auto old_pending = storage.pending_count();
+
+    // Call with empty spans and zero config — would be InvalidGeometry if not initialized
+    std::span<SlotMetadata> empty_slots;
+    std::span<std::uint8_t> empty_arena;
+    auto r = storage.initialize(empty_slots, empty_arena, {0, 0, 0});
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(StorageInitCode::AlreadyInitialized));
+    CHECK_EQ(static_cast<int>(r.geometry_code), static_cast<int>(GeometryCode::Ok));
+
+    // State preserved
+    CHECK(storage.initialized());
+    CHECK_EQ(storage.pending_count(), old_pending);
+    CHECK(storage.is_occupied(3));
+    TEST_PASS("test_storage_initialize_second_invalid_call_has_lifecycle_precedence");
+}
+
+void test_storage_initialize_after_reset_returns_already_initialized() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+
+    CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
+
+    // Insert and reset
+    auto body = make_body(5);
+    CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
+             static_cast<int>(InsertResult::Ok));
+    storage.reset();
+    CHECK(storage.initialized());
+    CHECK_EQ(storage.pending_count(), 0u);
+
+    // After reset, initialize must still return AlreadyInitialized
+    std::vector<SlotMetadata> new_slots(4);
+    std::vector<std::uint8_t> new_arena(4 * 32);
+    auto r = storage.initialize(new_slots, new_arena, {2, 2 * 32, 32});
+    CHECK_EQ(static_cast<int>(r.code), static_cast<int>(StorageInitCode::AlreadyInitialized));
+    CHECK_EQ(static_cast<int>(r.geometry_code), static_cast<int>(GeometryCode::Ok));
+
+    // Must not rebind: old capacity preserved
+    CHECK_EQ(storage.slot_capacity(), 8u);
+    CHECK(storage.initialized());
+    TEST_PASS("test_storage_initialize_after_reset_returns_already_initialized");
 }
 
 } // namespace
@@ -2090,7 +2275,14 @@ int main() {
     test_oversized_expected_rejected();
     test_deadline_overflow_arena_unchanged();
 
-    std::printf("All %d test cases passed.\n", 93);
+    // RT4 Gate A: StorageInitResult contract tests
+    test_storage_initialize_invalid_geometry_is_observable();
+    test_storage_initialize_valid_retry_after_invalid_geometry();
+    test_storage_initialize_second_valid_call_preserves_state();
+    test_storage_initialize_second_invalid_call_has_lifecycle_precedence();
+    test_storage_initialize_after_reset_returns_already_initialized();
+
+    std::printf("All %d test cases passed.\n", 98);
     return 0;
 }
 #ifdef _MSC_VER

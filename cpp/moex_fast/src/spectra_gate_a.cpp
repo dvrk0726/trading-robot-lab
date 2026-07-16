@@ -4,18 +4,22 @@ namespace moex::spectra {
 
 // --- MessageStorage ---
 
-void MessageStorage::initialize(
+StorageInitResult MessageStorage::initialize(
     std::span<SlotMetadata> slots,
     std::span<std::uint8_t> arena,
     MessageStorageConfig config
 ) noexcept {
+    if (initialized_)
+        return {StorageInitCode::AlreadyInitialized, GeometryCode::Ok};
+
     const StorageGeometryLimits limits{
         config.max_reorder_messages,
         config.max_reorder_bytes,
         config.max_message_bytes
     };
-    if (validate_geometry(slots.size(), arena, limits) != GeometryCode::Ok)
-        return;
+    const auto geom = validate_geometry(slots.size(), arena, limits);
+    if (geom != GeometryCode::Ok)
+        return {StorageInitCode::InvalidGeometry, geom};
 
     slots_ = slots;
     payload_arena_ = arena;
@@ -34,6 +38,8 @@ void MessageStorage::initialize(
     pending_count_ = 0;
     pending_bytes_ = 0;
     initialized_ = true;
+
+    return {StorageInitCode::Ok, GeometryCode::Ok};
 }
 
 InsertResult MessageStorage::insert(

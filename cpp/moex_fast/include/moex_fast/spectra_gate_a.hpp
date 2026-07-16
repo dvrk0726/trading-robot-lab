@@ -61,6 +61,19 @@ enum class GeometryCode : std::uint8_t {
     return GeometryCode::Ok;
 }
 
+// --- Storage initialization result ---
+
+enum class StorageInitCode : std::uint8_t {
+    Ok = 0,
+    InvalidGeometry = 1,
+    AlreadyInitialized = 2
+};
+
+struct StorageInitResult {
+    StorageInitCode code;
+    GeometryCode geometry_code;
+};
+
 // --- Insert result ---
 
 enum class InsertResult : std::uint8_t {
@@ -125,7 +138,7 @@ public:
         return validate_storage_geometry(slot_capacity, payload_arena, limits);
     }
 
-    void initialize(
+    [[nodiscard]] StorageInitResult initialize(
         std::span<SlotMetadata> slots,
         std::span<std::uint8_t> arena,
         MessageStorageConfig config

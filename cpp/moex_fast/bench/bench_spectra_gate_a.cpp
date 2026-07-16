@@ -299,9 +299,10 @@ struct BenchContext {
 };
 
 void init_context(BenchContext& ctx, std::uint32_t start_seq = 0) {
-    ctx.storage.initialize(g_slots, g_arena,
+    auto init_result = ctx.storage.initialize(g_slots, g_arena,
                            {MAX_REORDER, ARENA_SIZE, MAX_MSG_BYTES});
-    if (!ctx.storage.initialized()) {
+    if (init_result.code != StorageInitCode::Ok ||
+        init_result.geometry_code != GeometryCode::Ok) {
         ctx.functional_ok = false;
         return;
     }
