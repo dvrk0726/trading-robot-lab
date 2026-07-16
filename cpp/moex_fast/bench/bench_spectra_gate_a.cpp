@@ -35,11 +35,11 @@ alignas(64) std::array<std::uint8_t, MAX_MSG_BYTES> g_body_a;
 alignas(64) std::array<std::uint8_t, MAX_MSG_BYTES> g_body_b;
 std::array<std::int64_t, SAMPLE_COUNT> g_samples;
 
-// --- Volatile accumulators prevent dead-code elimination ---
+// --- Accumulators used in output prevent dead-code elimination ---
 
-volatile std::uint64_t g_sink_count;
-volatile std::uint64_t g_sink_bytes;
-volatile int g_result_xor;
+std::uint64_t g_sink_count;
+std::uint64_t g_sink_bytes;
+int g_result_xor;
 
 // --- Noexcept sink, does not retain body spans ---
 
