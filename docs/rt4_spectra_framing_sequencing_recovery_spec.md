@@ -467,7 +467,7 @@ This boundary rule is deterministic for live and replay execution.
 
 The sequencer fails closed when any condition occurs:
 
-- future sequence distance exceeds `max_reorder_messages`;
+- future sequence distance exceeds `max_reorder_distance`;
 - pending-message capacity is exhausted;
 - pending-byte capacity would be exceeded;
 - duplicate payload mismatch;
@@ -475,6 +475,8 @@ The sequencer fails closed when any condition occurs:
 - ambiguous half-range sequence relation;
 - monotonic time regression;
 - internal storage or state invariant failure.
+
+The two limits are distinct: `max_reorder_distance` limits the permissible forward sequence distance; `storage.max_reorder_messages` limits the number of simultaneously stored pending messages.
 
 After fail-closed transition:
 
@@ -863,19 +865,13 @@ Prohibited in the hot path without measured justification:
 
 ## 14. Deterministic diagnostics
 
-Errors use stable enum codes and fixed numeric context:
+Gate A returns stable diagnostic codes through `SequencerResult`. The `code` field contains the processing result. Entry-state semantics:
 
-```cpp
-struct GateAIssue {
-    SequencerCode code;
-    LogicalFeedId feed;
-    FeedSide side;
-    std::uint32_t observed_seq;
-    std::uint32_t expected_seq;
-    std::uint64_t capture_index;
-    std::uint64_t capture_monotonic_ns;
-};
-```
+- `on_message`: `observed_seq` equals the input message sequence; `expected_seq` equals `next_expected` at event entry.
+- `on_time`: `observed_seq` and `expected_seq` both equal `next_expected` at event entry.
+- The post-event value is available through `next_expected_seq()`.
+
+`feed`, `side`, `capture_index` and `capture_monotonic_ns` remain in the input `FramedMessageView` and `OrderedMessageMetadata`. A separate public `GateAIssue` type in the Gate A API is absent.
 
 Human-readable formatting is offline and outside the hot path.
 
