@@ -141,7 +141,6 @@ Pre-merge CI #199: success
 Post-merge main CI #200: success
 MOEX FAST inventory: 16 = RT-1 6 + RT-3 9 + RT-4 A1 1
 ```
-
 ### RT-4 A2/A3 implementation-stage amendment — DONE
 
 ```text
@@ -184,7 +183,7 @@ The connectivity blocker does not invalidate synthetic A1 acceptance. Preamble b
 ```text
 4-byte external MsgSeqNum preamble
 one current UDP datagram and exactly one FAST body
-explicit LittleEndian or BigEndian; no default guess
+fixed little-endian decoding; no runtime endian selector
 host-endian-independent uint32 conversion
 borrowed FAST-body span beginning at byte 4
 bounded deterministic validation
@@ -198,7 +197,7 @@ required-check job names unchanged
 Deterministic error precedence:
 
 ```text
-invalid limits or invalid byte-order enum -> InvalidConfig
+invalid limits                          -> InvalidConfig
 payload size 0..3                       -> DatagramTooShort
 payload size 4                          -> EmptyFastBody
 payload size > max_datagram_bytes       -> DatagramTooLarge
@@ -215,7 +214,6 @@ gap deadline and FailedClosed state
 sockets and multicast
 .mxraw integration
 RT-3 decode integration
-preamble AutoVerify
 SequenceReset
 Snapshot recovery
 Release benchmark claims
@@ -329,9 +327,9 @@ Formerly tracked as A1, A2, A3, A4 and A5. These remain as historical labels for
 Issue #51: open
 PR #52: open, Draft, not merged
 Branch: mimo/issue-51-rt4-gate-a-completion
-Technical implementation head: 40fb4de9d8355bb4b019d29a0479178f2128955f
+Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
 Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
-Latest verified technical CI: #231, run ID 29499974934, success
+Technical CI: #234, run ID 29526060857, success, 6 jobs
 MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
 ```
 
@@ -346,15 +344,15 @@ complete A/B DualFeedSequencer
 bounded reordering
 fixed non-extendable gap deadline
 deterministic fail-closed behavior
-93 internal Gate A test cases
+98 internal Gate A test cases
 eight Release benchmark scenarios
 allocation_count equals zero in every measured scenario
 benchmark executed successfully in both Windows and Linux FAST CI jobs
 ```
 
-Status: IMPLEMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
+Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
 
-The A1 production byte-order contract was later amended in PR #52 based on written MOEX support confirmation (little-endian).
+PR #43 originally introduced an explicit endian selector, but this production contract was superseded in PR #52 after written MOEX support confirmation; current contract is fixed little-endian.
 
 Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
 
@@ -363,8 +361,7 @@ Next transition: final Architecture Review of complete PR #52 -> separate Owner 
 ```text
 RT-2 .mxraw A/B replay merge
 RT-3 exact-body integration
-compare external preamble with decoded tag 34
-one-time endian AutoVerify and per-feed lock
+compare fixed little-endian external preamble with decoded tag 34
 stream initialization and SequenceReset policy
 ```
 

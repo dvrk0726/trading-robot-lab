@@ -132,7 +132,7 @@ Architecture gates:
 
 ```text
 Gate A: framing, A/B sequencing, bounded reordering, gaps, fail-closed
-Gate B: .mxraw + RT-3 integration and preamble AutoVerify
+Gate B: .mxraw + RT-3 integration; fixed little-endian preamble value compared numerically with decoded tag 34
 Gate C: Snapshot + buffered Incremental recovery
 Gate D: Release performance and production-evidence acceptance
 ```
@@ -226,9 +226,9 @@ Accepted A2 production contract: header-only `spectra_sequence_arithmetic.hpp`, 
 Issue #51: open
 PR #52: open, Draft, not merged
 Branch: mimo/issue-51-rt4-gate-a-completion
-Technical implementation head: 40fb4de9d8355bb4b019d29a0479178f2128955f
+Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
 Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
-Latest verified technical CI: #231, run ID 29499974934, success
+Technical CI: #234, run ID 29526060857, success, 6 jobs
 MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
 ```
 
@@ -243,13 +243,25 @@ complete A/B DualFeedSequencer
 bounded reordering
 fixed non-extendable gap deadline
 deterministic fail-closed behavior
-93 internal Gate A test cases
+98 internal Gate A test cases
 eight Release benchmark scenarios
 allocation_count equals zero in every measured scenario
 benchmark executed successfully in both Windows and Linux FAST CI jobs
 ```
 
-Status: IMPLEMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
+Additional Gate A test areas (beyond original 93):
+
+```text
+observable exact geometry failure
+valid retry after invalid geometry
+second valid initialize preserves complete state
+AlreadyInitialized precedence over invalid geometry
+reset preserves one-shot storage binding
+```
+
+PR #43 originally introduced an explicit endian selector, but this production contract was superseded in PR #52 after written MOEX support confirmation; current contract is fixed little-endian.
+
+Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
 
 ## Current verified boundary
 

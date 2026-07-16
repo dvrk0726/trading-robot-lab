@@ -100,7 +100,7 @@ A valid future packet is never silently discarded or emitted out of order. Mutab
 - consume the fixed little-endian external sequence value from A1;
 - decode RT-3 tag 34;
 - compare numeric values for every integrated message;
-- fail closed on mismatch;
+- mismatch fails closed;
 - add stream initialization and `SequenceReset` policy.
 
 ### Gate C — Snapshot recovery
@@ -532,6 +532,17 @@ Validation checks, in order:
 ### 11.2 MessageStorage
 
 ```cpp
+enum class StorageInitCode : std::uint8_t {
+    Ok = 0,
+    InvalidGeometry = 1,
+    AlreadyInitialized = 2
+};
+
+struct StorageInitResult {
+    StorageInitCode code;
+    GeometryCode geometry_code;
+};
+
 enum class InsertResult : std::uint8_t {
     Ok,
     NotInitialized,
@@ -578,7 +589,7 @@ public:
         StorageGeometryLimits limits
     ) noexcept;
 
-    void initialize(
+    [[nodiscard]] StorageInitResult initialize(
         std::span<SlotMetadata> slots,
         std::span<std::uint8_t> arena,
         MessageStorageConfig config
@@ -628,7 +639,12 @@ Storage geometry:
 
 Behavior:
 
-- `initialize`: outside hot path; sets slot offsets; clears all metadata; marks initialized;
+- `initialize` lifecycle:
+  - first call with invalid geometry: returns `InvalidGeometry` with exact `GeometryCode`; object remains fully uninitialized; internal spans are empty; limits, capacity and counters are zero; caller-provided slots and arena are unchanged; valid retry is permitted;
+  - first call with valid geometry: returns `Ok`/`Ok`; object becomes initialized;
+  - any call after first success: returns `AlreadyInitialized`/`Ok` regardless of new arguments; `AlreadyInitialized` is checked before geometry validation; old spans, limits, capacity, counters, metadata, pending payload and payload pointers are preserved; new buffers are not changed;
+  - `reset` clears pending state but preserves initialized state and initial buffer binding; `initialize` after `reset` returns `AlreadyInitialized`;
+  - caller-owned initial buffers must live for the entire lifetime of `MessageStorage` use;
 - `insert`: checks body size, modulo lookup, duplicate comparison (byte-by-byte), capacity limits, copies payload into dedicated slice;
 - `view(seq)`: returns exact-sequence `SlotMetadata` reference, or deterministic empty/default metadata when uninitialized, absent or colliding; does not return an arena body span;
 - `view_message(seq)`: returns `StoredMessageView` with the borrowed read-only payload span only for an exact pending sequence; absent or colliding `view_message` returns a deterministic empty view;
@@ -879,7 +895,7 @@ Total moex_fast CTest inventory: 18.
 
 ### Gate A test binary
 
-One Gate A CTest binary with 93 internal test cases, covering:
+One Gate A CTest binary with 98 internal test cases, covering:
 
 - storage geometry validation and checked multiplication;
 - caller-owned fixed slot span and byte arena;
@@ -890,6 +906,12 @@ One Gate A CTest binary with 93 internal test cases, covering:
 - `MessageStorage` non-copyable and non-movable;
 - `StoredMessageView` borrowed pointer and metadata;
 - no partial slot publication after failed insertion;
+- `StorageInitCode`, `StorageInitResult` and `initialize` lifecycle;
+- observable exact geometry failure with precise `GeometryCode`;
+- valid retry after invalid geometry;
+- second valid `initialize` preserves complete state;
+- `AlreadyInitialized` precedence over invalid geometry;
+- `reset` preserves one-shot storage binding;
 - `SequencerConfig` field validation;
 - `SequencerState` lifecycle: `Uninitialized`, `Stopped`, `Running`, `GapWait`, `FailedClosed`;
 - complete `SequencerCode` including `NoAction`, `GapWaiting`, `ClockRegression`, `DeadlineOverflow`;

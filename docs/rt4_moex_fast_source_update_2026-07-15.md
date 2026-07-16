@@ -295,7 +295,11 @@ RT-4 specification PR #39: merged
 reviewed PR head: afd128a49584fce1131323ac7b19e5b5d7b1997a
 main merge SHA: 136293ede211619b7d9198d85ed3afb0f2577514
 post-merge main CI #189: success
-RT-4 implementation: not started and not authorized
+RT-4 Gate A: completed in Draft PR #52
+accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
+CI #234, run ID 29526060857, success, 6 jobs
+98 internal Gate A tests
+Final Architecture Review pending; Ready not authorized; merge not authorized
 ```
 
 ## 13. Security and repository policy
@@ -318,9 +322,11 @@ Synthetic byte vectors are allowed. Official public XML hashes, public documenta
 ## 14. Consequences for RT-4
 
 - RT-4 specification is complete and merged.
-- Gate A implementation is complete in Draft PR #52.
+- Gate A is implemented and documented in Draft PR #52.
+- Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d.
 - External preamble endian is resolved by written MOEX support (2026-07-16): fixed little-endian.
-- Gate B consumes the fixed little-endian value from A1 and compares numerically against decoded tag 34.
+- Gate B consumes the fixed little-endian value from A1 and compares numerically against decoded tag 34; mismatch fails closed.
 - Gate C owns Snapshot + buffered Incremental recovery.
 - Every architecture review must re-check current official MOEX files.
+- Final Architecture Review is pending. Ready and merge are not authorized.
 - This documentation change does not authorize Ready, merge, Gate B/C/D, RT-5, RT-6, CI-2 or production/live trading.
