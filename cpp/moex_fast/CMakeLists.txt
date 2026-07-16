@@ -54,6 +54,7 @@ target_link_libraries(moex-fast-decode PRIVATE moex_decode)
 # --- RT-4 A1 SPECTRA UDP Transport Library (no dependency on moex_decode or pugixml) ---
 add_library(moex_spectra_transport STATIC
     src/spectra_udp_framing.cpp
+    src/spectra_gate_a.cpp
 )
 target_include_directories(moex_spectra_transport PUBLIC include)
 
@@ -140,3 +141,8 @@ add_test(NAME test_spectra_udp_framing COMMAND test_spectra_udp_framing)
 add_executable(test_spectra_sequence_arithmetic tests/test_spectra_sequence_arithmetic.cpp)
 target_link_libraries(test_spectra_sequence_arithmetic PRIVATE moex_spectra_transport)
 add_test(NAME test_spectra_sequence_arithmetic COMMAND test_spectra_sequence_arithmetic)
+
+# --- RT-4 Gate A MessageStorage Test ---
+add_executable(test_spectra_gate_a tests/test_spectra_gate_a.cpp)
+target_link_libraries(test_spectra_gate_a PRIVATE moex_spectra_transport)
+add_test(NAME test_spectra_gate_a COMMAND test_spectra_gate_a)

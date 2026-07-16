@@ -102,9 +102,9 @@ jobs:
       - name: Validate shared contract examples
         run: python shared/schemas/validate_examples.py
 
-  # RT-1 inspector: 6 tests on Windows/MSVC, RT-3 decoder: 9 tests, RT-4 A1: 1 test
+  # RT-1 inspector: 6 tests on Windows/MSVC, RT-3 decoder: 9 tests, RT-4 A1: 1, RT-4 A2: 1, Gate A: 1
   cpp-moex-fast-inspector:
-    name: "C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)"
+    name: "C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9, RT-4: 3)"
     needs: repository-hygiene
     if: needs.repository-hygiene.outputs.run_fast == 'true'
     runs-on: windows-latest
@@ -193,22 +193,36 @@ jobs:
           }
           Write-Host "RT-4 A2 inventory verified: $($expected.Count) tests present"
 
-      - name: Verify total test count (17)
+      - name: Verify exact RT-4 Gate A test inventory (1 test)
+        run: |
+          $expected = @(
+            'test_spectra_gate_a'
+          )
+          $output = ctest --test-dir build/moex_fast -C Release -N
+          $names = ($output | Select-String '^\s*Test\s+#\d+:\s+(.+?)\s*$').ForEach({ $_.Matches.Groups[1].Value })
+          foreach ($name in $expected) {
+            if ($name -notin $names) {
+              throw "RT-4 Gate A test '$name' not found in CTest inventory"
+            }
+          }
+          Write-Host "RT-4 Gate A inventory verified: $($expected.Count) tests present"
+
+      - name: Verify total test count (18)
         run: |
           $output = ctest --test-dir build/moex_fast -C Release -N
           $line = $output | Select-String '^Total Tests:'
           $count = [int](($line.Line -split ':', 2)[1].Trim())
-          Write-Host "CTest inventory: $count (expected 17: 6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2)"
-          if ($count -ne 17) {
-            throw "Expected 17 moex_fast tests (6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2), found $count"
+          Write-Host "CTest inventory: $count (expected 18: 6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2 + 1 Gate A)"
+          if ($count -ne 18) {
+            throw "Expected 18 moex_fast tests (6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2 + 1 Gate A), found $count"
           }
 
       - name: Run all moex_fast tests (RT-1 + RT-3)
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
 
-  # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 9 tests, RT-4 A1: 1 test
+  # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 9 tests, RT-4 A1: 1, RT-4 A2: 1, Gate A: 1
   cpp-moex-fast-inspector-linux:
-    name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)"
+    name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9, RT-4: 3)"
     needs: repository-hygiene
     if: needs.repository-hygiene.outputs.run_fast == 'true'
     runs-on: ubuntu-latest
@@ -265,12 +279,22 @@ jobs:
           done
           echo "RT-4 A2 inventory verified: 1 test present"
 
-      - name: Verify total test count (17)
+      - name: Verify exact RT-4 Gate A test inventory (1 test)
+        run: |
+          for name in test_spectra_gate_a; do
+            if ! ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -q "$name"; then
+              echo "RT-4 Gate A test '$name' not found in CTest inventory"
+              exit 1
+            fi
+          done
+          echo "RT-4 Gate A inventory verified: 1 test present"
+
+      - name: Verify total test count (18)
         run: |
           count=$(ctest --test-dir build/moex_fast -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
-          echo "CTest inventory: $count (expected 17: 6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2)"
-          if [ "$count" -ne 17 ]; then
-            echo "Expected 17 moex_fast tests (6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2), found $count"
+          echo "CTest inventory: $count (expected 18: 6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2 + 1 Gate A)"
+          if [ "$count" -ne 18 ]; then
+            echo "Expected 18 moex_fast tests (6 RT-1 + 9 RT-3 + 1 RT-4 A1 + 1 RT-4 A2 + 1 Gate A), found $count"
             exit 1
           fi
 
