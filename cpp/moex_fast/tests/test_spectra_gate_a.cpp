@@ -1548,6 +1548,8 @@ void test_deterministic_replay() {
         SequencerCode code;
         std::uint32_t observed_seq;
         std::uint32_t expected_seq;
+        SequencerState post_state;
+        std::uint32_t post_next_expected;
     };
     struct RunOutcome {
         std::vector<RunRecord> results;
@@ -1566,20 +1568,35 @@ void test_deterministic_replay() {
         RunOutcome out;
         SequencerResult r;
 
+        // Event 1: on_message seq 1 (expected, on_time)
         r = f.seq.on_message(make_view(1, FeedSide::A, b1, 1), 100, f.sink);
-        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq,
+                               f.seq.state(), f.seq.next_expected_seq()});
 
+        // Event 2: on_message seq 3 (future, creates GapWait)
         r = f.seq.on_message(make_view(3, FeedSide::B, b3, 3), 200, f.sink);
-        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq,
+                               f.seq.state(), f.seq.next_expected_seq()});
 
-        r = f.seq.on_message(make_view(5, FeedSide::A, b5, 5), 300, f.sink);
-        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+        // Event 3: on_time before deadline (GapWaiting, on_time event)
+        r = f.seq.on_time(500, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq,
+                               f.seq.state(), f.seq.next_expected_seq()});
 
-        r = f.seq.on_message(make_view(2, FeedSide::A, b2, 2), 400, f.sink);
-        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+        // Event 4: on_message seq 5 (future, deeper reorder)
+        r = f.seq.on_message(make_view(5, FeedSide::A, b5, 5), 600, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq,
+                               f.seq.state(), f.seq.next_expected_seq()});
 
-        r = f.seq.on_message(make_view(4, FeedSide::B, b3, 4), 500, f.sink);
-        out.results.push_back({r.code, r.observed_seq, r.expected_seq});
+        // Event 5: on_message seq 2 (expected, flushes 2+3, leaves seq 5 pending)
+        r = f.seq.on_message(make_view(2, FeedSide::A, b2, 2), 700, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq,
+                               f.seq.state(), f.seq.next_expected_seq()});
+
+        // Event 6: on_message seq 4 (expected, flushes 4+5, pending empty -> Running)
+        r = f.seq.on_message(make_view(4, FeedSide::B, b3, 4), 800, f.sink);
+        out.results.push_back({r.code, r.observed_seq, r.expected_seq,
+                               f.seq.state(), f.seq.next_expected_seq()});
 
         out.emissions = f.emissions;
         out.final_state = f.seq.state();
@@ -1590,15 +1607,19 @@ void test_deterministic_replay() {
     auto run1 = run_once();
     auto run2 = run_once();
 
-    // Compare every SequencerResult
+    // Compare every SequencerResult plus post-event state
     CHECK(run1.results.size() == run2.results.size());
     for (std::size_t i = 0; i < run1.results.size(); ++i) {
         CHECK_EQ(static_cast<int>(run1.results[i].code), static_cast<int>(run2.results[i].code));
         CHECK_EQ(run1.results[i].observed_seq, run2.results[i].observed_seq);
         CHECK_EQ(run1.results[i].expected_seq, run2.results[i].expected_seq);
+        CHECK_EQ(static_cast<int>(run1.results[i].post_state),
+                 static_cast<int>(run2.results[i].post_state));
+        CHECK_EQ(run1.results[i].post_next_expected,
+                 run2.results[i].post_next_expected);
     }
 
-    // Compare complete ordered emissions
+    // Compare complete ordered emissions (metadata + body bytes)
     CHECK(run1.emissions.size() == run2.emissions.size());
     for (std::size_t i = 0; i < run1.emissions.size(); ++i) {
         CHECK_EQ(run1.emissions[i].sequence, run2.emissions[i].sequence);
