@@ -109,7 +109,7 @@ Therefore:
 
 ## 5. UDP preamble byte order
 
-Evidence status:
+Evidence status as of 2026-07-15:
 
 ```text
 4-byte preamble: confirmed
@@ -122,13 +122,25 @@ The official XML cannot define this value because the preamble is outside the FA
 
 A public MOEX-specific implementation was found to interpret the four bytes as little-endian. This is cross-check evidence only and is not accepted as normative.
 
-RT-4 decision:
+### 5.1 Superseded: former explicit LittleEndian/BigEndian and Gate B AutoVerify decision
 
-- Gate A framing supports explicit `LittleEndian` and `BigEndian`;
-- no default value is allowed;
-- Gate B may compare both interpretations with decoded tag 34;
-- ambiguous or neither-match cases fail closed;
-- production acceptance requires a live T0/T1 packet, an official vector or written MOEX confirmation.
+The former RT-4 decision (Gate A framing supports explicit `LittleEndian` and `BigEndian`; no default value; Gate B compares both interpretations with decoded tag 34; ambiguous or neither-match cases fail closed) is superseded.
+
+The local no-packet connectivity test (section 8) did not verify endian because no UDP market-data packet reached the process during the bounded check. Endian was later resolved independently by written MOEX support.
+
+### 5.2 Written MOEX support clarification — 2026-07-16
+
+Written MOEX support confirmed (paraphrased, no personal information or ticket identifiers stored):
+
+- the UDP FAST preamble is four bytes and uses little-endian byte order;
+- MsgSeqNum value 1 is encoded as `01 00 00 00`;
+- the same little-endian rule applies to SPECTRA T0, T1 and production feeds;
+- the numeric preamble value is guaranteed to equal decoded FAST MsgSeqNum tag 34;
+- this concerns the UDP multicast preamble, not the TCP Historical Replay length prefix.
+
+Gate A now uses fixed little-endian decoding with no runtime byte-order selector, alternative production byte-order path or automatic endian discovery. Gate B consumes the fixed little-endian external value from A1 and compares it numerically against decoded tag 34.
+
+The accepted C++ representation remains `std::uint32_t` and modulo-2^32 sequence arithmetic. The written MOEX support did not separately repeat the word "unsigned".
 
 ## 6. Official fast_sensor inspection
 
@@ -306,9 +318,9 @@ Synthetic byte vectors are allowed. Official public XML hashes, public documenta
 ## 14. Consequences for RT-4
 
 - RT-4 specification is complete and merged.
-- Gate A can be implemented synthetically only after separate Owner implementation authorization.
-- Gate A cannot declare production endian acceptance without additional evidence.
-- Gate B owns one-time tag-34 byte-order verification.
+- Gate A implementation is complete in Draft PR #52.
+- External preamble endian is resolved by written MOEX support (2026-07-16): fixed little-endian.
+- Gate B consumes the fixed little-endian value from A1 and compares numerically against decoded tag 34.
 - Gate C owns Snapshot + buffered Incremental recovery.
 - Every architecture review must re-check current official MOEX files.
-- The pending MOEX support reply does not authorize code, MiMo or a later gate.
+- This documentation change does not authorize Ready, merge, Gate B/C/D, RT-5, RT-6, CI-2 or production/live trading.

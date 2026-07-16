@@ -1,8 +1,8 @@
 # Roadmap
 
-Дата обновления: 2026-07-15  
+Дата обновления: 2026-07-16  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A2 DONE; Gate A3 BLOCKED
+Текущий gate: RT-4 Gate A Completion IMPLEMENTED_IN_DRAFT_PR; Architecture Review PENDING
 
 ## Главный порядок
 
@@ -175,7 +175,7 @@ MOEX support follow-up: pending
 
 Private connection addresses, credentials, VPN profiles and real raw/decoded market-data packets are prohibited in Git.
 
-The connectivity blocker does not invalidate synthetic A1 acceptance. Production endian acceptance still requires live T0/T1 evidence, an official vector or written MOEX confirmation.
+The connectivity blocker does not invalidate synthetic A1 acceptance. Preamble byte order is resolved by written MOEX support confirmation (little-endian, 2026-07-16).
 
 ## RT-4 implementation gates
 
@@ -242,7 +242,7 @@ Reviewed PR head: 8ed659ffffbf42fd0671935d53182622289b4ec6
 Main merge SHA: d026a13245ea4f92ea1fe46edf049df205f981ea
 Pre-merge CI #216: success
 Post-merge main CI #217: success
-MOEX FAST inventory: 17 total
+MOEX FAST inventory: 18 total
 ```
 
 Accepted API:
@@ -295,7 +295,7 @@ exact half-range ambiguity
 stale relation
 natural modulo-2^32 wrap
 constexpr, noexcept and trivially-copyable checks
-MOEX FAST inventory: 17 total
+MOEX FAST inventory: 18 total
 required-check job names unchanged
 ```
 
@@ -321,43 +321,42 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
-### Gate A3 — fixed storage and complete A/B sequencer — BLOCKED
+### Gate A Completion — IMPLEMENTED_IN_DRAFT_PR
+
+Formerly tracked as A1, A2, A3, A4 and A5. These remain as historical labels for internal implementation phases only. A1 and A2 are verified historical checkpoints. A3/A4/A5 implementation and acceptance-evidence phases are complete in Draft PR #52.
 
 ```text
-fixed preallocated MessageStorage
-bounded message and byte capacity
-one mutable sequencer per LogicalFeedId
-explicit initialize/start/reset
-A/B first-valid-copy arbitration
-in-order synchronous emission
-stale duplicate suppression
-future-message insertion
-same pending sequence payload comparison
-out-of-order buffering
-contiguous pending flush
+Issue #51: open
+PR #52: open, Draft, not merged
+Branch: mimo/issue-51-rt4-gate-a-completion
+Technical implementation head: 40fb4de9d8355bb4b019d29a0479178f2128955f
+Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
+Latest verified technical CI: #231, run ID 29499974934, success
+MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
 ```
 
-A valid future packet is not silently dropped or emitted out of order. Stateful A/B sequencing begins only after fixed storage exists; no partial sequencer or temporary unsupported-future behavior is permitted.
-
-A3 cannot begin until A2 is accepted, merged and post-merge verified.
-
-### Gate A4 — gap deadline and fail-closed — BLOCKED
+Accepted Gate A implementation evidence:
 
 ```text
-fixed monotonic non-extendable deadline
-gap confirmation
-terminal FailedClosed state
-explicit reset/restart only
+fixed little-endian UDP preamble framing
+written MOEX support confirmation: value 1 is 01 00 00 00, same rule for T0/T1/production
+A2 modulo-2^32 sequence classifier
+fixed caller-owned MessageStorage
+complete A/B DualFeedSequencer
+bounded reordering
+fixed non-extendable gap deadline
+deterministic fail-closed behavior
+93 internal Gate A test cases
+eight Release benchmark scenarios
+allocation_count equals zero in every measured scenario
+benchmark executed successfully in both Windows and Linux FAST CI jobs
 ```
 
-### Gate A5 — Release benchmarks and Gate A review — BLOCKED
+Status: IMPLEMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
 
-```text
-Windows/Linux Release measurements
-allocation evidence
-latency distribution and variability
-Owner acceptance before Gate B
-```
+The A1 production byte-order contract was later amended in PR #52 based on written MOEX support confirmation (little-endian).
+
+Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
 
 ### Gate B — replay and decoder integration — BLOCKED
 
@@ -392,12 +391,14 @@ explicit Owner acceptance
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A3: BLOCKED — not started and not authorized
-MiMo for A3: not authorized
+RT-4 Gate A Completion: IMPLEMENTED_IN_DRAFT_PR — Architecture Review pending
+Gate B: BLOCKED
+Gate C: BLOCKED
+Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
-The next transition is a separate current-state review and one bounded A3 plan. No A3 Issue, branch, PR, implementation or MiMo launch is authorized.
+The next transition is final Architecture Review of complete PR #52, then separate Owner authorization to mark Ready, separate Owner authorization to merge, post-merge CI verification, and only then a separate Gate B decision.
 
 CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 

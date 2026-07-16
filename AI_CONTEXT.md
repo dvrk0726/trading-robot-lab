@@ -1,8 +1,8 @@
 # AI Context
 
-Дата обновления: 2026-07-15  
+Дата обновления: 2026-07-16  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-4 Gate A2 DONE; Gate A3 BLOCKED
+Текущий gate: RT-4 Gate A Completion IMPLEMENTED_IN_DRAFT_PR; Architecture Review PENDING
 
 ## Источник истины
 
@@ -147,10 +147,10 @@ Current T0 templates SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 Current T1 templates SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
-External 4-byte preamble byte order: unresolved in official text
+External 4-byte preamble byte order: little-endian (written MOEX support confirmation, 2026-07-16)
 ```
 
-Gate A requires explicit LittleEndian or BigEndian configuration and no default guess. Gate B may compare both interpretations with decoded tag 34, fail closed on ambiguity, and lock one byte order per logical feed after verification.
+Gate A uses fixed little-endian decoding with no runtime byte-order selector. Gate B consumes the fixed little-endian external value from A1 and compares numerically against decoded tag 34.
 
 ## RT-4 state-sync verified checkpoint
 
@@ -220,15 +220,50 @@ MOEX FAST inventory: 17 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1
 
 Accepted A2 production contract: header-only `spectra_sequence_arithmetic.hpp`, `SequenceRelation`, `SequenceClassification`, and `classify_sequence_relation(...) constexpr noexcept`; unsigned modulo-2^32 subtraction; deterministic `InvalidConfig`, `Expected`, `FutureWithinWindow`, `FutureBeyondWindow`, `Ambiguous` and `Stale`; one Release-active `test_spectra_sequence_arithmetic`; no mutable sequencing state or A3 behavior.
 
+## RT-4 Gate A Completion — IMPLEMENTED_IN_DRAFT_PR
+
+```text
+Issue #51: open
+PR #52: open, Draft, not merged
+Branch: mimo/issue-51-rt4-gate-a-completion
+Technical implementation head: 40fb4de9d8355bb4b019d29a0479178f2128955f
+Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
+Latest verified technical CI: #231, run ID 29499974934, success
+MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
+```
+
+Accepted Gate A implementation evidence in Draft PR #52:
+
+```text
+fixed little-endian UDP preamble framing
+written MOEX support confirmation: value 1 is 01 00 00 00, same rule for T0/T1/production, numeric preamble equals decoded tag 34
+A2 modulo-2^32 sequence classifier
+fixed caller-owned MessageStorage
+complete A/B DualFeedSequencer
+bounded reordering
+fixed non-extendable gap deadline
+deterministic fail-closed behavior
+93 internal Gate A test cases
+eight Release benchmark scenarios
+allocation_count equals zero in every measured scenario
+benchmark executed successfully in both Windows and Linux FAST CI jobs
+```
+
+Status: IMPLEMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
+
 ## Current verified boundary
 
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A3: BLOCKED — not started and not authorized
-MiMo for A3: not authorized
+RT-4 Gate A Completion: IMPLEMENTED_IN_DRAFT_PR — Architecture Review pending
+Gate B: BLOCKED
+Gate C: BLOCKED
+Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
+
+Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
 
 CI-2 caching is POSTPONED, not started and not authorized.
 
@@ -254,9 +289,11 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-No implementation gate is active.
-Do not start A3.
-First perform a current-state review and prepare one bounded A3 plan.
-Do not create an A3 Issue, branch or PR without explicit Owner authorization.
-Do not launch MiMo for A3 without explicit Owner authorization.
+RT-4 Gate A Completion is implemented in Draft PR #52.
+Final Architecture Review of complete PR #52 is pending.
+Ready-for-review is not authorized.
+Merge is not authorized.
+Gate B, Gate C and Gate D remain blocked.
+RT-5 is prohibited until all RT-4 gates are eventually accepted and merged.
+Do not start Gate B without explicit Owner authorization after Gate A merge.
 ```

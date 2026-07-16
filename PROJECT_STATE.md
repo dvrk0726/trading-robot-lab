@@ -1,8 +1,8 @@
 # Project State
 
-Дата обновления: 2026-07-15  
+Дата обновления: 2026-07-16  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 Gate A2 DONE; Gate A3 BLOCKED
+Статус: RT-4 Gate A Completion IMPLEMENTED_IN_DRAFT_PR; Architecture Review PENDING
 
 ## Архитектурные границы
 
@@ -182,12 +182,12 @@ Current T0 templates SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 Current T1 templates SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
-External UDP preamble byte order: unresolved in official text
+External UDP preamble byte order: little-endian (written MOEX support confirmation, 2026-07-16)
 ```
 
 The 2026-07-11 RT-3 source audit remains historical evidence. The 2026-07-15 endpoint update is recorded separately by RT-4.
 
-Gate A uses explicit LittleEndian or BigEndian with no default. Gate B may compare both values with decoded tag 34, fail closed on ambiguity and lock one byte order after verification.
+Gate A uses fixed little-endian decoding with no runtime byte-order selector. Gate B consumes the fixed little-endian external value from A1 and compares numerically against decoded tag 34.
 
 ### RT-4 post-merge state sync — DONE
 
@@ -266,7 +266,7 @@ Final reviewed PR head: 8ed659ffffbf42fd0671935d53182622289b4ec6
 Main merge SHA: d026a13245ea4f92ea1fe46edf049df205f981ea
 Pre-merge CI #216: success
 Post-merge main CI #217: success
-MOEX FAST inventory: 17 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1
+MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
 ```
 
 Accepted public API:
@@ -312,7 +312,7 @@ invalid max: 0, 0x80000000, UINT32_MAX
 Expected, bounded future, beyond-window, ambiguous and stale vectors
 natural modulo-2^32 wrap vectors
 constexpr, noexcept and trivially-copyable checks
-MOEX FAST inventory: 17
+MOEX FAST inventory: 18
 required-check job names unchanged
 ```
 
@@ -334,15 +334,52 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
+### RT-4 Gate A Completion — IMPLEMENTED_IN_DRAFT_PR
+
+```text
+Issue #51: open
+PR #52: open, Draft, not merged
+Branch: mimo/issue-51-rt4-gate-a-completion
+Technical implementation head: 40fb4de9d8355bb4b019d29a0479178f2128955f
+Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
+Latest verified technical CI: #231, run ID 29499974934, success
+MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
+```
+
+Accepted Gate A implementation evidence in Draft PR #52:
+
+```text
+fixed little-endian UDP preamble framing
+written MOEX support confirmation: value 1 is 01 00 00 00, same rule for T0/T1/production, numeric preamble equals decoded tag 34
+A2 modulo-2^32 sequence classifier
+fixed caller-owned MessageStorage
+complete A/B DualFeedSequencer
+bounded reordering
+fixed non-extendable gap deadline
+deterministic fail-closed behavior
+93 internal Gate A test cases
+eight Release benchmark scenarios
+allocation_count equals zero in every measured scenario
+benchmark executed successfully in both Windows and Linux FAST CI jobs
+```
+
+Status: IMPLEMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
+
+Former internal phases A1, A2, A3, A4 and A5 are consolidated into Gate A Completion. A1 and A2 remain as historical verified checkpoints. The A1 production byte-order contract was later amended in PR #52 based on written MOEX support confirmation.
+
 Current verified boundary:
 
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A3: BLOCKED — not started and not authorized
-MiMo for A3: not authorized
+RT-4 Gate A Completion: IMPLEMENTED_IN_DRAFT_PR — Architecture Review pending
+Gate B: BLOCKED
+Gate C: BLOCKED
+Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
+
+Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
 
 ## MOEX access and connectivity state
 
@@ -361,7 +398,7 @@ MOEX support follow-up: pending.
 
 The VPN endpoint, external/private IP addresses, credentials, VPN profiles and raw/decoded market-data packets are not stored.
 
-This connectivity state does not prove a framing defect and does not authorize production acceptance.
+This connectivity state does not authorize production acceptance. Preamble byte order is resolved independently by written MOEX support confirmation (little-endian).
 
 CI-2 caching is POSTPONED, not started and not authorized.
 

@@ -1,9 +1,9 @@
 # RT-4 SPECTRA framing, sequencing and recovery specification
 
-**Date:** 2026-07-15  
-**Issue:** #38  
-**Status:** `OWNER_APPROVED_ARCHITECTURE — DOCUMENTATION_PR`  
-**Implementation:** not started and not authorized
+**Date:** 2026-07-16
+**Issues:** #38, #51
+**PR:** #52
+**Status:** `GATE_A_IMPLEMENTATION_COMPLETE — ARCHITECTURE_REVIEW_PENDING`
 
 ## 1. Purpose
 
@@ -20,7 +20,9 @@ UDP datagram
 → later RT-3 integration and Snapshot recovery
 ```
 
-This document is architecture and implementation specification only. It does not authorize code, MiMo, merge, RT-5, RT-6 or CI-2.
+Gate A implementation is complete in Draft PR #52. Final Architecture Review is pending. Ready-for-review is not authorized. Merge is not authorized. Gate B, Gate C and Gate D remain blocked.
+
+This document is the sole authoritative Gate A contract.
 
 ## 2. Authoritative sources
 
@@ -54,56 +56,51 @@ If MOEX later allows several FAST messages in one UDP datagram, that is a source
 
 ## 3. RT-4 gates
 
-### Gate A — framing, A/B sequencing and gaps
+### Gate A Completion — framing, sequencing, recovery and acceptance
 
-- A1: UDP framing primitive.
-- A2: deterministic `std::uint32_t` serial-number classification primitive only.
-- A3: fixed preallocated `MessageStorage` plus complete A/B arbitration, duplicate suppression, in-order emission and bounded reordering.
-- A4: fixed gap deadline and fail-closed transition.
-- A5: Release benchmarks, allocation evidence and architecture review.
-
-### Gate A implementation-stage boundary
-
-The final Gate A behavior and public sequencer contract remain unchanged. The implementation stages are ordered to avoid a partial stateful sequencer with undefined handling of a valid future packet.
-
-A2 is strictly stateless:
+Formerly tracked as A1, A2, A3, A4 and A5. These remain as historical labels for internal implementation phases only. The single current gate is:
 
 ```text
-input: observed sequence, next expected sequence, configured forward window
-output: deterministic serial-relation classification and delta
-no mutable feed state
-no A/B arbitration
-no payload or metadata access
-no MessageStorage
-no pending slots
-no emission
-no duplicate-suppression state
-no gap deadline
-no FailedClosed transition
+RT-4 Gate A Completion
 ```
 
-A3 begins only after fixed preallocated storage exists and introduces the complete mutable A/B sequencer as one coherent implementation boundary:
+Subsumed historical phases:
+
+- A1: UDP framing primitive — done.
+- A2: deterministic `std::uint32_t` serial-number classification primitive — done.
+- A3/A4/A5: implementation and acceptance-evidence phases are complete in Draft PR #52; final Architecture Review is pending; Ready is not authorized; merge is not authorized.
+
+Gate A is a single coherent transport-control subsystem:
 
 ```text
-LogicalFeedId ownership
-initialize/start/reset
-A/B first-valid-copy arbitration
-in-order synchronous emission
-stale duplicate suppression
-future-message buffering
-same-sequence pending payload comparison
-contiguous pending flush
+fixed preallocated MessageStorage
 bounded message and byte capacity
+one mutable sequencer per LogicalFeedId
+explicit initialize, start and reset
+A/B first-valid-copy arbitration
+synchronous in-order emission
+stale duplicate suppression
+future-message insertion
+same pending sequence payload comparison
+contiguous pending flush
+fixed non-extendable gap deadline
+monotonic-time validation
+exact now >= deadline semantics
+all deterministic fail-closed transitions
+Release benchmarks and allocation evidence
+final Gate A architecture acceptance
 ```
 
-A valid future packet must never be silently dropped, emitted out of order or converted into a temporary unsupported result. Temporary public APIs or result codes such as `FutureUnsupported` are prohibited. Sections describing `DualFeedSequencer`, message processing and pending storage specify the A3/A4 final system, not the A2 primitive.
+A valid future packet is never silently discarded or emitted out of order. Mutable sequencing begins only with bounded storage available.
 
 ### Gate B — replay and RT-3 integration
 
 - integrate RT-2 `.mxraw` A/B replay;
 - feed exactly one bounded FAST body into RT-3;
-- verify external preamble against decoded tag 34;
-- implement one-time byte-order `AutoVerify`;
+- consume the fixed little-endian external sequence value from A1;
+- decode RT-3 tag 34;
+- compare numeric values for every integrated message;
+- fail closed on mismatch;
 - add stream initialization and `SequenceReset` policy.
 
 ### Gate C — Snapshot recovery
@@ -127,7 +124,7 @@ Each gate stops for architecture review. No later gate starts automatically.
 Included:
 
 - framing of one current UDP datagram;
-- explicit preamble byte order;
+- fixed little-endian preamble decoding;
 - A/B logical-feed sequencing;
 - duplicate suppression;
 - bounded out-of-order buffering;
@@ -143,7 +140,6 @@ Excluded:
 - TCP Historical Replay;
 - `.mxraw` integration;
 - RT-3 decode integration;
-- automatic byte-order verification;
 - FIX `SequenceReset` semantics;
 - Snapshot recovery;
 - normalized events and order books.
@@ -173,26 +169,19 @@ bytes 4..end exactly one complete current FAST body
 
 The UDP datagram boundary is the current message boundary. Gate A does not scan for additional internal messages.
 
+TCP Historical Replay uses a different 4-byte prefix containing message length, not the UDP sequence preamble. The two formats must not be conflated.
+
 ### 6.2 Preamble byte order
 
-MOEX 1.30.2 does not explicitly state the byte order of the external preamble. The XML does not define it because the preamble is outside the FAST body.
+Written MOEX support confirmation (paraphrased, 2026-07-16):
 
-Gate A therefore requires explicit configuration:
+- the UDP FAST preamble is four bytes and uses little-endian byte order;
+- MsgSeqNum value 1 is encoded as `01 00 00 00`;
+- the same little-endian rule applies to SPECTRA T0, T1 and production feeds;
+- the numeric preamble value is guaranteed to equal decoded FAST MsgSeqNum tag 34;
+- this concerns the UDP multicast preamble, not the TCP Historical Replay length prefix.
 
-```cpp
-enum class PreambleByteOrder : std::uint8_t {
-    LittleEndian,
-    BigEndian
-};
-```
-
-Rules:
-
-- there is no default;
-- Gate A does not guess;
-- Gate B may compare both interpretations with decoded tag 34;
-- ambiguous or neither-match verification fails closed;
-- after verification, one order is locked per logical feed and the hot path performs one direct conversion.
+Gate A supports only fixed little-endian decoding. There is no runtime byte-order selector, alternative production byte-order path or automatic endian discovery.
 
 ### 6.3 Types and interface
 
@@ -217,11 +206,11 @@ struct DatagramView {
 };
 
 struct FramedMessageView {
-    LogicalFeedId feed;
-    FeedSide side;
-    std::uint32_t msg_seq_num;
-    std::uint64_t capture_index;
-    std::uint64_t capture_monotonic_ns;
+    LogicalFeedId feed{};
+    FeedSide side{FeedSide::A};
+    std::uint32_t msg_seq_num{};
+    std::uint64_t capture_index{};
+    std::uint64_t capture_monotonic_ns{};
     std::span<const std::uint8_t> fast_body;
 };
 
@@ -243,7 +232,6 @@ struct FrameResult {
 
 FrameResult frame_udp_message(
     const DatagramView& input,
-    PreambleByteOrder byte_order,
     FramingLimits limits,
     FramedMessageView& output
 ) noexcept;
@@ -253,17 +241,26 @@ FrameResult frame_udp_message(
 
 ### 6.4 Framing rules
 
-- Interpret the preamble as unsigned `std::uint32_t`.
-- Do not use an unaligned pointer cast.
-- Do not depend on host endian.
-- Use explicit byte shifts or an equivalent verified primitive.
+- Fixed little-endian decoding of bytes 0..3 using explicit shifts.
+- No unaligned pointer cast.
+- No dependence on host endian.
 - `max_datagram_bytes` must be at least five.
-- Reject payload shorter than five bytes.
+- Reject payload shorter than four bytes.
+- Reject payload of exactly four bytes (empty FAST body).
 - Reject payload above the configured bound.
 - `fast_body` is a borrowed span beginning at byte four.
 - No payload copy or heap allocation.
 - On failure, output has a deterministic empty state.
 - No FAST decode and no boundary guessing.
+
+### 6.5 Little-endian decoding vectors
+
+| Raw bytes | Decoded value |
+|---|---|
+| `01 00 00 00` | 1 |
+| `00 00 00 01` | 0x01000000 |
+| `01 02 03 04` | 0x04030201 |
+| `FF FF FF FF` | UINT32_MAX |
 
 ## 7. A3 — A/B sequencing and deduplication
 
@@ -293,15 +290,17 @@ SequencerCode initialize(
     MessageStorage& storage
 ) noexcept;
 
-SequencerCode start(std::uint32_t next_expected_seq) noexcept;
-void reset() noexcept;
+SequencerCode start(std::uint32_t initial_expected_seq) noexcept;
+SequencerCode reset() noexcept;
 ```
 
-Rules:
+Lifecycle rules:
 
-- `initialize` is outside the hot path;
+- `initialize` is valid only from `Uninitialized`;
+- invalid `initialize` remains `Uninitialized`;
 - `start` is valid only from `Stopped` after successful initialization;
-- `reset` clears pending state and returns to `Stopped`;
+- `reset` from `Uninitialized` returns `NotInitialized`;
+- successful `reset` clears pending state, deadline and clock state, preserves feed/config/storage, and enters `Stopped`;
 - recovery requires explicit `reset` followed by `start`;
 - Gate A does not infer the initial sequence and does not process `SequenceReset`;
 - Gate B owns stream-specific initialization and reset semantics.
@@ -404,19 +403,31 @@ GapWait
 ### 10.2 Configuration
 
 ```cpp
+struct MessageStorageConfig {
+    std::uint32_t max_reorder_messages{};
+    std::size_t max_reorder_bytes{};
+    std::size_t max_message_bytes{};
+};
+
 struct SequencerConfig {
-    std::uint32_t max_reorder_messages;
-    std::size_t max_reorder_bytes;
-    std::uint64_t reorder_wait_ns;
+    LogicalFeedId logical_feed{};
+    std::uint32_t max_reorder_distance{};
+    std::uint64_t reorder_wait_ns{};
+    MessageStorageConfig storage{};
 };
 ```
 
 Validation:
 
-- `max_reorder_messages` is nonzero and below `0x80000000`;
-- `max_reorder_bytes` is nonzero;
+- `logical_feed` must match the `feed` argument to `initialize`;
+- `max_reorder_distance` is nonzero and below `0x80000000`;
 - `reorder_wait_ns` is nonzero;
-- supplied storage has at least the declared message and byte capacity;
+- `storage.max_reorder_messages` is nonzero and below `0x80000000`;
+- `storage.max_message_bytes` is nonzero;
+- `storage.max_reorder_bytes` is nonzero;
+- supplied storage must be initialized and empty;
+- `slot_capacity >= max_reorder_distance`;
+- storage actual limits must cover declared limits;
 - invalid configuration cannot enter `Running`.
 
 Gate A defines no guessed production defaults.
@@ -467,6 +478,10 @@ The sequencer fails closed when any condition occurs:
 
 After fail-closed transition:
 
+- a terminal result enters `FailedClosed`;
+- pending storage may remain intact for diagnostics;
+- no later call may emit or advance it;
+- `reset` clears pending storage before restart;
 - no subsequent message is emitted;
 - the missing sequence is never silently skipped;
 - input may be counted for diagnostics but cannot advance state;
@@ -474,7 +489,159 @@ After fail-closed transition:
 
 ## 11. Sequencer interface
 
-The following interface begins in A3. A2 must not introduce a partial version of it.
+The following is the complete Gate A public interface, synchronized with the current implementation.
+
+### 11.1 Storage geometry
+
+```cpp
+struct StorageGeometryLimits {
+    std::uint32_t max_reorder_messages{};
+    std::size_t max_reorder_bytes{};
+    std::size_t max_message_bytes{};
+};
+
+enum class GeometryCode : std::uint8_t {
+    Ok,
+    ZeroMaxReorderMessages,
+    MaxReorderMessagesTooLarge,
+    ZeroMaxMessageBytes,
+    SlotCapacityTooSmall,
+    CapacityOverflow,
+    ArenaTooSmall,
+    ZeroMaxReorderBytes,
+    MaxReorderBytesExceedsCapacity
+};
+
+[[nodiscard]] constexpr GeometryCode validate_storage_geometry(
+    std::size_t slot_capacity,
+    std::span<const std::uint8_t> payload_arena,
+    StorageGeometryLimits limits
+) noexcept;
+```
+
+Validation checks, in order:
+
+- `max_reorder_messages` nonzero and below `0x80000000`;
+- `max_message_bytes` nonzero;
+- `slot_capacity >= max_reorder_messages`;
+- checked multiplication `slot_capacity * max_message_bytes` does not overflow;
+- `payload_arena.size() >= slot_capacity * max_message_bytes`;
+- `max_reorder_bytes` nonzero;
+- `max_reorder_bytes <= slot_capacity * max_message_bytes`.
+
+### 11.2 MessageStorage
+
+```cpp
+enum class InsertResult : std::uint8_t {
+    Ok,
+    NotInitialized,
+    EmptyBody,
+    BodyTooLarge,
+    DuplicateEqual,
+    DuplicateMismatch,
+    PendingMessageCapacityExceeded,
+    PendingByteCapacityExceeded,
+    InternalInvariantViolation
+};
+
+struct SlotMetadata {
+    std::uint32_t sequence{};
+    FeedSide side{};
+    std::uint64_t capture_index{};
+    std::uint64_t capture_monotonic_ns{};
+    std::size_t payload_offset{};
+    std::size_t payload_length{};
+    bool occupied{};
+};
+
+struct StoredMessageView {
+    bool found{};
+    std::uint32_t sequence{};
+    FeedSide side{};
+    std::uint64_t capture_index{};
+    std::uint64_t capture_monotonic_ns{};
+    std::span<const std::uint8_t> body{};
+};
+
+class MessageStorage {
+public:
+    MessageStorage() = default;
+    MessageStorage(const MessageStorage&) = delete;
+    MessageStorage& operator=(const MessageStorage&) = delete;
+    MessageStorage(MessageStorage&&) noexcept = delete;
+    MessageStorage& operator=(MessageStorage&&) noexcept = delete;
+    ~MessageStorage() = default;
+
+    [[nodiscard]] static constexpr GeometryCode validate_geometry(
+        std::size_t slot_capacity,
+        std::span<const std::uint8_t> payload_arena,
+        StorageGeometryLimits limits
+    ) noexcept;
+
+    void initialize(
+        std::span<SlotMetadata> slots,
+        std::span<std::uint8_t> arena,
+        MessageStorageConfig config
+    ) noexcept;
+
+    [[nodiscard]] InsertResult insert(
+        std::uint32_t msg_seq_num,
+        FeedSide side,
+        std::uint64_t capture_index,
+        std::uint64_t capture_monotonic_ns,
+        std::span<const std::uint8_t> body
+    ) noexcept;
+
+    [[nodiscard]] const SlotMetadata& view(std::uint32_t msg_seq_num) const noexcept;
+    [[nodiscard]] StoredMessageView view_message(std::uint32_t msg_seq_num) const noexcept;
+    [[nodiscard]] bool release(std::uint32_t msg_seq_num) noexcept;
+    void reset() noexcept;
+
+    [[nodiscard]] bool is_occupied(std::uint32_t msg_seq_num) const noexcept;
+    [[nodiscard]] std::size_t pending_count() const noexcept;
+    [[nodiscard]] std::size_t pending_bytes() const noexcept;
+    [[nodiscard]] std::size_t slot_capacity() const noexcept;
+    [[nodiscard]] bool initialized() const noexcept;
+
+    [[nodiscard]] std::uint32_t max_reorder_messages() const noexcept;
+    [[nodiscard]] std::size_t max_reorder_bytes() const noexcept;
+    [[nodiscard]] std::size_t max_message_bytes() const noexcept;
+
+    [[nodiscard]] static constexpr bool can_add_pending_bytes(
+        std::size_t current, std::size_t addition, std::size_t limit
+    ) noexcept;
+};
+```
+
+Storage geometry:
+
+- caller-owned fixed slot span and byte arena;
+- one dedicated contiguous payload slice per slot at `slot_index * max_message_bytes`;
+- geometry validation with checked multiplication;
+- exact-sequence O(1) modulo lookup: `slot_index = msg_seq_num % slot_capacity`;
+- the bounded forward window guarantees two valid pending sequences cannot occupy the same index when `slot_capacity >= max_reorder_messages`;
+- an occupied-index mismatch is `InternalInvariantViolation`;
+- `max_reorder_bytes` counts actual pending payload lengths;
+- all checks complete before a slot is marked occupied;
+- failure never publishes a partial message;
+- `MessageStorage` is non-copyable and non-movable.
+
+Behavior:
+
+- `initialize`: outside hot path; sets slot offsets; clears all metadata; marks initialized;
+- `insert`: checks body size, modulo lookup, duplicate comparison (byte-by-byte), capacity limits, copies payload into dedicated slice;
+- `view(seq)`: returns exact-sequence `SlotMetadata` reference, or deterministic empty/default metadata when uninitialized, absent or colliding; does not return an arena body span;
+- `view_message(seq)`: returns `StoredMessageView` with the borrowed read-only payload span only for an exact pending sequence; absent or colliding `view_message` returns a deterministic empty view;
+- `release`: clears slot metadata, preserves payload offset for reuse, decrements pending counters;
+- `reset`: clears all slot occupancy, preserves initialized state and payload offsets; pending counters return to zero.
+
+Normative per-message size rule:
+
+- every accepted FAST body, including an Expected in-order body, must fit the sequencer's declared `storage.max_message_bytes`;
+- an oversized Expected or future body enters `FailedClosed` with `PendingByteCapacityExceeded`;
+- the sink is not invoked and `next_expected` is not advanced for an oversized Expected body.
+
+### 11.3 Sequencer state machine
 
 ```cpp
 enum class SequencerState : std::uint8_t {
@@ -486,6 +653,7 @@ enum class SequencerState : std::uint8_t {
 };
 
 enum class SequencerCode : std::uint16_t {
+    NoAction,
     Initialized,
     Started,
     Reset,
@@ -511,37 +679,118 @@ enum class SequencerCode : std::uint16_t {
 };
 
 struct SequencerResult {
-    SequencerCode code;
-    std::uint32_t observed_seq;
-    std::uint32_t expected_seq;
+    SequencerCode code{SequencerCode::NoAction};
+    std::uint32_t observed_seq{};
+    std::uint32_t expected_seq{};
 };
+```
 
+`SequencerResult` entry-state semantics:
+
+- `on_message.observed_seq` = input message sequence;
+- `on_message.expected_seq` = `next_expected` at event entry;
+- `on_time.observed_seq` = `next_expected` at event entry;
+- `on_time.expected_seq` = `next_expected` at event entry;
+- the post-event value is available from `next_expected_seq()`.
+
+### 11.4 OrderedMessageMetadata
+
+```cpp
+struct OrderedMessageMetadata {
+    std::uint32_t msg_seq_num{};
+    FeedSide side{};
+    std::uint64_t capture_index{};
+    std::uint64_t capture_monotonic_ns{};
+};
+```
+
+### 11.5 DualFeedSequencer
+
+```cpp
 class DualFeedSequencer {
 public:
-    SequencerCode initialize(
+    DualFeedSequencer() = default;
+    DualFeedSequencer(const DualFeedSequencer&) = delete;
+    DualFeedSequencer& operator=(const DualFeedSequencer&) = delete;
+    DualFeedSequencer(DualFeedSequencer&&) noexcept = delete;
+    DualFeedSequencer& operator=(DualFeedSequencer&&) noexcept = delete;
+    ~DualFeedSequencer() = default;
+
+    [[nodiscard]] SequencerCode initialize(
         LogicalFeedId feed,
         SequencerConfig config,
         MessageStorage& storage
     ) noexcept;
 
-    SequencerCode start(std::uint32_t next_expected_seq) noexcept;
-    void reset() noexcept;
+    [[nodiscard]] SequencerCode start(std::uint32_t initial_expected_seq) noexcept;
+    [[nodiscard]] SequencerCode reset() noexcept;
 
-    SequencerState state() const noexcept;
-    std::uint32_t next_expected_seq() const noexcept;
+    [[nodiscard]] SequencerState state() const noexcept;
+    [[nodiscard]] std::uint32_t next_expected_seq() const noexcept;
 
-    template<class OrderedSink>
-    SequencerResult on_message(
+    template<class Sink>
+    [[nodiscard]] SequencerResult on_message(
         const FramedMessageView& message,
-        std::uint64_t monotonic_ns,
-        OrderedSink& sink
+        std::uint64_t event_monotonic_ns,
+        Sink& sink
     ) noexcept;
 
-    SequencerResult on_time(std::uint64_t monotonic_ns) noexcept;
+    template<class Sink>
+    [[nodiscard]] SequencerResult on_time(
+        std::uint64_t event_monotonic_ns,
+        Sink& sink
+    ) noexcept;
 };
 ```
 
-The sink is templated or statically bound, synchronous and `noexcept`. It must accept a borrowed view during the callback and must not retain it. Per-message `std::function`, virtual dispatch, exceptions and locks are not required.
+`DualFeedSequencer` is non-copyable and non-movable.
+
+### 11.6 Sink contract
+
+The sink is templated or statically bound, synchronous and statically verified `noexcept`. It must accept `(const OrderedMessageMetadata&, std::span<const std::uint8_t>)` during the callback and must not retain the span. Per-message `std::function`, virtual dispatch, exceptions and locks are not required.
+
+### 11.7 Time semantics
+
+Two monotonic values have different meanings:
+
+- `FramedMessageView.capture_monotonic_ns`: immutable capture metadata retained for diagnostics and pending emission;
+- `event_monotonic_ns` passed to `on_message` / `on_time`: authoritative sequencer clock sampled at serialized Gate A entry or supplied by deterministic replay.
+
+They are not required to be equal. Independent A/B capture timestamps therefore cannot accidentally define sequencer event order.
+
+### 11.8 Event precedence
+
+For `Running` and `GapWait`, processing order is fixed:
+
+```text
+1. lifecycle/state validity
+2. event clock regression
+3. active deadline
+4. message feed and structural preconditions
+5. A2 sequence classification
+6. relation-specific fatal result
+7. pending duplicate comparison
+8. pending message capacity
+9. per-message and total byte capacity
+10. copy or emit and atomic state commit
+```
+
+Consequences:
+
+- `ClockRegression` wins over `GapConfirmed`;
+- `GapConfirmed` wins over message contents at or after deadline;
+- `DeadlineOverflow` is checked before copying the first future message;
+- message-capacity failure wins over byte-capacity failure when both apply;
+- only successful A1 framing output is valid input.
+
+### 11.9 on_time result semantics
+
+Normative `on_time` behavior:
+
+- `on_time` in `Running` returns `NoAction`;
+- `on_time` in `GapWait` before the active deadline returns `GapWaiting`;
+- `on_time` in `GapWait` at or after the deadline returns `GapConfirmed` and enters `FailedClosed`;
+- `ClockRegression` is checked first and therefore wins over an expired deadline.
 
 ## 12. Ownership and lifetime
 
@@ -616,112 +865,108 @@ Human-readable formatting is offline and outside the hot path.
 
 The same input and configuration must produce the same ordered output, drops, buffers, deadline, gap transition, issue codes and final state.
 
-## 15. Synthetic test plan
+## 15. Accepted test evidence
 
-### Framing
+### CTest inventory
 
-- payload sizes zero through four;
-- minimum valid size five;
-- exact configured maximum and one byte above;
-- invalid `max_datagram_bytes` below five;
-- `01 00 00 00`: little `1`, big `16777216`;
-- `00 00 00 01`: little `16777216`, big `1`;
-- `01 02 03 04`: little `0x04030201`, big `0x01020304`;
-- `FF FF FF FF`: `UINT32_MAX`;
-- body starts exactly at offset four;
-- source bytes are not modified or copied.
+Total moex_fast CTest inventory: 18.
 
-### Serial arithmetic
+- RT-1 inspector: 6 tests.
+- RT-3 decoder: 9 tests.
+- RT-4 A1 framing: 1 test (`test_spectra_udp_framing`).
+- RT-4 A2 sequence arithmetic: 1 test (`test_spectra_sequence_arithmetic`).
+- RT-4 Gate A: 1 test (`test_spectra_gate_a`).
 
-- exact expected sequence;
-- one-step future and one-step stale;
-- `UINT32_MAX → 0` natural forward wrap;
-- `0 → UINT32_MAX` stale relation;
-- future at exact configured distance;
-- one beyond configured distance;
-- exact `0x80000000` ambiguous relation;
-- invalid configuration at zero and half-range capacity.
+### Gate A test binary
 
-The A2 test target covers only these stateless vectors and does not construct a sequencer or storage.
+One Gate A CTest binary with 93 internal test cases, covering:
 
-### A/B sequencing
-
-- `1A`;
-- `1A,1B` and `1B,1A`;
-- alternating winning side;
-- `1A,2A,1B,2B`;
-- duplicate future message while pending;
-- same pending sequence with different bytes;
+- storage geometry validation and checked multiplication;
+- caller-owned fixed slot span and byte arena;
+- one dedicated contiguous payload slice per slot;
+- exact-sequence O(1) modulo lookup including uint32 wrap;
+- occupied-index invariant failure;
+- insert, view, release, reset, view_message;
+- `MessageStorage` non-copyable and non-movable;
+- `StoredMessageView` borrowed pointer and metadata;
+- no partial slot publication after failed insertion;
+- `SequencerConfig` field validation;
+- `SequencerState` lifecycle: `Uninitialized`, `Stopped`, `Running`, `GapWait`, `FailedClosed`;
+- complete `SequencerCode` including `NoAction`, `GapWaiting`, `ClockRegression`, `DeadlineOverflow`;
+- `SequencerResult` entry-state semantics;
+- `DualFeedSequencer` exact signatures: `initialize`, `start`, `reset`, `on_message`, `on_time`;
+- `reset` returns `SequencerCode`;
+- A/B first-valid-copy arbitration and alternating winning side;
 - stale duplicate after emission;
-- explicit start at a value other than one;
-- wrong logical feed.
-
-These stateful tests begin in A3 together with fixed storage.
-
-### Reordering and gaps
-
-- `1,3,2`;
-- `1,4,3,2`;
-- gap filled before deadline;
-- missing message exactly at deadline fails closed;
-- timeout before missing message;
-- later out-of-order packets do not extend deadline;
-- resolving one hole while pending still exposes another does not extend deadline;
-- new independent gap after pending becomes empty gets a new deadline;
-- deadline-addition overflow;
-- distance, count and byte limits;
-- monotonic time regression;
+- wrong logical feed;
+- future duplicate with equal bytes and different bytes;
+- `1,3,2` and deeper contiguous flush vectors;
+- natural uint32 wrap;
+- message-count and byte-capacity limits;
+- message-capacity failure precedence over byte-capacity failure;
+- fixed deadline that later traffic cannot extend;
+- arrival exactly at deadline;
+- partial resolution does not extend deadline;
+- clock regression and deadline overflow;
+- `ClockRegression` precedence over `GapConfirmed`;
 - no emission after `FailedClosed`;
 - explicit reset and deterministic restart;
-- repeated run produces byte-identical event log.
+- deterministic replay comparison including per-event result, state and `next_expected`;
+- synchronous statically verified noexcept sink;
+- capture_monotonic_ns versus authoritative event_monotonic_ns;
+- declared limits enforced with larger storage;
+- `on_time` in `Running` returns `NoAction`;
+- `on_time` in `GapWait` before deadline returns `GapWaiting`;
+- reset transition matrix;
+- result-field entry-state semantics;
+- body too large on both expected and future paths;
+- deadline overflow leaves arena unchanged.
 
 ### Platforms
 
-- Windows/MSVC Release with warnings as errors;
-- Linux/GCC Release with warnings as errors;
-- exact CTest inventory check;
-- tests remain active under `NDEBUG`;
+- Windows/MSVC Release with warnings as errors.
+- Linux/GCC Release with warnings as errors.
+- exact CTest inventory verified in both CI jobs.
+- tests remain active under `NDEBUG`.
 - no real raw market-data capture committed.
 
-## 16. Release benchmark plan
+## 16. Accepted benchmark evidence
 
-Workloads:
+One Release benchmark executable (`bench_spectra_gate_a`), not a CTest. Runs in both the Windows/MSVC and Linux/GCC CI jobs.
 
-- framing at representative payload sizes up to near MTU;
-- one-side ordered stream;
-- 100% A/B duplicates;
-- alternating winning side;
-- reorder depths 1, 4, 16 and near configured limit;
-- burst reorder followed by contiguous flush;
-- serial wrap boundary;
-- confirmed gap and failed-closed input.
+Eight deterministic scenarios:
 
-Metrics:
+1. `ordered_first_copy_emission` — one-side ordered stream.
+2. `expected_a_then_stale_b` — expected A message followed by stale B duplicate.
+3. `alternating_ab_winning_side` — alternating A/B first-copy wins.
+4. `reorder_flush_depth_1` — bounded reorder depth 1 and contiguous flush.
+5. `reorder_flush_depth_4` — bounded reorder depth 4 and contiguous flush.
+6. `equal_pending_duplicate_drop` — equal pending duplicate drop.
+7. `gapwait_ontime_before_deadline` — GapWait on_time before deadline.
+8. `failedclosed_steady_state` — terminal FailedClosed steady-state calls.
 
-- p50, p90, p99 and p99.9 latency;
-- maximum observed latency;
-- messages and payload bytes per second;
-- allocations and allocated bytes per message;
-- post-initialization allocation count;
-- fixed-storage high-water mark;
-- peak process memory;
-- execution-time variability.
+Per scenario:
 
-Windows and Linux results are recorded separately. The first measurement establishes a baseline. No invented nanosecond threshold or flaky latency CI gate is accepted.
+- 21 samples;
+- per-operation p50, p95 and p99 latency;
+- throughput (ops/sec);
+- pending-message and pending-byte high-water marks;
+- deterministic checksum;
+- executable-local allocation interception via global `operator new` replacement;
+- `allocation_count == 0` for all eight measured scenarios;
+- functional correctness invariant check per scenario.
 
-## 17. Small implementation stages
+This is Gate A evidence. It does not constitute end-to-end RT-3 production performance acceptance. No latency pass/fail threshold or flaky latency CI gate is accepted.
 
-After separate implementation authorization:
+## 17. Implementation history
 
-1. A1 framing types, parser and endian vectors — completed.
-2. A2 deterministic serial-number classification primitive and boundary vectors only.
-3. A3 fixed preallocated `MessageStorage` and complete A/B sequencer integration: initialization, in-order emission, stale duplicate suppression, future buffering, pending duplicate comparison and contiguous flush.
-4. A4 fixed deadline, gap confirmation and terminal fail-closed state.
-5. A5 Release benchmarks, allocation evidence and Gate A review.
+Historical internal phases (now consolidated into Gate A Completion):
 
-A2 must not add `DualFeedSequencer`, mutable feed state, storage, payload buffering, an ordered sink or a temporary unsupported-future result. A3 must not begin until A2 is accepted, merged and post-merge verified.
+1. A1 framing types, parser and little-endian decoding — done.
+2. A2 deterministic serial-number classification primitive — done.
+3. A3/A4/A5: bounded `MessageStorage`, complete A/B sequencer, gap recovery, Release benchmarks and allocation evidence — done in Draft PR #52.
 
-Each stage is one small logical task, one commit, push, CI and review. MiMo stops after each stage. Gate B cannot begin before Gate A Owner acceptance.
+The work is one Issue (#51), one branch, one Draft PR (#52) and one final merge. Gate B cannot begin before Gate A Owner acceptance.
 
 ## 18. Gate A acceptance review
 
@@ -741,23 +986,24 @@ Before Gate B:
 
 These items do not block specification approval but remain unresolved for production acceptance:
 
-- written MOEX confirmation, official vector or live packet for external preamble endian;
 - production reorder timeout and capacity values;
 - stream-specific initial sequence and `SequenceReset` handling;
 - `.mxraw` A/B replay merge;
 - Snapshot + buffered Incremental recovery;
-- end-to-end allocation behaviour with RT-3.
+- end-to-end allocation behaviour with RT-3;
+- real production packet-path validation where still required.
 
 ## 20. Authorization boundary
 
-Owner approval of this architecture and documentation PR does not authorize:
+This documentation change does not authorize:
 
 ```text
-C++ implementation
-MiMo launch
-Issue #38 implementation work
+Ready-for-review
 merge or auto-merge
 force push or branch deletion
+Gate B
+Gate C
+Gate D
 RT-5 / RT-6 / CI-2
 production or live trading
 ```
