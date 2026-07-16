@@ -9,13 +9,6 @@ static constexpr std::uint32_t read_u32_le(const std::uint8_t* p) noexcept {
          | (static_cast<std::uint32_t>(p[3]) << 24);
 }
 
-static constexpr std::uint32_t read_u32_be(const std::uint8_t* p) noexcept {
-    return static_cast<std::uint32_t>(p[3])
-         | (static_cast<std::uint32_t>(p[2]) << 8)
-         | (static_cast<std::uint32_t>(p[1]) << 16)
-         | (static_cast<std::uint32_t>(p[0]) << 24);
-}
-
 static void reset_output(FramedMessageView& out) noexcept {
     out.feed = LogicalFeedId{};
     out.side = FeedSide::A;
@@ -27,15 +20,12 @@ static void reset_output(FramedMessageView& out) noexcept {
 
 FrameResult frame_udp_message(
     const DatagramView& input,
-    PreambleByteOrder byte_order,
     FramingLimits limits,
     FramedMessageView& output
 ) noexcept {
     reset_output(output);
 
-    if (limits.max_datagram_bytes < 5 ||
-        (byte_order != PreambleByteOrder::LittleEndian &&
-         byte_order != PreambleByteOrder::BigEndian)) {
+    if (limits.max_datagram_bytes < 5) {
         return {FrameCode::InvalidConfig};
     }
 
@@ -55,9 +45,7 @@ FrameResult frame_udp_message(
 
     const std::uint8_t* data = input.payload.data();
 
-    const std::uint32_t seq = (byte_order == PreambleByteOrder::LittleEndian)
-        ? read_u32_le(data)
-        : read_u32_be(data);
+    const std::uint32_t seq = read_u32_le(data);
 
     output.feed = input.feed;
     output.side = input.side;

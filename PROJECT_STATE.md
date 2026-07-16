@@ -1,8 +1,8 @@
 # Project State
 
-Дата обновления: 2026-07-15  
+Дата обновления: 2026-07-16  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 Gate A2 DONE; Gate A3 BLOCKED
+Статус: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
 
 ## Архитектурные границы
 
@@ -167,7 +167,7 @@ Approved architecture structure:
 Gate A: UDP framing, A/B sequencing, bounded reordering,
         gap detection, explicit monotonic timeout and fail-closed
 Gate B: RT-2 .mxraw + RT-3 integration, tag-34 verification,
-        one-time preamble endian AutoVerify
+        fixed little-endian preamble compared numerically with decoded tag 34
 Gate C: Snapshot + buffered Incremental recovery
 Gate D: Windows/Linux Release performance and production evidence
 ```
@@ -182,12 +182,12 @@ Current T0 templates SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 Current T1 templates SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
-External UDP preamble byte order: unresolved in official text
+External UDP preamble byte order: little-endian (written MOEX support confirmation, 2026-07-16)
 ```
 
 The 2026-07-11 RT-3 source audit remains historical evidence. The 2026-07-15 endpoint update is recorded separately by RT-4.
 
-Gate A uses explicit LittleEndian or BigEndian with no default. Gate B may compare both values with decoded tag 34, fail closed on ambiguity and lock one byte order after verification.
+Gate A uses fixed little-endian decoding with no runtime byte-order selector. Gate B consumes the fixed little-endian external value from A1 and compares numerically against decoded tag 34.
 
 ### RT-4 post-merge state sync — DONE
 
@@ -216,7 +216,7 @@ Accepted A1 contract:
 ```text
 one current UDP datagram
 4-byte external MsgSeqNum preamble
-explicit LittleEndian or BigEndian; no default
+fixed little-endian decoding; no runtime endian selector
 exactly one borrowed FAST body beginning at byte 4
 bounded validation and stable FrameCode result
 no payload copy and no heap allocation in production framing code
@@ -227,14 +227,14 @@ required-check job names unchanged
 Deterministic framing error precedence:
 
 ```text
-invalid limits or invalid byte-order enum -> InvalidConfig
+invalid limits                          -> InvalidConfig
 payload size 0..3                       -> DatagramTooShort
 payload size 4                          -> EmptyFastBody
 payload size > max_datagram_bytes       -> DatagramTooLarge
 payload size 5..max                     -> Ok
 ```
 
-A1 excludes A/B sequencing, serial arithmetic, duplicate suppression, reorder storage, gap deadlines, sockets, `.mxraw`, RT-3 integration, AutoVerify, SequenceReset, Snapshot recovery and benchmarks.
+A1 excludes A/B sequencing, serial arithmetic, duplicate suppression, reorder storage, gap deadlines, sockets, `.mxraw`, RT-3 integration, SequenceReset, Snapshot recovery and benchmarks.
 
 ### RT-4 A2/A3 implementation-stage amendment — DONE
 
@@ -334,15 +334,52 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
+### RT-4 Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
+
+```text
+Issue #51: open
+PR #52: open, Draft, not merged
+Branch: mimo/issue-51-rt4-gate-a-completion
+Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
+Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
+Technical CI: #234, run ID 29526060857, success, 6 jobs
+MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
+```
+
+Verified Gate A implementation evidence in Draft PR #52:
+
+```text
+fixed little-endian UDP preamble framing
+written MOEX support confirmation: value 1 is 01 00 00 00, same rule for T0/T1/production, numeric preamble equals decoded tag 34
+A2 modulo-2^32 sequence classifier
+fixed caller-owned MessageStorage
+complete A/B DualFeedSequencer
+bounded reordering
+fixed non-extendable gap deadline
+deterministic fail-closed behavior
+98 internal Gate A test cases
+eight Release benchmark scenarios
+allocation_count equals zero in every measured scenario
+benchmark executed successfully in both Windows and Linux FAST CI jobs
+```
+
+Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
+
+Former internal phases A1, A2, A3, A4 and A5 are consolidated into Gate A Completion. A1 and A2 remain as historical verified checkpoints. PR #43 originally introduced an explicit endian selector, but this production contract was superseded in PR #52 after written MOEX support confirmation; current contract is fixed little-endian.
+
 Current verified boundary:
 
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A3: BLOCKED — not started and not authorized
-MiMo for A3: not authorized
+RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
+Gate B: BLOCKED
+Gate C: BLOCKED
+Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
+
+Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
 
 ## MOEX access and connectivity state
 
@@ -361,7 +398,7 @@ MOEX support follow-up: pending.
 
 The VPN endpoint, external/private IP addresses, credentials, VPN profiles and raw/decoded market-data packets are not stored.
 
-This connectivity state does not prove a framing defect and does not authorize production acceptance.
+This connectivity state does not authorize production acceptance. Preamble byte order is resolved independently by written MOEX support confirmation (little-endian).
 
 CI-2 caching is POSTPONED, not started and not authorized.
 

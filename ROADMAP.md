@@ -1,8 +1,8 @@
 # Roadmap
 
-Дата обновления: 2026-07-15  
+Дата обновления: 2026-07-16  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A2 DONE; Gate A3 BLOCKED
+Текущий gate: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
 
 ## Главный порядок
 
@@ -141,7 +141,6 @@ Pre-merge CI #199: success
 Post-merge main CI #200: success
 MOEX FAST inventory: 16 = RT-1 6 + RT-3 9 + RT-4 A1 1
 ```
-
 ### RT-4 A2/A3 implementation-stage amendment — DONE
 
 ```text
@@ -175,7 +174,7 @@ MOEX support follow-up: pending
 
 Private connection addresses, credentials, VPN profiles and real raw/decoded market-data packets are prohibited in Git.
 
-The connectivity blocker does not invalidate synthetic A1 acceptance. Production endian acceptance still requires live T0/T1 evidence, an official vector or written MOEX confirmation.
+The connectivity blocker does not invalidate synthetic A1 acceptance. Preamble byte order is resolved by written MOEX support confirmation (little-endian, 2026-07-16).
 
 ## RT-4 implementation gates
 
@@ -184,7 +183,7 @@ The connectivity blocker does not invalidate synthetic A1 acceptance. Production
 ```text
 4-byte external MsgSeqNum preamble
 one current UDP datagram and exactly one FAST body
-explicit LittleEndian or BigEndian; no default guess
+fixed little-endian decoding; no runtime endian selector
 host-endian-independent uint32 conversion
 borrowed FAST-body span beginning at byte 4
 bounded deterministic validation
@@ -198,7 +197,7 @@ required-check job names unchanged
 Deterministic error precedence:
 
 ```text
-invalid limits or invalid byte-order enum -> InvalidConfig
+invalid limits                          -> InvalidConfig
 payload size 0..3                       -> DatagramTooShort
 payload size 4                          -> EmptyFastBody
 payload size > max_datagram_bytes       -> DatagramTooLarge
@@ -215,7 +214,6 @@ gap deadline and FailedClosed state
 sockets and multicast
 .mxraw integration
 RT-3 decode integration
-preamble AutoVerify
 SequenceReset
 Snapshot recovery
 Release benchmark claims
@@ -321,51 +319,49 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
-### Gate A3 — fixed storage and complete A/B sequencer — BLOCKED
+### Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
+
+Formerly tracked as A1, A2, A3, A4 and A5. These remain as historical labels for internal implementation phases only. A1 and A2 are verified historical checkpoints. A3/A4/A5 implementation and acceptance-evidence phases are complete in Draft PR #52.
 
 ```text
-fixed preallocated MessageStorage
-bounded message and byte capacity
-one mutable sequencer per LogicalFeedId
-explicit initialize/start/reset
-A/B first-valid-copy arbitration
-in-order synchronous emission
-stale duplicate suppression
-future-message insertion
-same pending sequence payload comparison
-out-of-order buffering
-contiguous pending flush
+Issue #51: open
+PR #52: open, Draft, not merged
+Branch: mimo/issue-51-rt4-gate-a-completion
+Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
+Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
+Technical CI: #234, run ID 29526060857, success, 6 jobs
+MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
 ```
 
-A valid future packet is not silently dropped or emitted out of order. Stateful A/B sequencing begins only after fixed storage exists; no partial sequencer or temporary unsupported-future behavior is permitted.
-
-A3 cannot begin until A2 is accepted, merged and post-merge verified.
-
-### Gate A4 — gap deadline and fail-closed — BLOCKED
+Verified Gate A implementation evidence:
 
 ```text
-fixed monotonic non-extendable deadline
-gap confirmation
-terminal FailedClosed state
-explicit reset/restart only
+fixed little-endian UDP preamble framing
+written MOEX support confirmation: value 1 is 01 00 00 00, same rule for T0/T1/production
+A2 modulo-2^32 sequence classifier
+fixed caller-owned MessageStorage
+complete A/B DualFeedSequencer
+bounded reordering
+fixed non-extendable gap deadline
+deterministic fail-closed behavior
+98 internal Gate A test cases
+eight Release benchmark scenarios
+allocation_count equals zero in every measured scenario
+benchmark executed successfully in both Windows and Linux FAST CI jobs
 ```
 
-### Gate A5 — Release benchmarks and Gate A review — BLOCKED
+Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
 
-```text
-Windows/Linux Release measurements
-allocation evidence
-latency distribution and variability
-Owner acceptance before Gate B
-```
+PR #43 originally introduced an explicit endian selector, but this production contract was superseded in PR #52 after written MOEX support confirmation; current contract is fixed little-endian.
+
+Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
 
 ### Gate B — replay and decoder integration — BLOCKED
 
 ```text
 RT-2 .mxraw A/B replay merge
 RT-3 exact-body integration
-compare external preamble with decoded tag 34
-one-time endian AutoVerify and per-feed lock
+compare fixed little-endian external preamble with decoded tag 34
 stream initialization and SequenceReset policy
 ```
 
@@ -392,12 +388,14 @@ explicit Owner acceptance
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A3: BLOCKED — not started and not authorized
-MiMo for A3: not authorized
+RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
+Gate B: BLOCKED
+Gate C: BLOCKED
+Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
-The next transition is a separate current-state review and one bounded A3 plan. No A3 Issue, branch, PR, implementation or MiMo launch is authorized.
+The next transition is final Architecture Review of complete PR #52, then separate Owner authorization to mark Ready, separate Owner authorization to merge, post-merge CI verification, and only then a separate Gate B decision.
 
 CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 

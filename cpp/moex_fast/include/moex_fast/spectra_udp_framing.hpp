@@ -5,11 +5,6 @@
 
 namespace moex::spectra {
 
-enum class PreambleByteOrder : std::uint8_t {
-    LittleEndian,
-    BigEndian
-};
-
 enum class FeedSide : std::uint8_t {
     A,
     B
@@ -54,7 +49,6 @@ struct FrameResult {
 
 FrameResult frame_udp_message(
     const DatagramView& input,
-    PreambleByteOrder byte_order,
     FramingLimits limits,
     FramedMessageView& output
 ) noexcept;

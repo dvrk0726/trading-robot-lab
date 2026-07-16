@@ -1,8 +1,8 @@
 # AI Context
 
-Дата обновления: 2026-07-15  
+Дата обновления: 2026-07-16  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-4 Gate A2 DONE; Gate A3 BLOCKED
+Текущий gate: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
 
 ## Источник истины
 
@@ -132,7 +132,7 @@ Architecture gates:
 
 ```text
 Gate A: framing, A/B sequencing, bounded reordering, gaps, fail-closed
-Gate B: .mxraw + RT-3 integration and preamble AutoVerify
+Gate B: .mxraw + RT-3 integration; fixed little-endian preamble value compared numerically with decoded tag 34
 Gate C: Snapshot + buffered Incremental recovery
 Gate D: Release performance and production-evidence acceptance
 ```
@@ -147,10 +147,10 @@ Current T0 templates SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
 Current T1 templates SHA-256:
 84FACBF784676FD1A0442297F45DB4D3BBA11AE938618F082BEABEF62A782A3F
-External 4-byte preamble byte order: unresolved in official text
+External 4-byte preamble byte order: little-endian (written MOEX support confirmation, 2026-07-16)
 ```
 
-Gate A requires explicit LittleEndian or BigEndian configuration and no default guess. Gate B may compare both interpretations with decoded tag 34, fail closed on ambiguity, and lock one byte order per logical feed after verification.
+Gate A uses fixed little-endian decoding with no runtime byte-order selector. Gate B consumes the fixed little-endian external value from A1 and compares numerically against decoded tag 34.
 
 ## RT-4 state-sync verified checkpoint
 
@@ -220,15 +220,62 @@ MOEX FAST inventory: 17 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1
 
 Accepted A2 production contract: header-only `spectra_sequence_arithmetic.hpp`, `SequenceRelation`, `SequenceClassification`, and `classify_sequence_relation(...) constexpr noexcept`; unsigned modulo-2^32 subtraction; deterministic `InvalidConfig`, `Expected`, `FutureWithinWindow`, `FutureBeyondWindow`, `Ambiguous` and `Stale`; one Release-active `test_spectra_sequence_arithmetic`; no mutable sequencing state or A3 behavior.
 
+## RT-4 Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
+
+```text
+Issue #51: open
+PR #52: open, Draft, not merged
+Branch: mimo/issue-51-rt4-gate-a-completion
+Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
+Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
+Technical CI: #234, run ID 29526060857, success, 6 jobs
+MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
+```
+
+Verified Gate A implementation evidence in Draft PR #52:
+
+```text
+fixed little-endian UDP preamble framing
+written MOEX support confirmation: value 1 is 01 00 00 00, same rule for T0/T1/production, numeric preamble equals decoded tag 34
+A2 modulo-2^32 sequence classifier
+fixed caller-owned MessageStorage
+complete A/B DualFeedSequencer
+bounded reordering
+fixed non-extendable gap deadline
+deterministic fail-closed behavior
+98 internal Gate A test cases
+eight Release benchmark scenarios
+allocation_count equals zero in every measured scenario
+benchmark executed successfully in both Windows and Linux FAST CI jobs
+```
+
+Additional Gate A test areas (beyond original 93):
+
+```text
+observable exact geometry failure
+valid retry after invalid geometry
+second valid initialize preserves complete state
+AlreadyInitialized precedence over invalid geometry
+reset preserves one-shot storage binding
+```
+
+PR #43 originally introduced an explicit endian selector, but this production contract was superseded in PR #52 after written MOEX support confirmation; current contract is fixed little-endian.
+
+Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
+
 ## Current verified boundary
 
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A3: BLOCKED — not started and not authorized
-MiMo for A3: not authorized
+RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
+Gate B: BLOCKED
+Gate C: BLOCKED
+Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
+
+Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
 
 CI-2 caching is POSTPONED, not started and not authorized.
 
@@ -254,9 +301,11 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-No implementation gate is active.
-Do not start A3.
-First perform a current-state review and prepare one bounded A3 plan.
-Do not create an A3 Issue, branch or PR without explicit Owner authorization.
-Do not launch MiMo for A3 without explicit Owner authorization.
+RT-4 Gate A Completion is implemented in Draft PR #52.
+Final Architecture Review of complete PR #52 is pending.
+Ready-for-review is not authorized.
+Merge is not authorized.
+Gate B, Gate C and Gate D remain blocked.
+RT-5 is prohibited until all RT-4 gates are eventually accepted and merged.
+Do not start Gate B without explicit Owner authorization after Gate A merge.
 ```
