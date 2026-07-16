@@ -69,56 +69,78 @@ InsertResult MessageStorage::insert(
     if (pending_count_ >= max_reorder_messages_)
         return InsertResult::PendingMessageCapacityExceeded;
 
-    const std::size_t new_bytes = pending_bytes_ + body.size();
-    if (new_bytes > max_reorder_bytes_)
+    if (!can_add_pending_bytes(pending_bytes_, body.size(), max_reorder_bytes_))
         return InsertResult::PendingByteCapacityExceeded;
 
-    std::uint8_t* dst = payload_arena_.data() + slot.payload_offset;
+    const std::size_t slot_offset = idx * max_message_bytes_;
+    std::uint8_t* dst = payload_arena_.data() + slot_offset;
     std::memcpy(dst, body.data(), body.size());
 
     slot.sequence = msg_seq_num;
     slot.side = side;
     slot.capture_index = capture_index;
     slot.capture_monotonic_ns = capture_monotonic_ns;
+    slot.payload_offset = slot_offset;
     slot.payload_length = body.size();
     slot.occupied = true;
 
     pending_count_ = pending_count_ + 1;
-    pending_bytes_ = new_bytes;
+    pending_bytes_ = pending_bytes_ + body.size();
 
     return InsertResult::Ok;
 }
 
 const SlotMetadata& MessageStorage::view(std::uint32_t msg_seq_num) const noexcept {
-    return slots_[static_cast<std::size_t>(msg_seq_num) % slot_capacity_];
+    static const SlotMetadata empty{};
+    if (!initialized_ || slot_capacity_ == 0)
+        return empty;
+    const std::size_t idx = static_cast<std::size_t>(msg_seq_num) % slot_capacity_;
+    const SlotMetadata& slot = slots_[idx];
+    if (!slot.occupied || slot.sequence != msg_seq_num)
+        return empty;
+    return slot;
 }
 
-void MessageStorage::release(std::uint32_t msg_seq_num) noexcept {
-    if (!initialized_)
-        return;
+bool MessageStorage::release(std::uint32_t msg_seq_num) noexcept {
+    if (!initialized_ || slot_capacity_ == 0)
+        return false;
 
     const std::size_t idx = static_cast<std::size_t>(msg_seq_num) % slot_capacity_;
     SlotMetadata& slot = slots_[idx];
 
-    if (slot.occupied) {
-        pending_bytes_ -= slot.payload_length;
-        pending_count_ -= 1;
-    }
+    if (!slot.occupied || slot.sequence != msg_seq_num)
+        return false;
 
+    pending_bytes_ -= slot.payload_length;
+    pending_count_ -= 1;
+
+    const std::size_t preserved_offset = slot.payload_offset;
     slot = {};
+    slot.payload_offset = preserved_offset;
+
+    return true;
 }
 
 void MessageStorage::reset() noexcept {
-    for (std::size_t i = 0; i < slot_capacity_; ++i)
+    if (!initialized_)
+        return;
+
+    for (std::size_t i = 0; i < slot_capacity_; ++i) {
+        const std::size_t preserved_offset = slots_[i].payload_offset;
         slots_[i] = {};
+        slots_[i].payload_offset = preserved_offset;
+    }
 
     pending_count_ = 0;
     pending_bytes_ = 0;
-    initialized_ = false;
 }
 
 bool MessageStorage::is_occupied(std::uint32_t msg_seq_num) const noexcept {
-    return slots_[static_cast<std::size_t>(msg_seq_num) % slot_capacity_].occupied;
+    if (!initialized_ || slot_capacity_ == 0)
+        return false;
+    const std::size_t idx = static_cast<std::size_t>(msg_seq_num) % slot_capacity_;
+    const SlotMetadata& slot = slots_[idx];
+    return slot.occupied && slot.sequence == msg_seq_num;
 }
 
 std::size_t MessageStorage::pending_count() const noexcept {
@@ -135,6 +157,24 @@ std::size_t MessageStorage::slot_capacity() const noexcept {
 
 bool MessageStorage::initialized() const noexcept {
     return initialized_;
+}
+
+StoredMessageView MessageStorage::view_message(std::uint32_t msg_seq_num) const noexcept {
+    if (!initialized_ || slot_capacity_ == 0)
+        return {};
+    const std::size_t idx = static_cast<std::size_t>(msg_seq_num) % slot_capacity_;
+    const SlotMetadata& slot = slots_[idx];
+    if (!slot.occupied || slot.sequence != msg_seq_num)
+        return {};
+    StoredMessageView v{};
+    v.found = true;
+    v.sequence = slot.sequence;
+    v.side = slot.side;
+    v.capture_index = slot.capture_index;
+    v.capture_monotonic_ns = slot.capture_monotonic_ns;
+    v.body = std::span<const std::uint8_t>(
+        payload_arena_.data() + slot.payload_offset, slot.payload_length);
+    return v;
 }
 
 } // namespace moex::spectra

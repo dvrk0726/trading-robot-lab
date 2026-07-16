@@ -104,7 +104,7 @@ jobs:
 
   # RT-1 inspector: 6 tests on Windows/MSVC, RT-3 decoder: 9 tests, RT-4 A1: 1, RT-4 A2: 1, Gate A: 1
   cpp-moex-fast-inspector:
-    name: "C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9, RT-4: 3)"
+    name: "C++ MOEX FAST Windows/MSVC (RT-1: 6, RT-3: 9)"
     needs: repository-hygiene
     if: needs.repository-hygiene.outputs.run_fast == 'true'
     runs-on: windows-latest
@@ -222,7 +222,7 @@ jobs:
 
   # RT-1 inspector: 6 tests on Linux/GCC, RT-3 decoder: 9 tests, RT-4 A1: 1, RT-4 A2: 1, Gate A: 1
   cpp-moex-fast-inspector-linux:
-    name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9, RT-4: 3)"
+    name: "C++ MOEX FAST Linux/GCC (RT-1: 6, RT-3: 9)"
     needs: repository-hygiene
     if: needs.repository-hygiene.outputs.run_fast == 'true'
     runs-on: ubuntu-latest

@@ -40,7 +40,7 @@ void test_valid_init_and_reset() {
         CHECK(!storage.is_occupied(i));
 
     storage.reset();
-    CHECK(!storage.initialized());
+    CHECK(storage.initialized());
     CHECK_EQ(storage.pending_count(), 0u);
     CHECK_EQ(storage.pending_bytes(), 0u);
     TEST_PASS("test_valid_init_and_reset");
@@ -455,7 +455,7 @@ void test_release_and_slot_reuse() {
     CHECK_EQ(storage.pending_count(), 1u);
     CHECK_EQ(storage.pending_bytes(), 10u);
 
-    storage.release(1);
+    CHECK(storage.release(1));
     CHECK(!storage.is_occupied(1));
     CHECK_EQ(storage.pending_count(), 0u);
     CHECK_EQ(storage.pending_bytes(), 0u);
@@ -491,22 +491,20 @@ void test_deterministic_reset_and_reuse() {
     CHECK_EQ(storage.pending_bytes(), 20u);
 
     storage.reset();
+    CHECK(storage.initialized());
     CHECK_EQ(storage.pending_count(), 0u);
     CHECK_EQ(storage.pending_bytes(), 0u);
     CHECK(!storage.is_occupied(1));
     CHECK(!storage.is_occupied(5));
 
-    storage.initialize(slots, arena, {4, 4 * 64, 64});
-    CHECK(storage.initialized());
-    CHECK_EQ(storage.pending_count(), 0u);
-    CHECK_EQ(storage.pending_bytes(), 0u);
-
+    // Direct reuse without re-initialize
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 3, 300, body)),
              static_cast<int>(InsertResult::Ok));
     CHECK_EQ(storage.pending_count(), 1u);
     CHECK_EQ(storage.pending_bytes(), 10u);
 
     storage.reset();
+    CHECK(storage.initialized());
     CHECK_EQ(storage.pending_count(), 0u);
     CHECK_EQ(storage.pending_bytes(), 0u);
     CHECK(!storage.is_occupied(1));
@@ -514,10 +512,10 @@ void test_deterministic_reset_and_reuse() {
 }
 
 void test_noexcept_and_noncopyable() {
-    static_assert(std::is_nothrow_move_constructible_v<MessageStorage>);
-    static_assert(std::is_nothrow_move_assignable_v<MessageStorage>);
     static_assert(!std::is_copy_constructible_v<MessageStorage>);
     static_assert(!std::is_copy_assignable_v<MessageStorage>);
+    static_assert(!std::is_move_constructible_v<MessageStorage>);
+    static_assert(!std::is_move_assignable_v<MessageStorage>);
 
     static_assert(noexcept(std::declval<MessageStorage&>().initialize(
         std::declval<std::span<SlotMetadata>>(),
@@ -554,6 +552,248 @@ void test_noexcept_and_noncopyable() {
     TEST_PASS("test_noexcept_and_noncopyable");
 }
 
+void test_pre_init_safety() {
+    MessageStorage storage;
+    CHECK(!storage.is_occupied(0));
+    CHECK(!storage.is_occupied(1));
+
+    auto v = storage.view_message(0);
+    CHECK(!v.found);
+    CHECK_EQ(v.sequence, 0u);
+    CHECK(v.body.empty());
+
+    CHECK(!storage.release(0));
+
+    storage.reset();
+    CHECK(!storage.initialized());
+
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+    CHECK(storage.initialized());
+    CHECK(!storage.is_occupied(0));
+    TEST_PASS("test_pre_init_safety");
+}
+
+void test_colliding_sequence_not_occupied() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    auto body = make_seq_body(10, 8);
+    CHECK_EQ(static_cast<int>(storage.insert(10, FeedSide::A, 1, 100, body)),
+             static_cast<int>(InsertResult::Ok));
+
+    // seq 18 collides with seq 10 (both map to index 2 in 8-slot)
+    CHECK_EQ(static_cast<std::size_t>(10) % 8, static_cast<std::size_t>(18) % 8);
+    CHECK(!storage.is_occupied(18));
+
+    auto v = storage.view_message(18);
+    CHECK(!v.found);
+    CHECK(v.body.empty());
+
+    CHECK(storage.is_occupied(10));
+    TEST_PASS("test_colliding_sequence_not_occupied");
+}
+
+void test_release_colliding_returns_false() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    auto body = make_body(10, 0xAA);
+    CHECK_EQ(static_cast<int>(storage.insert(10, FeedSide::A, 1, 100, body)),
+             static_cast<int>(InsertResult::Ok));
+    CHECK_EQ(storage.pending_count(), 1u);
+    CHECK_EQ(storage.pending_bytes(), 10u);
+
+    // Releasing colliding seq returns false, preserves original
+    CHECK(!storage.release(18));
+    CHECK(storage.is_occupied(10));
+    CHECK_EQ(storage.pending_count(), 1u);
+    CHECK_EQ(storage.pending_bytes(), 10u);
+
+    const auto& slot = storage.view(10);
+    CHECK_EQ(slot.sequence, 10u);
+    CHECK_EQ(slot.payload_length, 10u);
+    TEST_PASS("test_release_colliding_returns_false");
+}
+
+void test_release_reuse_preserves_slice() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    // Insert seq 1 at index 1, payload at offset 1*64=64
+    auto body1 = make_body(10, 0x11);
+    CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body1)),
+             static_cast<int>(InsertResult::Ok));
+
+    // Insert seq 2 at index 2, payload at offset 2*64=128
+    auto body2 = make_body(10, 0x22);
+    CHECK_EQ(static_cast<int>(storage.insert(2, FeedSide::A, 2, 200, body2)),
+             static_cast<int>(InsertResult::Ok));
+
+    // Capture payload pointers before release
+    const auto& s1 = storage.view(1);
+    const std::uint8_t* ptr1 = arena.data() + s1.payload_offset;
+    const auto& s2 = storage.view(2);
+    const std::uint8_t* ptr2 = arena.data() + s2.payload_offset;
+
+    CHECK_EQ(s1.payload_offset, static_cast<std::size_t>(64));
+    CHECK_EQ(s2.payload_offset, static_cast<std::size_t>(128));
+
+    // Release seq 1, reuse slot for seq 9 (same index 1)
+    CHECK(storage.release(1));
+    CHECK(!storage.is_occupied(1));
+
+    auto body9 = make_body(10, 0x99);
+    CHECK_EQ(static_cast<int>(storage.insert(9, FeedSide::B, 3, 300, body9)),
+             static_cast<int>(InsertResult::Ok));
+
+    // seq 9 writes to the same dedicated slice as seq 1
+    const auto& s9 = storage.view(9);
+    CHECK_EQ(s9.payload_offset, static_cast<std::size_t>(64));
+    for (std::size_t i = 0; i < 10; ++i)
+        CHECK_EQ(ptr1[i], static_cast<std::uint8_t>(0x99));
+
+    // seq 2's slice is unchanged
+    for (std::size_t i = 0; i < 10; ++i)
+        CHECK_EQ(ptr2[i], static_cast<std::uint8_t>(0x22));
+
+    TEST_PASS("test_release_reuse_preserves_slice");
+}
+
+void test_reset_leaves_initialized_and_reusable() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    auto body = make_body(10);
+    CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
+             static_cast<int>(InsertResult::Ok));
+    CHECK_EQ(static_cast<int>(storage.insert(5, FeedSide::B, 2, 200, body)),
+             static_cast<int>(InsertResult::Ok));
+
+    storage.reset();
+    CHECK(storage.initialized());
+    CHECK_EQ(storage.pending_count(), 0u);
+    CHECK_EQ(storage.pending_bytes(), 0u);
+    CHECK(!storage.is_occupied(1));
+    CHECK(!storage.is_occupied(5));
+
+    // Direct insert without re-initialize
+    CHECK_EQ(static_cast<int>(storage.insert(10, FeedSide::A, 3, 300, body)),
+             static_cast<int>(InsertResult::Ok));
+    CHECK_EQ(storage.pending_count(), 1u);
+    CHECK_EQ(storage.pending_bytes(), 10u);
+    TEST_PASS("test_reset_leaves_initialized_and_reusable");
+}
+
+void test_borrowed_view_metadata() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    auto body = make_seq_body(42, 16);
+    CHECK_EQ(static_cast<int>(storage.insert(42, FeedSide::B, 100, 9999, body)),
+             static_cast<int>(InsertResult::Ok));
+
+    auto v = storage.view_message(42);
+    CHECK(v.found);
+    CHECK_EQ(v.sequence, 42u);
+    CHECK_EQ(static_cast<int>(v.side), static_cast<int>(FeedSide::B));
+    CHECK_EQ(v.capture_index, 100u);
+    CHECK_EQ(v.capture_monotonic_ns, 9999u);
+    CHECK_EQ(v.body.size(), 16u);
+
+    // Body pointer must point into the arena
+    CHECK(v.body.data() >= arena.data());
+    CHECK(v.body.data() + v.body.size() <= arena.data() + arena.size());
+
+    // Verify payload bytes
+    for (std::size_t i = 0; i < 16; ++i)
+        CHECK_EQ(v.body[i], static_cast<std::uint8_t>((42 + i) & 0xFF));
+
+    TEST_PASS("test_borrowed_view_metadata");
+}
+
+void test_empty_view_absent_and_colliding() {
+    std::vector<SlotMetadata> slots(8);
+    std::vector<std::uint8_t> arena(8 * 64);
+    MessageStorage storage;
+    storage.initialize(slots, arena, {4, 4 * 64, 64});
+
+    // Absent sequence
+    auto v1 = storage.view_message(5);
+    CHECK(!v1.found);
+    CHECK_EQ(v1.sequence, 0u);
+    CHECK(v1.body.empty());
+
+    // Insert seq 10, then check colliding seq 18
+    auto body = make_body(8);
+    CHECK_EQ(static_cast<int>(storage.insert(10, FeedSide::A, 1, 100, body)),
+             static_cast<int>(InsertResult::Ok));
+
+    auto v2 = storage.view_message(18);
+    CHECK(!v2.found);
+    CHECK_EQ(v2.sequence, 0u);
+    CHECK(v2.body.empty());
+
+    // Exact match still works
+    auto v3 = storage.view_message(10);
+    CHECK(v3.found);
+    CHECK_EQ(v3.sequence, 10u);
+    CHECK_EQ(v3.body.size(), 8u);
+
+    TEST_PASS("test_empty_view_absent_and_colliding");
+}
+
+void test_noncopyable_nonmovable() {
+    static_assert(!std::is_copy_constructible_v<MessageStorage>);
+    static_assert(!std::is_copy_assignable_v<MessageStorage>);
+    static_assert(!std::is_move_constructible_v<MessageStorage>);
+    static_assert(!std::is_move_assignable_v<MessageStorage>);
+    TEST_PASS("test_noncopyable_nonmovable");
+}
+
+void test_checked_pending_byte_helper() {
+    // Basic: fits
+    CHECK(MessageStorage::can_add_pending_bytes(0, 10, 10));
+    CHECK(MessageStorage::can_add_pending_bytes(5, 5, 10));
+    CHECK(MessageStorage::can_add_pending_bytes(10, 0, 10));
+
+    // Basic: doesn't fit
+    CHECK(!MessageStorage::can_add_pending_bytes(5, 6, 10));
+    CHECK(!MessageStorage::can_add_pending_bytes(10, 1, 10));
+
+    // Zero addition
+    CHECK(MessageStorage::can_add_pending_bytes(0, 0, 0));
+
+    // SIZE_MAX boundary
+    constexpr std::size_t max = std::numeric_limits<std::size_t>::max();
+    CHECK(MessageStorage::can_add_pending_bytes(0, max, max));
+    CHECK(!MessageStorage::can_add_pending_bytes(1, max, max));
+    CHECK(!MessageStorage::can_add_pending_bytes(max, 1, max));
+
+    // current > limit is always false
+    CHECK(!MessageStorage::can_add_pending_bytes(11, 0, 10));
+
+    // Edge: addition is 0, current == limit
+    CHECK(MessageStorage::can_add_pending_bytes(100, 0, 100));
+
+    // Edge: addition exactly fills
+    CHECK(MessageStorage::can_add_pending_bytes(99, 1, 100));
+    CHECK(!MessageStorage::can_add_pending_bytes(99, 2, 100));
+
+    TEST_PASS("test_checked_pending_byte_helper");
+}
+
 } // namespace
 
 #ifdef _MSC_VER
@@ -586,8 +826,17 @@ int main() {
     test_release_and_slot_reuse();
     test_deterministic_reset_and_reuse();
     test_noexcept_and_noncopyable();
+    test_pre_init_safety();
+    test_colliding_sequence_not_occupied();
+    test_release_colliding_returns_false();
+    test_release_reuse_preserves_slice();
+    test_reset_leaves_initialized_and_reusable();
+    test_borrowed_view_metadata();
+    test_empty_view_absent_and_colliding();
+    test_noncopyable_nonmovable();
+    test_checked_pending_byte_helper();
 
-    std::printf("All %d test cases passed.\n", 25);
+    std::printf("All %d test cases passed.\n", 35);
     return 0;
 }
 #ifdef _MSC_VER

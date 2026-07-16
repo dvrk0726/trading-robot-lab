@@ -93,6 +93,17 @@ struct SlotMetadata {
     bool occupied{};
 };
 
+// --- Borrowed payload view ---
+
+struct StoredMessageView {
+    bool found{};
+    std::uint32_t sequence{};
+    FeedSide side{};
+    std::uint64_t capture_index{};
+    std::uint64_t capture_monotonic_ns{};
+    std::span<const std::uint8_t> body{};
+};
+
 // --- MessageStorage ---
 
 class MessageStorage {
@@ -100,8 +111,8 @@ public:
     MessageStorage() = default;
     MessageStorage(const MessageStorage&) = delete;
     MessageStorage& operator=(const MessageStorage&) = delete;
-    MessageStorage(MessageStorage&&) noexcept = default;
-    MessageStorage& operator=(MessageStorage&&) noexcept = default;
+    MessageStorage(MessageStorage&&) noexcept = delete;
+    MessageStorage& operator=(MessageStorage&&) noexcept = delete;
     ~MessageStorage() = default;
 
     [[nodiscard]] static constexpr GeometryCode validate_geometry(
@@ -127,7 +138,8 @@ public:
     ) noexcept;
 
     [[nodiscard]] const SlotMetadata& view(std::uint32_t msg_seq_num) const noexcept;
-    void release(std::uint32_t msg_seq_num) noexcept;
+    [[nodiscard]] StoredMessageView view_message(std::uint32_t msg_seq_num) const noexcept;
+    [[nodiscard]] bool release(std::uint32_t msg_seq_num) noexcept;
     void reset() noexcept;
 
     [[nodiscard]] bool is_occupied(std::uint32_t msg_seq_num) const noexcept;
@@ -135,6 +147,14 @@ public:
     [[nodiscard]] std::size_t pending_bytes() const noexcept;
     [[nodiscard]] std::size_t slot_capacity() const noexcept;
     [[nodiscard]] bool initialized() const noexcept;
+
+    [[nodiscard]] static constexpr bool can_add_pending_bytes(
+        std::size_t current, std::size_t addition, std::size_t limit
+    ) noexcept {
+        if (current > limit) return false;
+        if (limit - current < addition) return false;
+        return true;
+    }
 
 private:
     std::span<SlotMetadata> slots_{};
