@@ -27,6 +27,20 @@ std::vector<std::uint8_t> make_seq_body(std::uint32_t seq, std::size_t size) {
     return body;
 }
 
+bool slots_equal(const std::vector<SlotMetadata>& a, const std::vector<SlotMetadata>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].sequence != b[i].sequence) return false;
+        if (a[i].side != b[i].side) return false;
+        if (a[i].capture_index != b[i].capture_index) return false;
+        if (a[i].capture_monotonic_ns != b[i].capture_monotonic_ns) return false;
+        if (a[i].payload_offset != b[i].payload_offset) return false;
+        if (a[i].payload_length != b[i].payload_length) return false;
+        if (a[i].occupied != b[i].occupied) return false;
+    }
+    return true;
+}
+
 constexpr std::uint32_t FEED_ID = 42;
 
 struct EmissionSink {
@@ -2024,10 +2038,25 @@ void test_storage_initialize_invalid_geometry_is_observable() {
     for (const auto& c : cases) {
         std::vector<SlotMetadata> slots(c.slot_capacity);
         std::vector<std::uint8_t> arena(c.arena_size);
-        // Fill arena with a sentinel pattern
-        for (auto& b : arena) b = 0xDE;
 
-        std::vector<std::uint8_t> arena_snap = arena;
+        // Fill slots with non-empty control values in all fields
+        for (std::size_t i = 0; i < slots.size(); ++i) {
+            slots[i].sequence = static_cast<std::uint32_t>(0xAA00 + i);
+            slots[i].side = FeedSide::B;
+            slots[i].capture_index = static_cast<std::uint64_t>(100 + i);
+            slots[i].capture_monotonic_ns = static_cast<std::uint64_t>(9999 + i);
+            slots[i].payload_offset = static_cast<std::size_t>(i * 32);
+            slots[i].payload_length = static_cast<std::size_t>(16 + i);
+            slots[i].occupied = true;
+        }
+
+        // Fill arena with control byte pattern
+        for (std::size_t i = 0; i < arena.size(); ++i)
+            arena[i] = static_cast<std::uint8_t>((i + 0xDE) & 0xFF);
+
+        // Create snapshots of both buffers
+        auto slots_snap = slots;
+        auto arena_snap = arena;
 
         MessageStorage storage;
         auto r = storage.initialize(slots, arena,
@@ -2040,8 +2069,12 @@ void test_storage_initialize_invalid_geometry_is_observable() {
         CHECK_EQ(storage.pending_count(), 0u);
         CHECK_EQ(storage.pending_bytes(), 0u);
         CHECK_EQ(storage.slot_capacity(), 0u);
+        CHECK_EQ(storage.max_reorder_messages(), 0u);
+        CHECK_EQ(storage.max_reorder_bytes(), 0u);
+        CHECK_EQ(storage.max_message_bytes(), 0u);
 
-        // Arena must be unchanged
+        // Full element-wise equality of both buffers against snapshots
+        CHECK(slots_equal(slots, slots_snap));
         CHECK(arena == arena_snap);
     }
     TEST_PASS("test_storage_initialize_invalid_geometry_is_observable");
@@ -2050,12 +2083,42 @@ void test_storage_initialize_invalid_geometry_is_observable() {
 void test_storage_initialize_valid_retry_after_invalid_geometry() {
     std::vector<SlotMetadata> slots(8);
     std::vector<std::uint8_t> arena(8 * 64);
+
+    // Fill buffers with non-zero control values to verify they are unchanged
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        slots[i].sequence = static_cast<std::uint32_t>(0xBB00 + i);
+        slots[i].side = FeedSide::A;
+        slots[i].capture_index = static_cast<std::uint64_t>(50 + i);
+        slots[i].capture_monotonic_ns = static_cast<std::uint64_t>(7777 + i);
+        slots[i].payload_offset = i * 64;
+        slots[i].payload_length = 10;
+        slots[i].occupied = true;
+    }
+    for (std::size_t i = 0; i < arena.size(); ++i)
+        arena[i] = static_cast<std::uint8_t>((i + 0xCC) & 0xFF);
+
+    auto slots_snap = slots;
+    auto arena_snap = arena;
+
     MessageStorage storage;
 
-    // First attempt with invalid geometry
+    // First attempt with {0,0,0} must return InvalidGeometry + ZeroMaxReorderMessages
     auto r1 = storage.initialize(slots, arena, {0, 0, 0});
     CHECK_EQ(static_cast<int>(r1.code), static_cast<int>(StorageInitCode::InvalidGeometry));
+    CHECK_EQ(static_cast<int>(r1.geometry_code), static_cast<int>(GeometryCode::ZeroMaxReorderMessages));
+
+    // Completely zero internal state
     CHECK(!storage.initialized());
+    CHECK_EQ(storage.pending_count(), 0u);
+    CHECK_EQ(storage.pending_bytes(), 0u);
+    CHECK_EQ(storage.slot_capacity(), 0u);
+    CHECK_EQ(storage.max_reorder_messages(), 0u);
+    CHECK_EQ(storage.max_reorder_bytes(), 0u);
+    CHECK_EQ(storage.max_message_bytes(), 0u);
+
+    // Slots and arena unchanged
+    CHECK(slots_equal(slots, slots_snap));
+    CHECK(arena == arena_snap);
 
     // Retry with valid geometry
     auto r2 = storage.initialize(slots, arena, {4, 4 * 64, 64});
@@ -2063,6 +2126,11 @@ void test_storage_initialize_valid_retry_after_invalid_geometry() {
     CHECK_EQ(static_cast<int>(r2.geometry_code), static_cast<int>(GeometryCode::Ok));
     CHECK(storage.initialized());
     CHECK_EQ(storage.slot_capacity(), 8u);
+    CHECK_EQ(storage.max_reorder_messages(), 4u);
+    CHECK_EQ(storage.max_reorder_bytes(), 256u);
+    CHECK_EQ(storage.max_message_bytes(), 64u);
+    CHECK_EQ(storage.pending_count(), 0u);
+    CHECK_EQ(storage.pending_bytes(), 0u);
     TEST_PASS("test_storage_initialize_valid_retry_after_invalid_geometry");
 }
 
@@ -2080,16 +2148,47 @@ void test_storage_initialize_second_valid_call_preserves_state() {
     CHECK_EQ(storage.pending_count(), 1u);
     CHECK_EQ(storage.pending_bytes(), 10u);
 
-    // Capture old state
-    auto old_slots = slots;
-    auto old_arena = arena;
+    // Save all limits, capacity, counters
+    auto old_max_reorder_messages = storage.max_reorder_messages();
+    auto old_max_reorder_bytes = storage.max_reorder_bytes();
+    auto old_max_message_bytes = storage.max_message_bytes();
     auto old_pending_count = storage.pending_count();
     auto old_pending_bytes = storage.pending_bytes();
     auto old_capacity = storage.slot_capacity();
 
-    // Second valid call must return AlreadyInitialized
+    // Save full SlotMetadata for occupied slot
+    auto old_slot = storage.view(1);
+
+    // Save full StoredMessageView metadata and payload
+    auto old_view = storage.view_message(1);
+    CHECK(old_view.found);
+    auto old_payload_bytes = old_view.body.size();
+    auto old_payload_ptr = old_view.body.data();
+    std::vector<std::uint8_t> old_payload_data(old_view.body.begin(), old_view.body.end());
+
+    // Save original slots and arena state
+    auto old_slots = slots;
+    auto old_arena = arena;
+
+    // Fill new buffers with non-zero control values
     std::vector<SlotMetadata> new_slots(16);
     std::vector<std::uint8_t> new_arena(16 * 128);
+    for (std::size_t i = 0; i < new_slots.size(); ++i) {
+        new_slots[i].sequence = static_cast<std::uint32_t>(0xCC00 + i);
+        new_slots[i].side = FeedSide::B;
+        new_slots[i].capture_index = static_cast<std::uint64_t>(200 + i);
+        new_slots[i].capture_monotonic_ns = static_cast<std::uint64_t>(8888 + i);
+        new_slots[i].payload_offset = i * 128;
+        new_slots[i].payload_length = 32;
+        new_slots[i].occupied = true;
+    }
+    for (std::size_t i = 0; i < new_arena.size(); ++i)
+        new_arena[i] = static_cast<std::uint8_t>((i + 0xEE) & 0xFF);
+
+    auto new_slots_snap = new_slots;
+    auto new_arena_snap = new_arena;
+
+    // Second valid call must return AlreadyInitialized
     auto r = storage.initialize(new_slots, new_arena, {8, 8 * 128, 128});
     CHECK_EQ(static_cast<int>(r.code), static_cast<int>(StorageInitCode::AlreadyInitialized));
     CHECK_EQ(static_cast<int>(r.geometry_code), static_cast<int>(GeometryCode::Ok));
@@ -2099,18 +2198,47 @@ void test_storage_initialize_second_valid_call_preserves_state() {
     CHECK_EQ(storage.pending_count(), old_pending_count);
     CHECK_EQ(storage.pending_bytes(), old_pending_bytes);
     CHECK_EQ(storage.slot_capacity(), old_capacity);
+    CHECK_EQ(storage.max_reorder_messages(), old_max_reorder_messages);
+    CHECK_EQ(storage.max_reorder_bytes(), old_max_reorder_bytes);
+    CHECK_EQ(storage.max_message_bytes(), old_max_message_bytes);
     CHECK(storage.is_occupied(1));
 
-    // Old payload must remain in old arena
+    // Full SlotMetadata preserved
     const auto& slot = storage.view(1);
-    CHECK_EQ(slot.sequence, 1u);
-    CHECK_EQ(slot.payload_length, 10u);
+    CHECK_EQ(slot.sequence, old_slot.sequence);
+    CHECK_EQ(static_cast<int>(slot.side), static_cast<int>(old_slot.side));
+    CHECK_EQ(slot.capture_index, old_slot.capture_index);
+    CHECK_EQ(slot.capture_monotonic_ns, old_slot.capture_monotonic_ns);
+    CHECK_EQ(slot.payload_offset, old_slot.payload_offset);
+    CHECK_EQ(slot.payload_length, old_slot.payload_length);
+    CHECK(slot.occupied == old_slot.occupied);
 
-    // New buffers must be unchanged
-    for (auto& s : new_slots)
-        CHECK_EQ(s.occupied, false);
-    for (auto& b : new_arena)
-        CHECK_EQ(b, static_cast<std::uint8_t>(0));
+    // StoredMessageView metadata preserved
+    auto new_view = storage.view_message(1);
+    CHECK(new_view.found);
+    CHECK_EQ(new_view.sequence, old_view.sequence);
+    CHECK_EQ(static_cast<int>(new_view.side), static_cast<int>(old_view.side));
+    CHECK_EQ(new_view.capture_index, old_view.capture_index);
+    CHECK_EQ(new_view.capture_monotonic_ns, old_view.capture_monotonic_ns);
+
+    // Payload bytes preserved
+    CHECK_EQ(new_view.body.size(), old_payload_bytes);
+
+    // Payload data pointer preserved (points into original arena)
+    CHECK(new_view.body.data() == old_payload_ptr);
+
+    // Payload data content preserved
+    std::vector<std::uint8_t> new_payload_data(new_view.body.begin(), new_view.body.end());
+    CHECK(new_payload_data == old_payload_data);
+
+    // Original slots buffer preserved (via storage still referencing it)
+    CHECK(slots_equal(slots, old_slots));
+    // Original arena buffer preserved
+    CHECK(arena == old_arena);
+
+    // New buffers completely unchanged
+    CHECK(slots_equal(new_slots, new_slots_snap));
+    CHECK(new_arena == new_arena_snap);
 
     TEST_PASS("test_storage_initialize_second_valid_call_preserves_state");
 }
@@ -2126,7 +2254,29 @@ void test_storage_initialize_second_invalid_call_has_lifecycle_precedence() {
     auto body = make_body(10, 0xCD);
     CHECK_EQ(static_cast<int>(storage.insert(3, FeedSide::B, 5, 500, body)),
              static_cast<int>(InsertResult::Ok));
-    auto old_pending = storage.pending_count();
+
+    // Save all limits, capacity, counters
+    auto old_max_reorder_messages = storage.max_reorder_messages();
+    auto old_max_reorder_bytes = storage.max_reorder_bytes();
+    auto old_max_message_bytes = storage.max_message_bytes();
+    auto old_pending_count = storage.pending_count();
+    auto old_pending_bytes = storage.pending_bytes();
+    auto old_capacity = storage.slot_capacity();
+
+    // Save metadata for occupied slot
+    auto old_slot = storage.view(3);
+    CHECK(old_slot.occupied);
+
+    // Save payload bytes, payload pointer
+    auto old_view = storage.view_message(3);
+    CHECK(old_view.found);
+    auto old_payload_ptr = old_view.body.data();
+    auto old_payload_bytes = old_view.body.size();
+    std::vector<std::uint8_t> old_payload_data(old_view.body.begin(), old_view.body.end());
+
+    // Save old slots and arena
+    auto old_slots = slots;
+    auto old_arena = arena;
 
     // Call with empty spans and zero config — would be InvalidGeometry if not initialized
     std::span<SlotMetadata> empty_slots;
@@ -2135,10 +2285,37 @@ void test_storage_initialize_second_invalid_call_has_lifecycle_precedence() {
     CHECK_EQ(static_cast<int>(r.code), static_cast<int>(StorageInitCode::AlreadyInitialized));
     CHECK_EQ(static_cast<int>(r.geometry_code), static_cast<int>(GeometryCode::Ok));
 
-    // State preserved
+    // Exact preservation of all state
     CHECK(storage.initialized());
-    CHECK_EQ(storage.pending_count(), old_pending);
+    CHECK_EQ(storage.pending_count(), old_pending_count);
+    CHECK_EQ(storage.pending_bytes(), old_pending_bytes);
+    CHECK_EQ(storage.slot_capacity(), old_capacity);
+    CHECK_EQ(storage.max_reorder_messages(), old_max_reorder_messages);
+    CHECK_EQ(storage.max_reorder_bytes(), old_max_reorder_bytes);
+    CHECK_EQ(storage.max_message_bytes(), old_max_message_bytes);
     CHECK(storage.is_occupied(3));
+
+    // Slot metadata preserved
+    const auto& slot = storage.view(3);
+    CHECK_EQ(slot.sequence, old_slot.sequence);
+    CHECK_EQ(static_cast<int>(slot.side), static_cast<int>(old_slot.side));
+    CHECK_EQ(slot.capture_index, old_slot.capture_index);
+    CHECK_EQ(slot.capture_monotonic_ns, old_slot.capture_monotonic_ns);
+    CHECK_EQ(slot.payload_offset, old_slot.payload_offset);
+    CHECK_EQ(slot.payload_length, old_slot.payload_length);
+
+    // Payload preserved
+    auto new_view = storage.view_message(3);
+    CHECK(new_view.found);
+    CHECK_EQ(new_view.body.size(), old_payload_bytes);
+    CHECK(new_view.body.data() == old_payload_ptr);
+    std::vector<std::uint8_t> new_payload_data(new_view.body.begin(), new_view.body.end());
+    CHECK(new_payload_data == old_payload_data);
+
+    // Old buffers unchanged
+    CHECK(slots_equal(slots, old_slots));
+    CHECK(arena == old_arena);
+
     TEST_PASS("test_storage_initialize_second_invalid_call_has_lifecycle_precedence");
 }
 
@@ -2149,24 +2326,77 @@ void test_storage_initialize_after_reset_returns_already_initialized() {
 
     CHECK_STORAGE_INIT(storage.initialize(slots, arena, {4, 4 * 64, 64}));
 
+    // Save initial limits and capacity
+    auto init_max_reorder_messages = storage.max_reorder_messages();
+    auto init_max_reorder_bytes = storage.max_reorder_bytes();
+    auto init_max_message_bytes = storage.max_message_bytes();
+    auto init_capacity = storage.slot_capacity();
+
     // Insert and reset
     auto body = make_body(5);
     CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 1, 100, body)),
              static_cast<int>(InsertResult::Ok));
     storage.reset();
+
+    // After reset: initialized true, zero counters, preserved initial capacity and limits
     CHECK(storage.initialized());
     CHECK_EQ(storage.pending_count(), 0u);
+    CHECK_EQ(storage.pending_bytes(), 0u);
+    CHECK_EQ(storage.slot_capacity(), init_capacity);
+    CHECK_EQ(storage.max_reorder_messages(), init_max_reorder_messages);
+    CHECK_EQ(storage.max_reorder_bytes(), init_max_reorder_bytes);
+    CHECK_EQ(storage.max_message_bytes(), init_max_message_bytes);
 
-    // After reset, initialize must still return AlreadyInitialized
+    // Fill new buffers with non-zero control values
     std::vector<SlotMetadata> new_slots(4);
     std::vector<std::uint8_t> new_arena(4 * 32);
+    for (std::size_t i = 0; i < new_slots.size(); ++i) {
+        new_slots[i].sequence = static_cast<std::uint32_t>(0xDD00 + i);
+        new_slots[i].side = FeedSide::B;
+        new_slots[i].capture_index = static_cast<std::uint64_t>(300 + i);
+        new_slots[i].capture_monotonic_ns = static_cast<std::uint64_t>(6666 + i);
+        new_slots[i].payload_offset = i * 32;
+        new_slots[i].payload_length = 20;
+        new_slots[i].occupied = true;
+    }
+    for (std::size_t i = 0; i < new_arena.size(); ++i)
+        new_arena[i] = static_cast<std::uint8_t>((i + 0xBB) & 0xFF);
+
+    auto new_slots_snap = new_slots;
+    auto new_arena_snap = new_arena;
+
+    // After repeated initialize: AlreadyInitialized
     auto r = storage.initialize(new_slots, new_arena, {2, 2 * 32, 32});
     CHECK_EQ(static_cast<int>(r.code), static_cast<int>(StorageInitCode::AlreadyInitialized));
     CHECK_EQ(static_cast<int>(r.geometry_code), static_cast<int>(GeometryCode::Ok));
 
-    // Must not rebind: old capacity preserved
-    CHECK_EQ(storage.slot_capacity(), 8u);
+    // Must not rebind: old capacity and limits preserved
+    CHECK_EQ(storage.slot_capacity(), init_capacity);
+    CHECK_EQ(storage.max_reorder_messages(), init_max_reorder_messages);
+    CHECK_EQ(storage.max_reorder_bytes(), init_max_reorder_bytes);
+    CHECK_EQ(storage.max_message_bytes(), init_max_message_bytes);
     CHECK(storage.initialized());
+    CHECK_EQ(storage.pending_count(), 0u);
+    CHECK_EQ(storage.pending_bytes(), 0u);
+
+    // New buffers unchanged
+    CHECK(slots_equal(new_slots, new_slots_snap));
+    CHECK(new_arena == new_arena_snap);
+
+    // Insert message after failed re-initialize
+    auto body2 = make_body(10, 0x55);
+    CHECK_EQ(static_cast<int>(storage.insert(1, FeedSide::A, 2, 200, body2)),
+             static_cast<int>(InsertResult::Ok));
+
+    // Verify payload pointer is in initial arena (not new arena)
+    auto v = storage.view_message(1);
+    CHECK(v.found);
+    CHECK(v.body.data() >= arena.data());
+    CHECK(v.body.data() + v.body.size() <= arena.data() + arena.size());
+
+    // New arena still unchanged
+    CHECK(new_arena == new_arena_snap);
+
     TEST_PASS("test_storage_initialize_after_reset_returns_already_initialized");
 }
 
