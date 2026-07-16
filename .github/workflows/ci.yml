@@ -305,7 +305,7 @@ jobs:
         run: ctest --test-dir build/moex_fast -C Release --output-on-failure
 
       - name: Run Gate A benchmark (zero-allocation evidence)
-        run: ./build/moex_fast/bench/bench_spectra_gate_a
+        run: ./build/moex_fast/bench_spectra_gate_a
 
   cpp-moex-raw-windows:
     name: C++ MOEX RAW Windows/MSVC (18 tests)
