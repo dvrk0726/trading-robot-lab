@@ -97,6 +97,7 @@ struct ScenarioResult {
     std::size_t max_pending_messages{};
     std::size_t max_pending_bytes{};
     std::uint64_t checksum{};
+    bool functional_ok{true};
 };
 
 void compute_percentiles(ScenarioResult& r) {
@@ -133,18 +134,34 @@ struct BenchContext {
     HighWaterMarks hwm;
     std::uint64_t ops{};
     std::uint64_t event_time{100};
+    bool functional_ok{true};
 };
 
 void init_context(BenchContext& ctx, std::uint32_t start_seq = 0) {
     ctx.storage.initialize(g_slots, g_arena,
                            {MAX_REORDER, ARENA_SIZE, MAX_MSG_BYTES});
+    if (!ctx.storage.initialized()) {
+        ctx.functional_ok = false;
+        return;
+    }
     SequencerConfig cfg{};
     cfg.logical_feed.value = FEED_ID;
     cfg.max_reorder_distance = MAX_REORDER;
     cfg.reorder_wait_ns = WAIT_NS;
     cfg.storage = {MAX_REORDER, ARENA_SIZE, MAX_MSG_BYTES};
-    (void)ctx.seq.initialize(LogicalFeedId{FEED_ID}, cfg, ctx.storage);
-    (void)ctx.seq.start(start_seq);
+    auto init_code = ctx.seq.initialize(LogicalFeedId{FEED_ID}, cfg, ctx.storage);
+    if (init_code != SequencerCode::Initialized) {
+        ctx.functional_ok = false;
+        return;
+    }
+    auto start_code = ctx.seq.start(start_seq);
+    if (start_code != SequencerCode::Started) {
+        ctx.functional_ok = false;
+        return;
+    }
+    if (ctx.seq.state() != SequencerState::Running) {
+        ctx.functional_ok = false;
+    }
 }
 
 inline void record_result(SequencerResult r) noexcept {
@@ -165,36 +182,41 @@ ScenarioResult scenario_ordered_emission() {
     BenchContext ctx;
     init_context(ctx);
 
-    // Warm-up
+    // Warm-up: expect Emitted for each
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
         auto v = make_view(static_cast<std::uint32_t>(i), FeedSide::A,
                            g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        if (r.code != SequencerCode::Emitted) ctx.functional_ok = false;
         advance_time(ctx);
     }
 
-    // Measured
+    // Measured: 1 op per iteration
     auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         auto s = std::chrono::steady_clock::now();
         auto v = make_view(
             static_cast<std::uint32_t>(WARMUP_COUNT + i), FeedSide::A,
             g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(v, ctx.event_time, ctx.sink));
+        auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        record_result(r);
         auto e = std::chrono::steady_clock::now();
-        g_samples[i] =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        g_samples[i] = elapsed / 1;
         update_hwm(ctx.hwm, ctx.storage);
         ++ctx.ops;
         advance_time(ctx);
+        if (r.code != SequencerCode::Emitted) ctx.functional_ok = false;
     }
     auto t1 = std::chrono::steady_clock::now();
 
-    return finalize("ordered_first_copy_emission", ctx.ops,
+    auto res = finalize("ordered_first_copy_emission", ctx.ops,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         t1 - t0)
                         .count(),
                     ctx.hwm);
+    res.functional_ok = ctx.functional_ok;
+    return res;
 }
 
 // =====================================================================
@@ -207,42 +229,50 @@ ScenarioResult scenario_expected_a_then_stale_b() {
     BenchContext ctx;
     init_context(ctx);
 
-    // Warm-up
+    // Warm-up: A emits, B is duplicate
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
         auto v = make_view(static_cast<std::uint32_t>(i), FeedSide::A,
                            g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        auto ra = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        if (ra.code != SequencerCode::Emitted) ctx.functional_ok = false;
         advance_time(ctx);
         auto v2 = make_view(static_cast<std::uint32_t>(i), FeedSide::B,
                             g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(v2, ctx.event_time, ctx.sink);
+        auto rb = ctx.seq.on_message(v2, ctx.event_time, ctx.sink);
+        if (rb.code != SequencerCode::DuplicateDropped) ctx.functional_ok = false;
         advance_time(ctx);
     }
 
-    // Measured
+    // Measured: 2 ops per iteration
     auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         auto seq = static_cast<std::uint32_t>(WARMUP_COUNT + i);
         auto s = std::chrono::steady_clock::now();
         auto v = make_view(seq, FeedSide::A, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(v, ctx.event_time, ctx.sink));
+        auto ra = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        record_result(ra);
         advance_time(ctx);
         auto v2 = make_view(seq, FeedSide::B, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(v2, ctx.event_time, ctx.sink));
+        auto rb = ctx.seq.on_message(v2, ctx.event_time, ctx.sink);
+        record_result(rb);
         auto e = std::chrono::steady_clock::now();
-        g_samples[i] =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        g_samples[i] = elapsed / 2;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 2;
         advance_time(ctx);
+        if (ra.code != SequencerCode::Emitted) ctx.functional_ok = false;
+        if (rb.code != SequencerCode::DuplicateDropped) ctx.functional_ok = false;
     }
     auto t1 = std::chrono::steady_clock::now();
 
-    return finalize("expected_a_then_stale_b", ctx.ops,
+    auto res = finalize("expected_a_then_stale_b", ctx.ops,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         t1 - t0)
                         .count(),
                     ctx.hwm);
+    res.functional_ok = ctx.functional_ok;
+    return res;
 }
 
 // =====================================================================
@@ -255,16 +285,17 @@ ScenarioResult scenario_alternating_ab() {
     BenchContext ctx;
     init_context(ctx);
 
-    // Warm-up
+    // Warm-up: expect Emitted for each
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
         auto side = (i % 2 == 0) ? FeedSide::A : FeedSide::B;
         auto v = make_view(static_cast<std::uint32_t>(i), side,
                            g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        if (r.code != SequencerCode::Emitted) ctx.functional_ok = false;
         advance_time(ctx);
     }
 
-    // Measured
+    // Measured: 1 op per iteration
     auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         auto side = (i % 2 == 0) ? FeedSide::A : FeedSide::B;
@@ -272,21 +303,25 @@ ScenarioResult scenario_alternating_ab() {
         auto v = make_view(
             static_cast<std::uint32_t>(WARMUP_COUNT + i), side,
             g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(v, ctx.event_time, ctx.sink));
+        auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        record_result(r);
         auto e = std::chrono::steady_clock::now();
-        g_samples[i] =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        g_samples[i] = elapsed / 1;
         update_hwm(ctx.hwm, ctx.storage);
         ++ctx.ops;
         advance_time(ctx);
+        if (r.code != SequencerCode::Emitted) ctx.functional_ok = false;
     }
     auto t1 = std::chrono::steady_clock::now();
 
-    return finalize("alternating_ab_winning_side", ctx.ops,
+    auto res = finalize("alternating_ab_winning_side", ctx.ops,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         t1 - t0)
                         .count(),
                     ctx.hwm);
+    res.functional_ok = ctx.functional_ok;
+    return res;
 }
 
 // =====================================================================
@@ -299,43 +334,57 @@ ScenarioResult scenario_reorder_flush_depth_1() {
     BenchContext ctx;
     init_context(ctx);
 
-    // Warm-up: buffer future, then send expected (flushes both)
+    // Warm-up: buffer future (BufferedOutOfOrder), then send expected (Emitted)
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
         std::uint32_t base = static_cast<std::uint32_t>(i * 2);
         auto vf = make_view(base + 1, FeedSide::A, g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        auto rf = ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        if (rf.code != SequencerCode::BufferedOutOfOrder) ctx.functional_ok = false;
         advance_time(ctx);
         auto ve = make_view(base, FeedSide::A, g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        if (re.code != SequencerCode::Emitted) ctx.functional_ok = false;
         advance_time(ctx);
+        if (ctx.seq.state() != SequencerState::Running) ctx.functional_ok = false;
+        if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
+        if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
 
-    // Measured
+    // Measured: 2 ops per iteration
     std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 2);
     auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         std::uint32_t base = measured_base + static_cast<std::uint32_t>(i * 2);
         auto s = std::chrono::steady_clock::now();
         auto vf = make_view(base + 1, FeedSide::A, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(vf, ctx.event_time, ctx.sink));
+        auto rf = ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        record_result(rf);
         update_hwm(ctx.hwm, ctx.storage);
         advance_time(ctx);
         auto ve = make_view(base, FeedSide::A, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(ve, ctx.event_time, ctx.sink));
+        auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        record_result(re);
         auto e = std::chrono::steady_clock::now();
-        g_samples[i] =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        g_samples[i] = elapsed / 2;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 2;
         advance_time(ctx);
+        if (rf.code != SequencerCode::BufferedOutOfOrder) ctx.functional_ok = false;
+        if (re.code != SequencerCode::Emitted) ctx.functional_ok = false;
+        if (ctx.seq.state() != SequencerState::Running) ctx.functional_ok = false;
+        if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
+        if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
     auto t1 = std::chrono::steady_clock::now();
 
-    return finalize("reorder_flush_depth_1", ctx.ops,
+    auto res = finalize("reorder_flush_depth_1", ctx.ops,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         t1 - t0)
                         .count(),
                     ctx.hwm);
+    res.functional_ok = ctx.functional_ok;
+    return res;
 }
 
 // =====================================================================
@@ -348,21 +397,26 @@ ScenarioResult scenario_reorder_flush_depth_4() {
     BenchContext ctx;
     init_context(ctx);
 
-    // Warm-up: buffer 4 future, then send expected (flushes all 5)
+    // Warm-up: buffer 4 future (BufferedOutOfOrder), then send expected (Emitted)
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
         std::uint32_t base = static_cast<std::uint32_t>(i * 5);
         for (std::uint32_t j = 1; j <= 4; ++j) {
             auto vf = make_view(base + j, FeedSide::A, g_body_a,
                                 ctx.event_time);
-            (void)ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+            auto rf = ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+            if (rf.code != SequencerCode::BufferedOutOfOrder) ctx.functional_ok = false;
             advance_time(ctx);
         }
         auto ve = make_view(base, FeedSide::A, g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        if (re.code != SequencerCode::Emitted) ctx.functional_ok = false;
         advance_time(ctx);
+        if (ctx.seq.state() != SequencerState::Running) ctx.functional_ok = false;
+        if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
+        if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
 
-    // Measured
+    // Measured: 5 ops per iteration
     std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 5);
     auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
@@ -372,27 +426,35 @@ ScenarioResult scenario_reorder_flush_depth_4() {
         for (std::uint32_t j = 1; j <= 4; ++j) {
             auto vf = make_view(base + j, FeedSide::A, g_body_a,
                                 ctx.event_time);
-            record_result(
-                ctx.seq.on_message(vf, ctx.event_time, ctx.sink));
+            auto rf = ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+            record_result(rf);
             update_hwm(ctx.hwm, ctx.storage);
             advance_time(ctx);
+            if (rf.code != SequencerCode::BufferedOutOfOrder) ctx.functional_ok = false;
         }
         auto ve = make_view(base, FeedSide::A, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(ve, ctx.event_time, ctx.sink));
+        auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        record_result(re);
         auto e = std::chrono::steady_clock::now();
-        g_samples[i] =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        g_samples[i] = elapsed / 5;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 5;
         advance_time(ctx);
+        if (re.code != SequencerCode::Emitted) ctx.functional_ok = false;
+        if (ctx.seq.state() != SequencerState::Running) ctx.functional_ok = false;
+        if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
+        if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
     auto t1 = std::chrono::steady_clock::now();
 
-    return finalize("reorder_flush_depth_4", ctx.ops,
+    auto res = finalize("reorder_flush_depth_4", ctx.ops,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         t1 - t0)
                         .count(),
                     ctx.hwm);
+    res.functional_ok = ctx.functional_ok;
+    return res;
 }
 
 // =====================================================================
@@ -405,50 +467,68 @@ ScenarioResult scenario_equal_pending_duplicate() {
     BenchContext ctx;
     init_context(ctx);
 
-    // Warm-up: buffer future A, duplicate B (equal), send expected (flushes)
+    // Warm-up: buffer future A (BufferedOutOfOrder), duplicate B (DuplicateDropped),
+    //          send expected (Emitted). base = i * 2.
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
-        std::uint32_t base = static_cast<std::uint32_t>(i * 3);
+        std::uint32_t base = static_cast<std::uint32_t>(i * 2);
         auto vf = make_view(base + 1, FeedSide::A, g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        auto rf = ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        if (rf.code != SequencerCode::BufferedOutOfOrder) ctx.functional_ok = false;
         advance_time(ctx);
         auto vd = make_view(base + 1, FeedSide::B, g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(vd, ctx.event_time, ctx.sink);
+        auto rd = ctx.seq.on_message(vd, ctx.event_time, ctx.sink);
+        if (rd.code != SequencerCode::DuplicateDropped) ctx.functional_ok = false;
         advance_time(ctx);
         auto ve = make_view(base, FeedSide::A, g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        if (re.code != SequencerCode::Emitted) ctx.functional_ok = false;
         advance_time(ctx);
+        if (ctx.seq.state() != SequencerState::Running) ctx.functional_ok = false;
+        if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
+        if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
 
-    // Measured
-    std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 3);
+    // Measured: 3 ops per iteration. base = i * 2.
+    std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 2);
     auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         std::uint32_t base =
-            measured_base + static_cast<std::uint32_t>(i * 3);
+            measured_base + static_cast<std::uint32_t>(i * 2);
         auto s = std::chrono::steady_clock::now();
         auto vf = make_view(base + 1, FeedSide::A, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(vf, ctx.event_time, ctx.sink));
+        auto rf = ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        record_result(rf);
         update_hwm(ctx.hwm, ctx.storage);
         advance_time(ctx);
         auto vd = make_view(base + 1, FeedSide::B, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(vd, ctx.event_time, ctx.sink));
+        auto rd = ctx.seq.on_message(vd, ctx.event_time, ctx.sink);
+        record_result(rd);
         advance_time(ctx);
         auto ve = make_view(base, FeedSide::A, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(ve, ctx.event_time, ctx.sink));
+        auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        record_result(re);
         auto e = std::chrono::steady_clock::now();
-        g_samples[i] =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        g_samples[i] = elapsed / 3;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 3;
         advance_time(ctx);
+        if (rf.code != SequencerCode::BufferedOutOfOrder) ctx.functional_ok = false;
+        if (rd.code != SequencerCode::DuplicateDropped) ctx.functional_ok = false;
+        if (re.code != SequencerCode::Emitted) ctx.functional_ok = false;
+        if (ctx.seq.state() != SequencerState::Running) ctx.functional_ok = false;
+        if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
+        if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
     auto t1 = std::chrono::steady_clock::now();
 
-    return finalize("equal_pending_duplicate_drop", ctx.ops,
+    auto res = finalize("equal_pending_duplicate_drop", ctx.ops,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         t1 - t0)
                         .count(),
                     ctx.hwm);
+    res.functional_ok = ctx.functional_ok;
+    return res;
 }
 
 // =====================================================================
@@ -461,47 +541,65 @@ ScenarioResult scenario_gapwait_ontime() {
     BenchContext ctx;
     init_context(ctx);
 
-    // Warm-up: buffer future, on_time before deadline, send expected (flushes)
+    // Warm-up: buffer future (BufferedOutOfOrder), on_time (GapWaiting),
+    //          send expected (Emitted)
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
         std::uint32_t base = static_cast<std::uint32_t>(i * 2);
         auto vf = make_view(base + 1, FeedSide::A, g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        auto rf = ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        if (rf.code != SequencerCode::BufferedOutOfOrder) ctx.functional_ok = false;
         advance_time(ctx);
-        (void)ctx.seq.on_time(ctx.event_time, ctx.sink);
+        auto rt = ctx.seq.on_time(ctx.event_time, ctx.sink);
+        if (rt.code != SequencerCode::GapWaiting) ctx.functional_ok = false;
         advance_time(ctx);
         auto ve = make_view(base, FeedSide::A, g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        if (re.code != SequencerCode::Emitted) ctx.functional_ok = false;
         advance_time(ctx);
+        if (ctx.seq.state() != SequencerState::Running) ctx.functional_ok = false;
+        if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
+        if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
 
-    // Measured
+    // Measured: 3 ops per iteration
     std::uint32_t measured_base = static_cast<std::uint32_t>(WARMUP_COUNT * 2);
     auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
         std::uint32_t base = measured_base + static_cast<std::uint32_t>(i * 2);
         auto s = std::chrono::steady_clock::now();
         auto vf = make_view(base + 1, FeedSide::A, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(vf, ctx.event_time, ctx.sink));
+        auto rf = ctx.seq.on_message(vf, ctx.event_time, ctx.sink);
+        record_result(rf);
         update_hwm(ctx.hwm, ctx.storage);
         advance_time(ctx);
-        record_result(ctx.seq.on_time(ctx.event_time, ctx.sink));
+        auto rt = ctx.seq.on_time(ctx.event_time, ctx.sink);
+        record_result(rt);
         advance_time(ctx);
         auto ve = make_view(base, FeedSide::A, g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(ve, ctx.event_time, ctx.sink));
+        auto re = ctx.seq.on_message(ve, ctx.event_time, ctx.sink);
+        record_result(re);
         auto e = std::chrono::steady_clock::now();
-        g_samples[i] =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        g_samples[i] = elapsed / 3;
         update_hwm(ctx.hwm, ctx.storage);
         ctx.ops += 3;
         advance_time(ctx);
+        if (rf.code != SequencerCode::BufferedOutOfOrder) ctx.functional_ok = false;
+        if (rt.code != SequencerCode::GapWaiting) ctx.functional_ok = false;
+        if (re.code != SequencerCode::Emitted) ctx.functional_ok = false;
+        if (ctx.seq.state() != SequencerState::Running) ctx.functional_ok = false;
+        if (ctx.storage.pending_count() != 0) ctx.functional_ok = false;
+        if (ctx.storage.pending_bytes() != 0) ctx.functional_ok = false;
     }
     auto t1 = std::chrono::steady_clock::now();
 
-    return finalize("gapwait_ontime_before_deadline", ctx.ops,
+    auto res = finalize("gapwait_ontime_before_deadline", ctx.ops,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         t1 - t0)
                         .count(),
                     ctx.hwm);
+    res.functional_ok = ctx.functional_ok;
+    return res;
 }
 
 // =====================================================================
@@ -513,6 +611,7 @@ ScenarioResult scenario_failedclosed_steady() {
 
     BenchContext ctx;
     init_context(ctx);
+    bool trigger_ok = ctx.functional_ok;
 
     // Trigger FailedClosed (wrong logical feed)
     {
@@ -520,38 +619,47 @@ ScenarioResult scenario_failedclosed_steady() {
         bad.feed.value = 999;
         auto r = ctx.seq.on_message(bad, ctx.event_time, ctx.sink);
         g_result_xor ^= static_cast<int>(r.code);
+        if (r.code != SequencerCode::WrongLogicalFeed) trigger_ok = false;
+        if (ctx.seq.state() != SequencerState::FailedClosed) trigger_ok = false;
         advance_time(ctx);
     }
 
-    // Warm-up
+    // Warm-up: every call must return FailedClosed
     for (std::size_t i = 0; i < WARMUP_COUNT; ++i) {
         auto v = make_view(static_cast<std::uint32_t>(1000 + i), FeedSide::A,
                            g_body_a, ctx.event_time);
-        (void)ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        if (r.code != SequencerCode::FailedClosed) trigger_ok = false;
         advance_time(ctx);
     }
 
-    // Measured
+    // Measured: 1 op per iteration, all FailedClosed, no sink emission
     auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < SAMPLE_COUNT; ++i) {
+        auto saved_sink = g_sink_count;
         auto s = std::chrono::steady_clock::now();
         auto v = make_view(
             static_cast<std::uint32_t>(2000 + i), FeedSide::A,
             g_body_a, ctx.event_time);
-        record_result(ctx.seq.on_message(v, ctx.event_time, ctx.sink));
+        auto r = ctx.seq.on_message(v, ctx.event_time, ctx.sink);
+        record_result(r);
         auto e = std::chrono::steady_clock::now();
-        g_samples[i] =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(e - s).count();
+        g_samples[i] = elapsed / 1;
         ++ctx.ops;
         advance_time(ctx);
+        if (r.code != SequencerCode::FailedClosed) trigger_ok = false;
+        if (g_sink_count != saved_sink) trigger_ok = false;
     }
     auto t1 = std::chrono::steady_clock::now();
 
-    return finalize("failedclosed_steady_state", ctx.ops,
+    auto res = finalize("failedclosed_steady_state", ctx.ops,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         t1 - t0)
                         .count(),
                     ctx.hwm);
+    res.functional_ok = trigger_ok;
+    return res;
 }
 
 // --- Output ---
@@ -587,6 +695,10 @@ int main() {
         total_ops += r.operations;
         if (r.operations == 0) {
             std::fprintf(stderr, "FAIL: %s produced zero operations\n", label);
+            exit_code = 1;
+        }
+        if (!r.functional_ok) {
+            std::fprintf(stderr, "FAIL: %s functional invariant violation\n", label);
             exit_code = 1;
         }
     };
