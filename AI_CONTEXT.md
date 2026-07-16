@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-16  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-4 Gate A Completion IMPLEMENTED_IN_DRAFT_PR; Architecture Review PENDING
+Текущий gate: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
 
 ## Источник истины
 
@@ -220,7 +220,7 @@ MOEX FAST inventory: 17 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1
 
 Accepted A2 production contract: header-only `spectra_sequence_arithmetic.hpp`, `SequenceRelation`, `SequenceClassification`, and `classify_sequence_relation(...) constexpr noexcept`; unsigned modulo-2^32 subtraction; deterministic `InvalidConfig`, `Expected`, `FutureWithinWindow`, `FutureBeyondWindow`, `Ambiguous` and `Stale`; one Release-active `test_spectra_sequence_arithmetic`; no mutable sequencing state or A3 behavior.
 
-## RT-4 Gate A Completion — IMPLEMENTED_IN_DRAFT_PR
+## RT-4 Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
 
 ```text
 Issue #51: open
@@ -232,7 +232,7 @@ Technical CI: #234, run ID 29526060857, success, 6 jobs
 MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
 ```
 
-Accepted Gate A implementation evidence in Draft PR #52:
+Verified Gate A implementation evidence in Draft PR #52:
 
 ```text
 fixed little-endian UDP preamble framing
@@ -268,7 +268,7 @@ Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDIN
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A Completion: IMPLEMENTED_IN_DRAFT_PR — Architecture Review pending
+RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
 Gate B: BLOCKED
 Gate C: BLOCKED
 Gate D: BLOCKED

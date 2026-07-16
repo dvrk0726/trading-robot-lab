@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-16  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 Gate A Completion IMPLEMENTED_IN_DRAFT_PR; Architecture Review PENDING
+Статус: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
 
 ## Архитектурные границы
 
@@ -312,7 +312,7 @@ invalid max: 0, 0x80000000, UINT32_MAX
 Expected, bounded future, beyond-window, ambiguous and stale vectors
 natural modulo-2^32 wrap vectors
 constexpr, noexcept and trivially-copyable checks
-MOEX FAST inventory: 18
+MOEX FAST inventory: 17
 required-check job names unchanged
 ```
 
@@ -334,7 +334,7 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
-### RT-4 Gate A Completion — IMPLEMENTED_IN_DRAFT_PR
+### RT-4 Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
 
 ```text
 Issue #51: open
@@ -346,7 +346,7 @@ Technical CI: #234, run ID 29526060857, success, 6 jobs
 MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
 ```
 
-Accepted Gate A implementation evidence in Draft PR #52:
+Verified Gate A implementation evidence in Draft PR #52:
 
 ```text
 fixed little-endian UDP preamble framing
@@ -372,7 +372,7 @@ Current verified boundary:
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A Completion: IMPLEMENTED_IN_DRAFT_PR — Architecture Review pending
+RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
 Gate B: BLOCKED
 Gate C: BLOCKED
 Gate D: BLOCKED

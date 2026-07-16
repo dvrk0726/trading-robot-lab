@@ -3,7 +3,7 @@
 **Date:** 2026-07-16
 **Issues:** #38, #51
 **PR:** #52
-**Status:** `GATE_A_IMPLEMENTATION_COMPLETE — ARCHITECTURE_REVIEW_PENDING`
+**Status:** `GATE_A_IMPLEMENTATION_AND_DOCUMENTATION_COMPLETE - ARCHITECTURE_REVIEW_PENDING`
 
 ## 1. Purpose
 
@@ -20,7 +20,7 @@ UDP datagram
 → later RT-3 integration and Snapshot recovery
 ```
 
-Gate A implementation is complete in Draft PR #52. Final Architecture Review is pending. Ready-for-review is not authorized. Merge is not authorized. Gate B, Gate C and Gate D remain blocked.
+Gate A implementation and documentation are complete in Draft PR #52. Final Architecture Review is pending. Ready-for-review is not authorized. Merge is not authorized. Gate B, Gate C and Gate D remain blocked.
 
 This document is the sole authoritative Gate A contract.
 

@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-16  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A Completion IMPLEMENTED_IN_DRAFT_PR; Architecture Review PENDING
+Текущий gate: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
 
 ## Главный порядок
 
@@ -240,7 +240,7 @@ Reviewed PR head: 8ed659ffffbf42fd0671935d53182622289b4ec6
 Main merge SHA: d026a13245ea4f92ea1fe46edf049df205f981ea
 Pre-merge CI #216: success
 Post-merge main CI #217: success
-MOEX FAST inventory: 18 total
+MOEX FAST inventory: 17 total
 ```
 
 Accepted API:
@@ -293,7 +293,7 @@ exact half-range ambiguity
 stale relation
 natural modulo-2^32 wrap
 constexpr, noexcept and trivially-copyable checks
-MOEX FAST inventory: 18 total
+MOEX FAST inventory: 17 total
 required-check job names unchanged
 ```
 
@@ -319,7 +319,7 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
-### Gate A Completion — IMPLEMENTED_IN_DRAFT_PR
+### Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
 
 Formerly tracked as A1, A2, A3, A4 and A5. These remain as historical labels for internal implementation phases only. A1 and A2 are verified historical checkpoints. A3/A4/A5 implementation and acceptance-evidence phases are complete in Draft PR #52.
 
@@ -333,7 +333,7 @@ Technical CI: #234, run ID 29526060857, success, 6 jobs
 MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
 ```
 
-Accepted Gate A implementation evidence:
+Verified Gate A implementation evidence:
 
 ```text
 fixed little-endian UDP preamble framing
@@ -388,7 +388,7 @@ explicit Owner acceptance
 ```text
 RT-4 Gate A1: DONE
 RT-4 Gate A2: DONE
-RT-4 Gate A Completion: IMPLEMENTED_IN_DRAFT_PR — Architecture Review pending
+RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
 Gate B: BLOCKED
 Gate C: BLOCKED
 Gate D: BLOCKED
