@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-16  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Текущий gate: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
+Текущий gate: RT-4 Gate A Completion DONE
 
 ## Источник истины
 
@@ -70,6 +70,7 @@ RT-4 post-merge state sync: DONE — Issue #40 / PR #41
 RT-4 Gate A1 UDP framing: DONE — Issue #42 / PR #43
 RT-4 A2/A3 boundary amendment: DONE — Issue #46 / PR #47
 RT-4 Gate A2 serial arithmetic: DONE — Issue #48 / PR #49
+RT-4 Gate A Completion: DONE — Issue #51 / PR #52 merged
 ```
 
 RT-2 payload bytes остаются opaque. `capture_index` не является FAST `MsgSeqNum` или exchange sequence.
@@ -220,19 +221,23 @@ MOEX FAST inventory: 17 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1
 
 Accepted A2 production contract: header-only `spectra_sequence_arithmetic.hpp`, `SequenceRelation`, `SequenceClassification`, and `classify_sequence_relation(...) constexpr noexcept`; unsigned modulo-2^32 subtraction; deterministic `InvalidConfig`, `Expected`, `FutureWithinWindow`, `FutureBeyondWindow`, `Ambiguous` and `Stale`; one Release-active `test_spectra_sequence_arithmetic`; no mutable sequencing state or A3 behavior.
 
-## RT-4 Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
+## RT-4 Gate A Completion — DONE
 
 ```text
-Issue #51: open
-PR #52: open, Draft, not merged
-Branch: mimo/issue-51-rt4-gate-a-completion
-Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
-Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
-Technical CI: #234, run ID 29526060857, success, 6 jobs
+Issue #51: open only until merge PR #53 and post-merge CI verification
+PR #52: merged
+Final reviewed PR head: f88cb16b26d08b23718214f02d2df5f383c8b52e
+Gate A merge commit: 155a8d12f62b461e8a7f5daf1b0d20a654a70f69
+Pre-merge CI #237, run 29530159266, success, 6 jobs
+Post-merge CI #238 on main: success
+Final Architecture Review: PASS
 MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
+Gate A internal tests: 98
+Release benchmark scenarios: 8
+allocation_count: 0 in every measured scenario
 ```
 
-Verified Gate A implementation evidence in Draft PR #52:
+Gate A implementation evidence:
 
 ```text
 fixed little-endian UDP preamble framing
@@ -261,21 +266,17 @@ reset preserves one-shot storage binding
 
 PR #43 originally introduced an explicit endian selector, but this production contract was superseded in PR #52 after written MOEX support confirmation; current contract is fixed little-endian.
 
-Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
-
 ## Current verified boundary
 
 ```text
-RT-4 Gate A1: DONE
-RT-4 Gate A2: DONE
-RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
-Gate B: BLOCKED
+Gate A: DONE
+Gate B: BLOCKED — not started, not authorized
 Gate C: BLOCKED
 Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
-Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
+Next possible transition: a separate Owner decision is required for Gate B. No automatic start.
 
 CI-2 caching is POSTPONED, not started and not authorized.
 
@@ -301,11 +302,9 @@ MiMo never writes to `main`, merges, enables auto-merge, force-pushes, deletes b
 ## Immediate next gate
 
 ```text
-RT-4 Gate A Completion is implemented in Draft PR #52.
-Final Architecture Review of complete PR #52 is pending.
-Ready-for-review is not authorized.
-Merge is not authorized.
+RT-4 Gate A Completion is DONE. PR #52 merged. Post-merge CI #238 passed.
 Gate B, Gate C and Gate D remain blocked.
 RT-5 is prohibited until all RT-4 gates are eventually accepted and merged.
-Do not start Gate B without explicit Owner authorization after Gate A merge.
+Gate B requires a separate Owner decision to begin; no automatic start.
+Next implementation task is not authorized.
 ```

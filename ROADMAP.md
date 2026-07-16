@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-16  
 Статус: gated engineering roadmap  
-Текущий gate: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
+Текущий gate: RT-4 Gate A Completion DONE
 
 ## Главный порядок
 
@@ -156,6 +156,22 @@ Post-merge main CI #210: success
 A2: stateless uint32 serial-relation classification only
 A3: fixed preallocated MessageStorage plus complete mutable A/B sequencer
 A4: fixed deadline and terminal fail-closed behavior
+```
+
+### RT-4 Gate A Completion — DONE
+
+```text
+Issue #51: open only until merge PR #53 and post-merge CI verification
+PR #52: merged
+Final reviewed PR head: f88cb16b26d08b23718214f02d2df5f383c8b52e
+Gate A merge commit: 155a8d12f62b461e8a7f5daf1b0d20a654a70f69
+Pre-merge CI #237, run 29530159266, success, 6 jobs
+Post-merge CI #238 on main: success
+Final Architecture Review: PASS
+MOEX FAST inventory: 18
+Gate A internal tests: 98
+Release benchmark scenarios: 8
+allocation_count: 0 in every measured scenario
 ```
 
 ## MOEX connectivity checkpoint
@@ -319,18 +335,22 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
-### Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
+### Gate A Completion — DONE
 
-Formerly tracked as A1, A2, A3, A4 and A5. These remain as historical labels for internal implementation phases only. A1 and A2 are verified historical checkpoints. A3/A4/A5 implementation and acceptance-evidence phases are complete in Draft PR #52.
+Formerly tracked as A1, A2, A3, A4 and A5. These remain as historical labels for internal implementation phases only. A1 and A2 are verified historical checkpoints. A3/A4/A5 implementation and acceptance-evidence phases are complete.
 
 ```text
-Issue #51: open
-PR #52: open, Draft, not merged
-Branch: mimo/issue-51-rt4-gate-a-completion
-Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
-Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
-Technical CI: #234, run ID 29526060857, success, 6 jobs
+Issue #51: open only until merge PR #53 and post-merge CI verification
+PR #52: merged
+Final reviewed PR head: f88cb16b26d08b23718214f02d2df5f383c8b52e
+Gate A merge commit: 155a8d12f62b461e8a7f5daf1b0d20a654a70f69
+Pre-merge CI #237, run 29530159266, success, 6 jobs
+Post-merge CI #238 on main: success
+Final Architecture Review: PASS
 MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
+Gate A internal tests: 98
+Release benchmark scenarios: 8
+allocation_count: 0 in every measured scenario
 ```
 
 Verified Gate A implementation evidence:
@@ -350,11 +370,7 @@ allocation_count equals zero in every measured scenario
 benchmark executed successfully in both Windows and Linux FAST CI jobs
 ```
 
-Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
-
 PR #43 originally introduced an explicit endian selector, but this production contract was superseded in PR #52 after written MOEX support confirmation; current contract is fixed little-endian.
-
-Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
 
 ### Gate B — replay and decoder integration — BLOCKED
 
@@ -386,16 +402,14 @@ explicit Owner acceptance
 ## Current verified boundary
 
 ```text
-RT-4 Gate A1: DONE
-RT-4 Gate A2: DONE
-RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
-Gate B: BLOCKED
+Gate A: DONE
+Gate B: BLOCKED — not started, not authorized, requiring a separate Owner decision
 Gate C: BLOCKED
 Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
-The next transition is final Architecture Review of complete PR #52, then separate Owner authorization to mark Ready, separate Owner authorization to merge, post-merge CI verification, and only then a separate Gate B decision.
+Gate B is not active and not started. A separate Owner decision is required before Gate B can begin.
 
 CI-2 caching is POSTPONED, not started and not authorized. Reconsider only when measured CI duration or cost materially slows development.
 

@@ -2,7 +2,7 @@
 
 Дата обновления: 2026-07-16  
 Репозиторий: `dvrk0726/trading-robot-lab`  
-Статус: RT-4 Gate A Completion IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR; Final Architecture Review pending
+Статус: RT-4 Gate A Completion DONE
 
 ## Архитектурные границы
 
@@ -334,19 +334,23 @@ tools/ci_route.py changes
 temporary FutureUnsupported-style API or result
 ```
 
-### RT-4 Gate A Completion — IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR
+### RT-4 Gate A Completion — DONE
 
 ```text
-Issue #51: open
-PR #52: open, Draft, not merged
-Branch: mimo/issue-51-rt4-gate-a-completion
-Accepted technical checkpoint: 105f7d878833e30ee92644c312d0e94cb632b87d
-Current main: c35f37f07cfbb4a5f7ff44fb69d3782d02dc3917
-Technical CI: #234, run ID 29526060857, success, 6 jobs
+Issue #51: open only until merge PR #53 and post-merge CI verification
+PR #52: merged
+Final reviewed PR head: f88cb16b26d08b23718214f02d2df5f383c8b52e
+Gate A merge commit: 155a8d12f62b461e8a7f5daf1b0d20a654a70f69
+Pre-merge CI #237, run 29530159266, success, 6 jobs
+Post-merge CI #238 on main: success
+Final Architecture Review: PASS
 MOEX FAST inventory: 18 = RT-1 6 + RT-3 9 + RT-4 A1 1 + RT-4 A2 1 + RT-4 Gate A 1
+Gate A internal tests: 98
+Release benchmark scenarios: 8
+allocation_count: 0 in every measured scenario
 ```
 
-Verified Gate A implementation evidence in Draft PR #52:
+Verified Gate A implementation evidence:
 
 ```text
 fixed little-endian UDP preamble framing
@@ -363,23 +367,19 @@ allocation_count equals zero in every measured scenario
 benchmark executed successfully in both Windows and Linux FAST CI jobs
 ```
 
-Status: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR, FINAL_ARCHITECTURE_REVIEW_PENDING, READY_NOT_AUTHORIZED, MERGE_NOT_AUTHORIZED.
-
 Former internal phases A1, A2, A3, A4 and A5 are consolidated into Gate A Completion. A1 and A2 remain as historical verified checkpoints. PR #43 originally introduced an explicit endian selector, but this production contract was superseded in PR #52 after written MOEX support confirmation; current contract is fixed little-endian.
 
 Current verified boundary:
 
 ```text
-RT-4 Gate A1: DONE
-RT-4 Gate A2: DONE
-RT-4 Gate A Completion: IMPLEMENTED_AND_DOCUMENTED_IN_DRAFT_PR — Final Architecture Review pending
-Gate B: BLOCKED
+Gate A: DONE
+Gate B: BLOCKED — not started, not authorized
 Gate C: BLOCKED
 Gate D: BLOCKED
 RT-5 / RT-6 / CI-2: not authorized
 ```
 
-Next transition: final Architecture Review of complete PR #52 -> separate Owner authorization to mark Ready -> separate Owner authorization to merge -> post-merge CI verification -> only then a separate Gate B decision.
+Next possible transition: a separate Owner decision is required for Gate B. No automatic start.
 
 ## MOEX access and connectivity state
 
