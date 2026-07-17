@@ -22,6 +22,7 @@ public:
     ReplayCursorState state() const { return state_; }
     const std::vector<RawValidationIssue>& issues() const { return issues_; }
     ReplayCursorCode terminal_code() const { return terminal_code_; }
+    const RawSegmentMetadata* stream_metadata() const noexcept;
 
     // Validate stream set, sort paths by segment_index, store preflight
     // snapshot (path, file_size, header_size, full metadata, footer) per

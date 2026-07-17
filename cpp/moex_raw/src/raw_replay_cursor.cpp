@@ -97,6 +97,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
 
     if (ever_initialized_) {
         result.code = ReplayCursorCode::AlreadyInitialized;
+        result.segment_status = SegmentStatus::ValidFinalized;
         return result;
     }
 
@@ -121,6 +122,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
         add_issue(issues_, ValidationSeverity::Error, "INVALID_STREAM_SET",
                   "StreamSetInfo paths/indexes mismatch or empty");
         result.code = ReplayCursorCode::ValidationFailed;
+        result.segment_status = SegmentStatus::Corrupt;
         result.issues = issues_;
         return result;
     }
@@ -140,6 +142,52 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
         sorted_paths.push_back(p);
     }
 
+    // Validate filename index matches declared index and identity matches StreamSetInfo
+    for (std::size_t i = 0; i < indexed.size(); ++i) {
+        ParsedFilename pf;
+        auto fn = std::filesystem::path(indexed[i].first).filename().string();
+        if (!parse_canonical_filename(fn, pf)) {
+            add_issue(issues_, ValidationSeverity::Error, "INVALID_FILENAME",
+                      "Cannot parse canonical filename: " + fn);
+            result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Corrupt;
+            result.issues = issues_;
+            return result;
+        }
+        if (pf.segment_index != indexed[i].second) {
+            add_issue(issues_, ValidationSeverity::Error, "INDEX_MISMATCH",
+                      "Filename segment_index does not match declared index");
+            result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Corrupt;
+            result.issues = issues_;
+            return result;
+        }
+        if (std::memcmp(pf.session_id, stream_set.session_id, 16) != 0) {
+            add_issue(issues_, ValidationSeverity::Error, "IDENTITY_MISMATCH",
+                      "Filename session_id does not match StreamSetInfo");
+            result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Corrupt;
+            result.issues = issues_;
+            return result;
+        }
+        if (pf.source_id != stream_set.source_id) {
+            add_issue(issues_, ValidationSeverity::Error, "IDENTITY_MISMATCH",
+                      "Filename source_id does not match StreamSetInfo");
+            result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Corrupt;
+            result.issues = issues_;
+            return result;
+        }
+        if (pf.channel_id != stream_set.channel_id) {
+            add_issue(issues_, ValidationSeverity::Error, "IDENTITY_MISMATCH",
+                      "Filename channel_id does not match StreamSetInfo");
+            result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Corrupt;
+            result.issues = issues_;
+            return result;
+        }
+    }
+
     // Validate stream set
     std::vector<RawSegmentMetadata> metas;
     std::vector<RawFooter> footers;
@@ -147,7 +195,22 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
                                       nullptr, nullptr, fs_);
 
     if (status != SegmentStatus::ValidFinalized) {
+        result.code = (status == SegmentStatus::IoError)
+                          ? ReplayCursorCode::IoError
+                          : ReplayCursorCode::ValidationFailed;
+        result.segment_status = status;
+        result.issues = issues_;
+        return result;
+    }
+
+    // Validate StreamSetInfo identity matches validated metadata
+    if (std::memcmp(metas[0].session.session_id, stream_set.session_id, 16) != 0 ||
+        metas[0].source.source_id != stream_set.source_id ||
+        metas[0].source.channel_id != stream_set.channel_id) {
+        add_issue(issues_, ValidationSeverity::Error, "METADATA_IDENTITY_MISMATCH",
+                  "Validated metadata does not match StreamSetInfo identity");
         result.code = ReplayCursorCode::ValidationFailed;
+        result.segment_status = SegmentStatus::Corrupt;
         result.issues = issues_;
         return result;
     }
@@ -156,6 +219,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
         add_issue(issues_, ValidationSeverity::Error, "EMPTY_STREAM",
                   "No segments in stream set");
         result.code = ReplayCursorCode::ValidationFailed;
+        result.segment_status = SegmentStatus::Corrupt;
         result.issues = issues_;
         return result;
     }
@@ -174,6 +238,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
             add_issue(issues_, ValidationSeverity::Error, "IO_ERROR",
                       "Cannot stat segment file during preflight");
             result.code = ReplayCursorCode::IoError;
+            result.segment_status = SegmentStatus::IoError;
             result.issues = issues_;
             return result;
         }
@@ -184,6 +249,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
             add_issue(issues_, ValidationSeverity::Error, "IO_ERROR",
                       "Cannot open segment for preflight header read");
             result.code = ReplayCursorCode::IoError;
+            result.segment_status = SegmentStatus::IoError;
             result.issues = issues_;
             return result;
         }
@@ -193,6 +259,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
             add_issue(issues_, ValidationSeverity::Error, "IO_ERROR",
                       "Cannot read header preamble during preflight");
             result.code = ReplayCursorCode::IoError;
+            result.segment_status = SegmentStatus::IoError;
             result.issues = issues_;
             return result;
         }
@@ -201,6 +268,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
             add_issue(issues_, ValidationSeverity::Error, "WRONG_MAGIC",
                       "Wrong segment magic during preflight");
             result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Corrupt;
             result.issues = issues_;
             return result;
         }
@@ -210,6 +278,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
             add_issue(issues_, ValidationSeverity::Error, "UNSUPPORTED_VERSION",
                       "Unsupported format version during preflight");
             result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Unsupported;
             result.issues = issues_;
             return result;
         }
@@ -219,6 +288,7 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
             add_issue(issues_, ValidationSeverity::Error, "INVALID_HEADER_SIZE",
                       "Invalid header size during preflight");
             result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Corrupt;
             result.issues = issues_;
             return result;
         }
@@ -227,6 +297,16 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
         // Store full metadata and footer from validation
         sp.metadata = metas[i];
         sp.footer = footers[i];
+
+        // Verify metadata segment_index matches declared index
+        if (metas[i].segment_index != indexed[i].second) {
+            add_issue(issues_, ValidationSeverity::Error, "SEGMENT_INDEX_MISMATCH",
+                      "Validated segment_index does not match declared index");
+            result.code = ReplayCursorCode::ValidationFailed;
+            result.segment_status = SegmentStatus::Corrupt;
+            result.issues = issues_;
+            return result;
+        }
 
         preflight_.push_back(std::move(sp));
     }
@@ -237,7 +317,13 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
     state_ = ReplayCursorState::Ready;
     ever_initialized_ = true;
     result.code = ReplayCursorCode::Ok;
+    result.segment_status = SegmentStatus::ValidFinalized;
     return result;
+}
+
+const RawSegmentMetadata* ValidatedReplayCursor::stream_metadata() const noexcept {
+    if (preflight_.empty()) return nullptr;
+    return &preflight_[0].metadata;
 }
 
 bool ValidatedReplayCursor::open_and_verify_segment(std::size_t idx) {

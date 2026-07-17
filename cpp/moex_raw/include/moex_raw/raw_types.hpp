@@ -218,6 +218,7 @@ enum class ReplayCursorCode {
 
 struct ReplayCursorInitResult {
     ReplayCursorCode code = ReplayCursorCode::Ok;
+    SegmentStatus segment_status = SegmentStatus::ValidFinalized;
     std::vector<RawValidationIssue> issues;
 };
 

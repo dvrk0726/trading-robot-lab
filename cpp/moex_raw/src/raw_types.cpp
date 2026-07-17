@@ -410,8 +410,6 @@ bool deserialize_record_view(const std::uint8_t* data, std::size_t available,
         return false;
     }
 
-    record_total_size = record_size;
-
     if (available < record_size) {
         add_issue(issues, ValidationSeverity::Error, "TRUNCATED_RECORD", "Truncated record (payload or checksum)");
         out = {};
@@ -450,6 +448,7 @@ bool deserialize_record_view(const std::uint8_t* data, std::size_t available,
         return false;
     }
 
+    record_total_size = record_size;
     return true;
 }
 
