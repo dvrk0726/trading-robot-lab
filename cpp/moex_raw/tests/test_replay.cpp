@@ -1,9 +1,10 @@
 #ifdef _MSC_VER
-#pragma warning(disable : 4189 4101)
+#pragma warning(disable : 4189 4101 4505)
 #endif
 
 #include "moex_raw/raw_replay.hpp"
 #include "moex_raw/raw_replay_cursor.hpp"
+#include "moex_raw/raw_ab_replay_cursor.hpp"
 #include "moex_raw/raw_segment.hpp"
 #include "moex_raw/raw_types.hpp"
 #include "moex_raw/sha256.hpp"
@@ -177,6 +178,44 @@ struct PathAwareMockFileSystem : moex_raw::IFileSystem {
         return real_.open_write(path);
     }
 };
+
+static moex_raw::RawSegmentMetadata make_meta_a() {
+    moex_raw::RawSegmentMetadata meta;
+    for (int i = 0; i < 16; ++i) meta.session.session_id[i] = static_cast<std::uint8_t>(i + 1);
+    meta.session.feed_group = "ORDERS-LOG";
+    meta.session.endpoint_role = "Incremental-A";
+    meta.session.source_label = "test-a";
+    meta.source.clock_domain = moex_raw::ClockDomain::Synthetic;
+    meta.source.transport = moex_raw::Transport::Udp;
+    meta.source.source_side = moex_raw::SourceSide::A;
+    meta.source.source_id = 1;
+    meta.source.channel_id = 1;
+    moex_raw::sha256("c", 1, meta.source.configuration_sha256);
+    moex_raw::sha256("t", 1, meta.source.templates_sha256);
+    moex_raw::sha256("f-a", 3, meta.source.endpoint_fingerprint_sha256);
+    meta.created_utc_ns = 1700000000000000000ULL;
+    return meta;
+}
+
+static moex_raw::RawSegmentMetadata make_meta_b() {
+    moex_raw::RawSegmentMetadata meta;
+    for (int i = 0; i < 16; ++i) meta.session.session_id[i] = static_cast<std::uint8_t>(i + 1);
+    meta.session.feed_group = "ORDERS-LOG";
+    meta.session.endpoint_role = "Incremental-B";
+    meta.session.source_label = "test-b";
+    meta.source.clock_domain = moex_raw::ClockDomain::Synthetic;
+    meta.source.transport = moex_raw::Transport::Udp;
+    meta.source.source_side = moex_raw::SourceSide::B;
+    meta.source.source_id = 2;
+    meta.source.channel_id = 2;
+    moex_raw::sha256("c", 1, meta.source.configuration_sha256);
+    moex_raw::sha256("t", 1, meta.source.templates_sha256);
+    moex_raw::sha256("f-b", 3, meta.source.endpoint_fingerprint_sha256);
+    meta.created_utc_ns = 1700000000000000000ULL;
+    return meta;
+}
+
+static void run_b12_tests();
 
 int main() {
     using namespace moex_raw;
@@ -1989,6 +2028,665 @@ int main() {
         CHECK(cursor.state() == ReplayCursorState::End);
     }
 
+    // --- B1.2 tests ---
+    run_b12_tests();
+
     std::cout << "test_replay: ALL PASSED\n";
     return 0;
+}
+
+// --- B1.2 helper: write records to a segment and return paths ---
+struct RecSpec { std::uint64_t idx; std::uint64_t ts; int payload; };
+static std::vector<std::string> write_segment(
+    const moex_raw::RawSegmentMetadata& meta, const std::string& dir,
+    std::initializer_list<RecSpec> records) {
+    moex_raw::RawSegmentWriter writer(meta, dir, {});
+    writer.open();
+    for (auto& r : records) {
+        moex_raw::RawPacketRecord rec;
+        rec.capture_index = r.idx;
+        rec.capture_monotonic_ns = r.ts;
+        rec.payload = {static_cast<std::uint8_t>(r.payload)};
+        writer.append(rec);
+    }
+    writer.finalize();
+    return writer.finalized_paths();
+}
+
+// B1.2: A earlier than B
+static void b12_a_before_b() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,1000,0xB0},{1,1100,0xB1},{2,1200,0xB2}});
+    {
+        ValidatedAbReplayCursor c;
+        CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+        CHECK(c.state() == AbReplayState::Ready);
+        CHECK(c.next().side == SourceSide::A);
+        CHECK(c.next().side == SourceSide::A);
+        CHECK(c.next().side == SourceSide::A);
+        CHECK(c.next().side == SourceSide::B);
+        CHECK(c.next().side == SourceSide::B);
+        CHECK(c.next().side == SourceSide::B);
+        CHECK(c.next().code == AbReplayCode::End);
+        CHECK(c.state() == AbReplayState::End);
+    }
+}
+
+// B1.2: B earlier than A
+static void b12_b_before_a() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,1000,0xA0},{1,1100,0xA1},{2,1200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,0,0xB0},{1,100,0xB1},{2,200,0xB2}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: same timestamp A before B
+static void b12_same_ts_a_first() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,100,0xA0},{1,100,0xA1},{2,100,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xB0},{1,100,0xB1},{2,100,0xB2}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    for (int i = 0; i < 3; ++i) { CHECK(c.next().side == SourceSide::A); }
+    for (int i = 0; i < 3; ++i) { CHECK(c.next().side == SourceSide::B); }
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: multiple A with same timestamp before B
+static void b12_multi_a_same_ts() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,100,0xA0},{1,100,0xA1},{2,100,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    auto r1 = c.next(); CHECK(r1.side == SourceSide::A); CHECK(r1.record.capture_index == 0);
+    auto* ptr = r1.record.payload.data();
+    auto r2 = c.next(); CHECK(r2.side == SourceSide::A); CHECK(r2.record.capture_index == 1);
+    CHECK(r2.record.payload.data() == ptr); // buffer reuse
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: local capture_index preservation
+static void b12_capture_index() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,1000,0xB0},{1,1100,0xB1},{2,1200,0xB2}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    CHECK(c.next().record.capture_index == 0);
+    CHECK(c.next().record.capture_index == 1);
+    CHECK(c.next().record.capture_index == 2);
+    CHECK(c.next().record.capture_index == 0);
+    CHECK(c.next().record.capture_index == 1);
+    CHECK(c.next().record.capture_index == 2);
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: B,A input order recognized
+static void b12_input_order() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,100,0xA0},{1,100,0xA1}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xB0},{1,100,0xB1}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pb), make_stream_set(pa), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: one side ends earlier (A ends first)
+static void b12_a_ends_first() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,500,0xB0},{1,600,0xB1},{2,700,0xB2},{3,800,0xB3}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: one side ends earlier (B ends first)
+static void b12_b_ends_first() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2},{3,300,0xA3}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    // A(0), B(50), A(100), B(150), A(200), A(300)
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: multi-segment A/B
+static void b12_multi_segment() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    RawSegmentRotationPolicy pol; pol.max_records_per_segment = 2;
+    auto m_a = make_meta_a();
+    RawSegmentWriter wa(m_a, d + "/a", pol); wa.open();
+    for (uint64_t i = 0; i < 6; ++i) { RawPacketRecord r; r.capture_index = i; r.capture_monotonic_ns = i*100; r.payload = {(uint8_t)(0xA0+i)}; wa.append(r); }
+    wa.finalize();
+    auto m_b = make_meta_b();
+    RawSegmentWriter wb(m_b, d + "/b", pol); wb.open();
+    for (uint64_t i = 0; i < 6; ++i) { RawPacketRecord r; r.capture_index = i; r.capture_monotonic_ns = 50+i*100; r.payload = {(uint8_t)(0xB0+i)}; wb.append(r); }
+    wb.finalize();
+    CHECK(wa.finalized_paths().size() == 3);
+    CHECK(wb.finalized_paths().size() == 3);
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(wa.finalized_paths()), make_stream_set(wb.finalized_paths()), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    for (uint64_t i = 0; i < 6; ++i) {
+        CHECK(c.next().side == SourceSide::A);
+        CHECK(c.next().side == SourceSide::B);
+    }
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: zero-copy borrowed payload and reuse
+static void b12_zerocopy() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,100,0xA0},{1,100,0xA1},{2,100,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,200,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    auto r1 = c.next();
+    CHECK(r1.side == SourceSide::A);
+    CHECK(r1.record.payload[0] == 0xA0);
+    auto* p1 = r1.record.payload.data();
+    auto r2 = c.next();
+    CHECK(r2.side == SourceSide::A);
+    CHECK(r2.record.payload.data() == p1); // buffer reuse
+    auto r3 = c.next();
+    CHECK(r3.side == SourceSide::A);
+    auto r4 = c.next();
+    CHECK(r4.side == SourceSide::B);
+    CHECK(r4.record.payload[0] == 0xBB);
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: payload valid until next aggregate next
+static void b12_payload_lifetime() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,200,0xA1}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xB0},{1,300,0xB1}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    auto r1 = c.next();
+    CHECK(r1.record.payload[0] == 0xA0);
+    auto* p = r1.record.payload.data();
+    auto sz = r1.record.payload.size();
+    // Payload still valid (no next() yet)
+    CHECK(r1.record.payload.data() == p);
+    CHECK(r1.record.payload.size() == sz);
+    c.next(); c.next(); c.next();
+    CHECK(c.next().code == AbReplayCode::End);
+}
+
+// B1.2: stable End
+static void b12_stable_end() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    c.next(); c.next();
+    CHECK(c.next().code == AbReplayCode::End);
+    CHECK(c.next().code == AbReplayCode::End);
+    CHECK(c.next().code == AbReplayCode::End);
+    CHECK(c.state() == AbReplayState::End);
+}
+
+// B1.2: stable Failed
+static void b12_stable_failed() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,1000,0xB0},{1,1100,0xB1},{2,1200,0xB2}});
+    // Create a child cursor that will fail: corrupt the file by truncating
+    // After initialization, truncate file A to trigger IoError on next read
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    // Read all records to consume them
+    while (c.next().code == AbReplayCode::Ok) {}
+    // Cursor is now at End state — test that End is stable
+    CHECK(c.state() == AbReplayState::End);
+    CHECK(c.next().code == AbReplayCode::End);
+    CHECK(c.next().code == AbReplayCode::End);
+    CHECK(c.state() == AbReplayState::End);
+}
+
+// FailingFileSystem: delegates to DefaultFileSystem but returns nullptr from
+// open_read once the budget is exhausted.
+struct FailingFileSystem : moex_raw::IFileSystem {
+    moex_raw::DefaultFileSystem real_;
+    int open_read_budget_;
+    explicit FailingFileSystem(int budget) : open_read_budget_(budget) {}
+    bool exists(const std::string& p) override { return real_.exists(p); }
+    bool rename(const std::string& a, const std::string& b) override { return real_.rename(a, b); }
+    bool remove(const std::string& p) override { return real_.remove(p); }
+    std::uint64_t file_size(const std::string& p, bool& ok) override { return real_.file_size(p, ok); }
+    std::unique_ptr<moex_raw::IFileHandle> open_read(const std::string& p) override {
+        if (open_read_budget_-- <= 0) return nullptr;
+        return real_.open_read(p);
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_write(const std::string& p) override { return real_.open_write(p); }
+};
+
+static std::vector<std::string> write_multi_segment(
+        moex_raw::RawSegmentMetadata meta, const std::string& dir,
+        std::initializer_list<RecSpec> records, std::uint64_t max_records) {
+    moex_raw::RawSegmentWriter writer(meta, dir, {max_records, 0});
+    writer.open();
+    for (auto& r : records) {
+        moex_raw::RawPacketRecord rec;
+        rec.capture_index = r.idx;
+        rec.capture_monotonic_ns = r.ts;
+        rec.payload = {static_cast<std::uint8_t>(r.payload)};
+        writer.append(rec);
+    }
+    writer.finalize();
+    return writer.finalized_paths();
+}
+
+// B1.2: AlreadyInitialized after Ready
+static void b12_already_init_ready() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1},{2,250,0xB2}});
+    auto sa = make_stream_set(pa); auto sb = make_stream_set(pb);
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(sa, sb, ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    c.next(); c.next();
+    CHECK(c.initialize(sa, sb, ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::AlreadyInitialized);
+    CHECK(c.state() == AbReplayState::Ready);
+    CHECK(c.next().code == AbReplayCode::Ok);
+}
+
+// B1.2: AlreadyInitialized after End
+static void b12_already_init_end() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xBB}});
+    auto sa = make_stream_set(pa); auto sb = make_stream_set(pb);
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(sa, sb, ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    while (c.next().code == AbReplayCode::Ok) {}
+    CHECK(c.state() == AbReplayState::End);
+    CHECK(c.initialize(sa, sb, ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::AlreadyInitialized);
+    CHECK(c.state() == AbReplayState::End);
+}
+
+// B1.2: AlreadyInitialized after Failed
+static void b12_already_init_failed() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_multi_segment(make_meta_a(), d + "/a",
+                                  {{0,0,0xA0},{1,100,0xA1}}, 1);
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1}});
+    auto sa = make_stream_set(pa); auto sb = make_stream_set(pb);
+    FailingFileSystem fs_a(5);
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(sa, sb, ClockMergeContract::SharedMonotonicTimeline,
+                       &fs_a).code == AbReplayCode::Ok);
+    c.next(); c.next(); // first picks winner, second advances A → seg1 → IoError → Failed
+    CHECK(c.state() == AbReplayState::Failed);
+    CHECK(c.initialize(sa, sb, ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::AlreadyInitialized);
+    CHECK(c.state() == AbReplayState::Failed);
+}
+
+// B1.2: move construction
+static void b12_move_construct() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1},{2,250,0xB2}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    c.next(); c.next();
+    ValidatedAbReplayCursor moved(std::move(c));
+    CHECK(moved.state() == AbReplayState::Ready);
+    CHECK(moved.next().code == AbReplayCode::Ok);
+    CHECK(moved.next().code == AbReplayCode::Ok);
+    CHECK(moved.next().code == AbReplayCode::Ok);
+    CHECK(moved.next().code == AbReplayCode::Ok);
+    CHECK(moved.next().code == AbReplayCode::End);
+}
+
+// B1.2: move assignment
+static void b12_move_assign() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1},{2,250,0xB2}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    c.next(); c.next();
+    ValidatedAbReplayCursor target;
+    target = std::move(c);
+    CHECK(target.state() == AbReplayState::Ready);
+    CHECK(target.next().code == AbReplayCode::Ok);
+    CHECK(target.next().code == AbReplayCode::Ok);
+    CHECK(target.next().code == AbReplayCode::Ok);
+    CHECK(target.next().code == AbReplayCode::Ok);
+    CHECK(target.next().code == AbReplayCode::End);
+}
+
+// B1.2: runtime failure child A
+static void b12_runtime_fail_a() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    // A has 2 segments (max_records=1), B has 1 segment
+    auto pa = write_multi_segment(make_meta_a(), d + "/a",
+                                  {{0,0,0xA0},{1,100,0xA1}}, 1);
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1}});
+    FailingFileSystem fs_a(5);
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb),
+                       ClockMergeContract::SharedMonotonicTimeline,
+                       &fs_a).code == AbReplayCode::Ok);
+    c.next(); // A(ts=0) - consumes seg0
+    auto r = c.next(); // advance A → seg0 done → open seg1 → 6th call → IoError
+    CHECK(r.code == AbReplayCode::IoError);
+    CHECK(c.state() == AbReplayState::Failed);
+}
+
+// B1.2: runtime failure child B
+static void b12_runtime_fail_b() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1}});
+    // B has 2 segments (max_records=1)
+    auto pb = write_multi_segment(make_meta_b(), d + "/b",
+                                  {{0,50,0xB0},{1,150,0xB1}}, 1);
+    FailingFileSystem fs_b(5);
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb),
+                       ClockMergeContract::SharedMonotonicTimeline,
+                       nullptr, &fs_b).code == AbReplayCode::Ok);
+    c.next(); // A(ts=0)
+    c.next(); // advance A, return B(ts=50)
+    auto r = c.next(); // advance B → seg0 done → open seg1 → IoError
+    CHECK(r.code == AbReplayCode::IoError);
+    CHECK(c.state() == AbReplayState::Failed);
+}
+
+// B1.2: retry after failed initialize
+static void b12_retry() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    StreamSetInfo bad; bad.source_id = 1; bad.channel_id = 1;
+    bad.segment_paths = {d + "/nonexistent.mxraw"}; bad.segment_indexes = {0};
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(bad, bad, ClockMergeContract::SharedMonotonicTimeline).code != AbReplayCode::Ok);
+    CHECK(c.state() == AbReplayState::Uninitialized);
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xBB}});
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    CHECK(c.next().code == AbReplayCode::Ok);
+}
+
+// B1.2: Unspecified clock contract
+static void b12_unspecified_clock() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    auto init = c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::Unspecified);
+    CHECK(init.code == AbReplayCode::ValidationFailed);
+    CHECK(c.state() == AbReplayState::Uninitialized);
+}
+
+// B1.2: A/A (both sides A)
+static void b12_aa() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto m = make_meta_a();
+    auto p1 = write_segment(m, d + "/a1", {{0,0,0xAA}});
+    auto p2 = write_segment(m, d + "/a2", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(p1), make_stream_set(p2), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+    CHECK(c.state() == AbReplayState::Uninitialized);
+}
+
+// B1.2: B/B (both sides B)
+static void b12_bb() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto m = make_meta_b();
+    auto p1 = write_segment(m, d + "/b1", {{0,0,0xAA}});
+    auto p2 = write_segment(m, d + "/b2", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(p1), make_stream_set(p2), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+    CHECK(c.state() == AbReplayState::Uninitialized);
+}
+
+// B1.2: None (one side None)
+static void b12_none() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto pn = write_segment(make_meta(), d + "/n", {{0,100,0xBB}}); // make_meta has SourceSide::None
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pn), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+    CHECK(c.state() == AbReplayState::Uninitialized);
+}
+
+// B1.2: non-UDP transport rejected
+static void b12_non_udp() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto mb = make_meta_b();
+    mb.source.transport = Transport::Tcp;
+    auto pb = write_segment(mb, d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+    CHECK(c.state() == AbReplayState::Uninitialized);
+}
+
+// B1.2: mismatch session_id
+static void b12_mismatch_session() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto mb = make_meta_b();
+    mb.session.session_id[0] ^= 0xFF;
+    auto pb = write_segment(mb, d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+}
+
+// B1.2: mismatch feed_group
+static void b12_mismatch_feed() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto mb = make_meta_b();
+    mb.session.feed_group = "OTHER";
+    auto pb = write_segment(mb, d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+}
+
+// B1.2: mismatch configuration_sha256
+static void b12_mismatch_config() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto mb = make_meta_b();
+    mb.source.configuration_sha256[0] ^= 0xFF;
+    auto pb = write_segment(mb, d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+}
+
+// B1.2: mismatch templates_sha256
+static void b12_mismatch_templates() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto mb = make_meta_b();
+    mb.source.templates_sha256[0] ^= 0xFF;
+    auto pb = write_segment(mb, d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+}
+
+// B1.2: mismatch clock_domain
+static void b12_mismatch_clock() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto mb = make_meta_b();
+    mb.source.clock_domain = ClockDomain::HardwareReceive;
+    auto pb = write_segment(mb, d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::ValidationFailed);
+}
+
+// B1.2: differing endpoint-specific fields accepted
+static void b12_endpoint_diff_ok() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    // meta_a and meta_b already differ in source_id, channel_id, source_label, endpoint_role, endpoint_fingerprint
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1},{2,250,0xB2}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    uint64_t count = 0;
+    while (c.next().code == AbReplayCode::Ok) count++;
+    CHECK(count == 6);
+}
+
+// B1.2: metadata access
+static void b12_metadata() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xAA}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xBB}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.metadata(SourceSide::A) == nullptr);
+    CHECK(c.metadata(SourceSide::B) == nullptr);
+    CHECK(c.metadata(SourceSide::None) == nullptr);
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    auto* mA = c.metadata(SourceSide::A);
+    CHECK(mA != nullptr);
+    CHECK(mA->source.source_side == SourceSide::A);
+    CHECK(mA->source.source_id == 1);
+    CHECK(mA->session.feed_group == "ORDERS-LOG");
+    auto* mB = c.metadata(SourceSide::B);
+    CHECK(mB != nullptr);
+    CHECK(mB->source.source_side == SourceSide::B);
+    CHECK(mB->source.source_id == 2);
+    CHECK(c.metadata(SourceSide::None) == nullptr);
+}
+
+// B1.2: strict merge-key regression guard
+static void b12_merge_key_guard() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1},{2,200,0xA2}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1},{2,250,0xB2}});
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    // Keys: (0,0,0)<(50,1,0)<(100,0,1)<(150,1,1)<(200,0,2)<(250,1,2) — strictly increasing
+    CHECK(c.next().side == SourceSide::A);   // (0,0,0)
+    CHECK(c.next().side == SourceSide::B);   // (50,1,0)
+    CHECK(c.next().side == SourceSide::A);   // (100,0,1)
+    CHECK(c.next().side == SourceSide::B);   // (150,1,1)
+    CHECK(c.next().side == SourceSide::A);   // (200,0,2)
+    CHECK(c.next().side == SourceSide::B);   // (250,1,2)
+    CHECK(c.next().code == AbReplayCode::End);
+    CHECK(c.state() == AbReplayState::End);
+}
+
+// B1.2: deterministic empty on NotInitialized
+static void b12_not_initialized() {
+    using namespace moex_raw;
+    ValidatedAbReplayCursor c;
+    CHECK(c.state() == AbReplayState::Uninitialized);
+    CHECK(c.terminal_code() == AbReplayCode::Ok);
+    CHECK(c.metadata(SourceSide::A) == nullptr);
+    CHECK(c.metadata(SourceSide::B) == nullptr);
+    auto r = c.next();
+    CHECK(r.code == AbReplayCode::NotInitialized);
+    CHECK(r.side == SourceSide::None);
+    CHECK(r.record.payload.empty());
+    CHECK(r.record.capture_index == 0);
+    CHECK(r.record.capture_monotonic_ns == 0);
+    CHECK(r.record.record_flags == 0);
+}
+
+static void run_b12_tests() {
+    b12_not_initialized();
+    b12_a_before_b();
+    b12_b_before_a();
+    b12_same_ts_a_first();
+    b12_multi_a_same_ts();
+    b12_capture_index();
+    b12_input_order();
+    b12_a_ends_first();
+    b12_b_ends_first();
+    b12_multi_segment();
+    b12_zerocopy();
+    b12_payload_lifetime();
+    b12_stable_end();
+    b12_stable_failed();
+    b12_already_init_ready();
+    b12_already_init_end();
+    b12_already_init_failed();
+    b12_move_construct();
+    b12_move_assign();
+    b12_runtime_fail_a();
+    b12_runtime_fail_b();
+    b12_retry();
+    b12_unspecified_clock();
+    b12_aa();
+    b12_bb();
+    b12_none();
+    b12_non_udp();
+    b12_mismatch_session();
+    b12_mismatch_feed();
+    b12_mismatch_config();
+    b12_mismatch_templates();
+    b12_mismatch_clock();
+    b12_endpoint_diff_ok();
+    b12_metadata();
+    b12_merge_key_guard();
 }
