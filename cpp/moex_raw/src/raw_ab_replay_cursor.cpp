@@ -65,8 +65,8 @@ ValidatedAbReplayCursor::~ValidatedAbReplayCursor() = default;
 ValidatedAbReplayCursor::ValidatedAbReplayCursor(ValidatedAbReplayCursor&&) noexcept = default;
 ValidatedAbReplayCursor& ValidatedAbReplayCursor::operator=(ValidatedAbReplayCursor&&) noexcept = default;
 
-AbReplayState ValidatedAbReplayCursor::state() const { return impl_->state; }
-AbReplayCode ValidatedAbReplayCursor::terminal_code() const { return impl_->terminal_code; }
+AbReplayState ValidatedAbReplayCursor::state() const noexcept { return impl_->state; }
+AbReplayCode ValidatedAbReplayCursor::terminal_code() const noexcept { return impl_->terminal_code; }
 const std::vector<RawValidationIssue>& ValidatedAbReplayCursor::issues() const { return impl_->issues; }
 
 const RawSegmentMetadata* ValidatedAbReplayCursor::metadata(SourceSide side) const noexcept {
@@ -104,7 +104,6 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
     ValidatedReplayCursor local_second;
 
     auto init_first = local_first.initialize(first, first_fs);
-    result.a_status = init_first.segment_status;
     if (init_first.code != ReplayCursorCode::Ok) {
         result.code = (init_first.code == ReplayCursorCode::IoError)
                           ? AbReplayCode::IoError
@@ -114,7 +113,6 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
     }
 
     auto init_second = local_second.initialize(second, second_fs);
-    result.b_status = init_second.segment_status;
     if (init_second.code != ReplayCursorCode::Ok) {
         result.code = (init_second.code == ReplayCursorCode::IoError)
                           ? AbReplayCode::IoError
@@ -137,6 +135,10 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
     const RawSegmentMetadata* meta_b_ptr = nullptr;
     ValidatedReplayCursor* cursor_a_ptr = nullptr;
     ValidatedReplayCursor* cursor_b_ptr = nullptr;
+    SegmentStatus first_status = init_first.segment_status;
+    SegmentStatus second_status = init_second.segment_status;
+    SegmentStatus status_a = SegmentStatus::Corrupt;
+    SegmentStatus status_b = SegmentStatus::Corrupt;
 
     if (meta_first->source.source_side == SourceSide::A &&
         meta_second->source.source_side == SourceSide::B) {
@@ -144,18 +146,25 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
         meta_b_ptr = meta_second;
         cursor_a_ptr = &local_first;
         cursor_b_ptr = &local_second;
+        status_a = first_status;
+        status_b = second_status;
     } else if (meta_first->source.source_side == SourceSide::B &&
                meta_second->source.source_side == SourceSide::A) {
         meta_a_ptr = meta_second;
         meta_b_ptr = meta_first;
         cursor_a_ptr = &local_second;
         cursor_b_ptr = &local_first;
+        status_a = second_status;
+        status_b = first_status;
     } else {
         result.code = AbReplayCode::ValidationFailed;
         result.issues.push_back({ValidationSeverity::Error, "SIDE_MISMATCH",
                                  "Must have exactly one SourceSide::A and one SourceSide::B", {}, {}});
         return result;
     }
+
+    result.a_status = status_a;
+    result.b_status = status_b;
 
     // Both Transport::Udp
     if (meta_a_ptr->source.transport != Transport::Udp ||
@@ -206,17 +215,12 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
         return result;
     }
 
-    // All validation passed — commit
-    impl_->cursor_a = std::make_unique<ValidatedReplayCursor>(std::move(*cursor_a_ptr));
-    impl_->cursor_b = std::make_unique<ValidatedReplayCursor>(std::move(*cursor_b_ptr));
-    impl_->meta_a = *meta_a_ptr;
-    impl_->meta_b = *meta_b_ptr;
-    impl_->has_meta_a = true;
-    impl_->has_meta_b = true;
+    // All metadata validation passed — now get initial lookaheads from LOCAL cursors
+    auto local_cursor_a = std::make_unique<ValidatedReplayCursor>(std::move(*cursor_a_ptr));
+    auto local_cursor_b = std::make_unique<ValidatedReplayCursor>(std::move(*cursor_b_ptr));
 
-    // Get initial lookaheads
-    impl_->lookahead_a = impl_->cursor_a->next();
-    impl_->lookahead_b = impl_->cursor_b->next();
+    auto local_lookahead_a = local_cursor_a->next();
+    auto local_lookahead_b = local_cursor_b->next();
 
     auto is_terminal = [](ReplayCursorCode c) {
         return c == ReplayCursorCode::IoError ||
@@ -224,27 +228,31 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
                c == ReplayCursorCode::InternalInvariantViolation;
     };
 
-    if (is_terminal(impl_->lookahead_a.code)) {
-        impl_->cursor_a.reset();
-        impl_->cursor_b.reset();
-        impl_->has_meta_a = false;
-        impl_->has_meta_b = false;
-        result.code = AbReplayCode::IoError;
+    if (is_terminal(local_lookahead_a.code)) {
+        // Aggregate cursor remains Uninitialized: nothing written to impl_
+        result.code = map_child_code(local_lookahead_a.code);
         result.issues.push_back({ValidationSeverity::Error, "CHILD_A_INIT_ERROR",
                                  "Child cursor A failed during initial read", {}, {}});
         return result;
     }
 
-    if (is_terminal(impl_->lookahead_b.code)) {
-        impl_->cursor_a.reset();
-        impl_->cursor_b.reset();
-        impl_->has_meta_a = false;
-        impl_->has_meta_b = false;
-        result.code = AbReplayCode::IoError;
+    if (is_terminal(local_lookahead_b.code)) {
+        // Aggregate cursor remains Uninitialized: nothing written to impl_
+        result.code = map_child_code(local_lookahead_b.code);
         result.issues.push_back({ValidationSeverity::Error, "CHILD_B_INIT_ERROR",
                                  "Child cursor B failed during initial read", {}, {}});
         return result;
     }
+
+    // Both lookaheads OK — commit everything to impl_
+    impl_->cursor_a = std::move(local_cursor_a);
+    impl_->cursor_b = std::move(local_cursor_b);
+    impl_->meta_a = *meta_a_ptr;
+    impl_->meta_b = *meta_b_ptr;
+    impl_->has_meta_a = true;
+    impl_->has_meta_b = true;
+    impl_->lookahead_a = local_lookahead_a;
+    impl_->lookahead_b = local_lookahead_b;
 
     impl_->a_alive = (impl_->lookahead_a.code == ReplayCursorCode::Ok);
     impl_->b_alive = (impl_->lookahead_b.code == ReplayCursorCode::Ok);
@@ -257,8 +265,6 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
     impl_->has_last_key = false;
 
     result.code = AbReplayCode::Ok;
-    result.a_status = SegmentStatus::ValidFinalized;
-    result.b_status = SegmentStatus::ValidFinalized;
     return result;
 }
 
@@ -293,15 +299,11 @@ AbReplayResult ValidatedAbReplayCursor::next() {
         } else {
             impl_->a_alive = false;
             impl_->a_end = false;
-            if (impl_->lookahead_a.code == ReplayCursorCode::IoError ||
-                impl_->lookahead_a.code == ReplayCursorCode::StreamChanged ||
-                impl_->lookahead_a.code == ReplayCursorCode::InternalInvariantViolation) {
-                impl_->fail(map_child_code(impl_->lookahead_a.code), "CHILD_A_ERROR",
-                            "Child cursor A failed during advance");
-                result.code = impl_->terminal_code;
-                result.side = SourceSide::None;
-                return result;
-            }
+            impl_->fail(map_child_code(impl_->lookahead_a.code), "CHILD_A_ERROR",
+                        "Child cursor A failed during advance");
+            result.code = impl_->terminal_code;
+            result.side = SourceSide::None;
+            return result;
         }
     } else if (impl_->last_issued == SourceSide::B) {
         impl_->lookahead_b = impl_->cursor_b->next();
@@ -314,15 +316,11 @@ AbReplayResult ValidatedAbReplayCursor::next() {
         } else {
             impl_->b_alive = false;
             impl_->b_end = false;
-            if (impl_->lookahead_b.code == ReplayCursorCode::IoError ||
-                impl_->lookahead_b.code == ReplayCursorCode::StreamChanged ||
-                impl_->lookahead_b.code == ReplayCursorCode::InternalInvariantViolation) {
-                impl_->fail(map_child_code(impl_->lookahead_b.code), "CHILD_B_ERROR",
-                            "Child cursor B failed during advance");
-                result.code = impl_->terminal_code;
-                result.side = SourceSide::None;
-                return result;
-            }
+            impl_->fail(map_child_code(impl_->lookahead_b.code), "CHILD_B_ERROR",
+                        "Child cursor B failed during advance");
+            result.code = impl_->terminal_code;
+            result.side = SourceSide::None;
+            return result;
         }
     }
 

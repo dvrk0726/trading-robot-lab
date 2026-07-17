@@ -2035,6 +2035,35 @@ int main() {
     return 0;
 }
 
+// CountingMockFileSystem: returns real file_size for the first N calls,
+// then returns fake_size_ for subsequent calls (deterministic StreamChanged injection).
+struct CountingMockFileSystem : moex_raw::IFileSystem {
+    moex_raw::DefaultFileSystem real_;
+    int file_size_calls_ = 0;
+    int file_size_fail_after_ = -1;  // -1 = never fail
+    std::uint64_t fake_size_ = 0;
+
+    bool exists(const std::string& path) override { return real_.exists(path); }
+    bool rename(const std::string& from, const std::string& to) override {
+        return real_.rename(from, to);
+    }
+    bool remove(const std::string& path) override { return real_.remove(path); }
+    std::uint64_t file_size(const std::string& path, bool& ok) override {
+        file_size_calls_++;
+        if (file_size_fail_after_ >= 0 && file_size_calls_ > file_size_fail_after_) {
+            ok = true;
+            return fake_size_;
+        }
+        return real_.file_size(path, ok);
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_read(const std::string& path) override {
+        return real_.open_read(path);
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_write(const std::string& path) override {
+        return real_.open_write(path);
+    }
+};
+
 // --- B1.2 helper: write records to a segment and return paths ---
 struct RecSpec { std::uint64_t idx; std::uint64_t ts; int payload; };
 static std::vector<std::string> write_segment(
@@ -2653,6 +2682,101 @@ static void b12_not_initialized() {
     CHECK(r.record.record_flags == 0);
 }
 
+// B1.2: default AbReplayResult is fail-closed
+static void b12_default_result() {
+    using namespace moex_raw;
+    AbReplayResult r;
+    CHECK(r.code == AbReplayCode::NotInitialized);
+    CHECK(r.side == SourceSide::None);
+    CHECK(r.record.payload.empty());
+    CHECK(r.record.capture_index == 0);
+    CHECK(r.record.capture_monotonic_ns == 0);
+    CHECK(r.record.record_flags == 0);
+}
+
+// B1.2: transactional initial-lookahead IoError — cursor remains Uninitialized
+static void b12_transactional_init_ioerror() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1}});
+    // FailingFileSystem budget=1: init succeeds (1 open_read), initial next() fails (2nd open_read)
+    FailingFileSystem fs_a(1);
+    ValidatedAbReplayCursor c;
+    auto init = c.initialize(make_stream_set(pa), make_stream_set(pb),
+                             ClockMergeContract::SharedMonotonicTimeline,
+                             &fs_a);
+    CHECK(init.code == AbReplayCode::IoError);
+    CHECK(c.metadata(SourceSide::A) == nullptr);
+    CHECK(c.metadata(SourceSide::B) == nullptr);
+    CHECK(c.state() == AbReplayState::Uninitialized);
+    auto r = c.next();
+    CHECK(r.code == AbReplayCode::NotInitialized);
+    CHECK(r.side == SourceSide::None);
+    CHECK(r.record.payload.empty());
+    // Retry with good filesystem succeeds
+    auto pa2 = write_segment(make_meta_a(), d + "/a2", {{0,0,0xA0}});
+    auto pb2 = write_segment(make_meta_b(), d + "/b2", {{0,50,0xB0}});
+    CHECK(c.initialize(make_stream_set(pa2), make_stream_set(pb2),
+                       ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
+    CHECK(c.state() == AbReplayState::Ready);
+    CHECK(c.metadata(SourceSide::A) != nullptr);
+}
+
+// B1.2: initial StreamChanged mapping — exact code preserved, not hardcoded IoError
+static void b12_init_stream_changed() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    auto pa = write_segment(make_meta_a(), d + "/a", {{0,0,0xA0},{1,100,0xA1}});
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1}});
+    // CountingMockFileSystem: returns real size for first 3 file_size calls (A init
+    // calls file_size in validate_stream_set + validate_segment + preflight), then
+    // returns 0 for subsequent calls (A initial next() -> StreamChanged).
+    CountingMockFileSystem mock_fs;
+    mock_fs.file_size_fail_after_ = 3;
+    mock_fs.fake_size_ = 0;
+    ValidatedAbReplayCursor c;
+    auto init = c.initialize(make_stream_set(pa), make_stream_set(pb),
+                             ClockMergeContract::SharedMonotonicTimeline,
+                             &mock_fs);
+    CHECK(init.code == AbReplayCode::StreamChanged);
+    CHECK(c.metadata(SourceSide::A) == nullptr);
+    CHECK(c.metadata(SourceSide::B) == nullptr);
+    CHECK(c.state() == AbReplayState::Uninitialized);
+    auto r = c.next();
+    CHECK(r.code == AbReplayCode::NotInitialized);
+}
+
+// B1.2: stable Failed — runtime child failure, then next() returns same terminal code
+static void b12_stable_failed_runtime() {
+    using namespace moex_raw;
+    auto d = temp_dir();
+    // A has 2 segments (max_records=1), B has 1 segment
+    auto pa = write_multi_segment(make_meta_a(), d + "/a",
+                                  {{0,0,0xA0},{1,100,0xA1}}, 1);
+    auto pb = write_segment(make_meta_b(), d + "/b", {{0,50,0xB0},{1,150,0xB1}});
+    FailingFileSystem fs_a(5);
+    ValidatedAbReplayCursor c;
+    CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb),
+                       ClockMergeContract::SharedMonotonicTimeline,
+                       &fs_a).code == AbReplayCode::Ok);
+    c.next(); // A(ts=0) - consumes seg0
+    auto r = c.next(); // advance A -> seg1 -> open fails -> IoError
+    CHECK(r.code == AbReplayCode::IoError);
+    CHECK(r.side == SourceSide::None);
+    CHECK(r.record.payload.empty());
+    CHECK(c.state() == AbReplayState::Failed);
+    CHECK(c.terminal_code() == AbReplayCode::IoError);
+    // Stable: repeated next() returns same terminal code, SourceSide::None, empty record
+    for (int i = 0; i < 3; ++i) {
+        auto ri = c.next();
+        CHECK(ri.code == AbReplayCode::IoError);
+        CHECK(ri.side == SourceSide::None);
+        CHECK(ri.record.payload.empty());
+    }
+    CHECK(c.terminal_code() == AbReplayCode::IoError);
+}
+
 static void run_b12_tests() {
     b12_not_initialized();
     b12_a_before_b();
@@ -2689,4 +2813,8 @@ static void run_b12_tests() {
     b12_endpoint_diff_ok();
     b12_metadata();
     b12_merge_key_guard();
+    b12_default_result();
+    b12_transactional_init_ioerror();
+    b12_init_stream_changed();
+    b12_stable_failed_runtime();
 }

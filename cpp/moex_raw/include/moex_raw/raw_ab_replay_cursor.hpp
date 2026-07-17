@@ -39,7 +39,7 @@ struct AbReplayInitResult {
 };
 
 struct AbReplayResult {
-    AbReplayCode code = AbReplayCode::Ok;
+    AbReplayCode code = AbReplayCode::NotInitialized;
     SourceSide side = SourceSide::None;
     RawPacketRecordView record;
 };
@@ -53,8 +53,8 @@ public:
     ValidatedAbReplayCursor(const ValidatedAbReplayCursor&) = delete;
     ValidatedAbReplayCursor& operator=(const ValidatedAbReplayCursor&) = delete;
 
-    AbReplayState state() const;
-    AbReplayCode terminal_code() const;
+    AbReplayState state() const noexcept;
+    AbReplayCode terminal_code() const noexcept;
     const std::vector<RawValidationIssue>& issues() const;
 
     AbReplayInitResult initialize(
