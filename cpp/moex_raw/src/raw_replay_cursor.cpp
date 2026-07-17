@@ -93,7 +93,10 @@ void ValidatedReplayCursor::fail(ReplayCursorCode code,
 ReplayCursorInitResult ValidatedReplayCursor::initialize(
     const StreamSetInfo& stream_set, IFileSystem* fs) {
 
+    // Safe defaults: fail-closed. All success paths set these explicitly.
     ReplayCursorInitResult result;
+    result.code = ReplayCursorCode::ValidationFailed;
+    result.segment_status = SegmentStatus::Corrupt;
 
     if (ever_initialized_) {
         result.code = ReplayCursorCode::AlreadyInitialized;
@@ -101,29 +104,16 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
         return result;
     }
 
-    // Reset for fresh attempt (covers Uninitialized and previous Failed)
-    state_ = ReplayCursorState::Uninitialized;
-    terminal_code_ = ReplayCursorCode::Ok;
-    issues_.clear();
-    preflight_.clear();
-    current_segment_ = 0;
-    current_pos_ = 0;
-    data_end_ = 0;
-    next_expected_capture_index_ = 0;
-    last_capture_monotonic_ns_ = 0;
-    first_record_ = true;
-    current_file_.reset();
-
-    fs_ = fs ? fs : &default_fs_;
+    // Local issues — committed to issues_ only on full success.
+    std::vector<RawValidationIssue> local_issues;
+    IFileSystem* local_fs = fs ? fs : &default_fs_;
 
     // Build sorted path/index pairs
     if (stream_set.segment_paths.size() != stream_set.segment_indexes.size() ||
         stream_set.segment_paths.empty()) {
-        add_issue(issues_, ValidationSeverity::Error, "INVALID_STREAM_SET",
+        add_issue(local_issues, ValidationSeverity::Error, "INVALID_STREAM_SET",
                   "StreamSetInfo paths/indexes mismatch or empty");
-        result.code = ReplayCursorCode::ValidationFailed;
-        result.segment_status = SegmentStatus::Corrupt;
-        result.issues = issues_;
+        result.issues = local_issues;
         return result;
     }
 
@@ -147,43 +137,33 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
         ParsedFilename pf;
         auto fn = std::filesystem::path(indexed[i].first).filename().string();
         if (!parse_canonical_filename(fn, pf)) {
-            add_issue(issues_, ValidationSeverity::Error, "INVALID_FILENAME",
+            add_issue(local_issues, ValidationSeverity::Error, "INVALID_FILENAME",
                       "Cannot parse canonical filename: " + fn);
-            result.code = ReplayCursorCode::ValidationFailed;
-            result.segment_status = SegmentStatus::Corrupt;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
         if (pf.segment_index != indexed[i].second) {
-            add_issue(issues_, ValidationSeverity::Error, "INDEX_MISMATCH",
+            add_issue(local_issues, ValidationSeverity::Error, "INDEX_MISMATCH",
                       "Filename segment_index does not match declared index");
-            result.code = ReplayCursorCode::ValidationFailed;
-            result.segment_status = SegmentStatus::Corrupt;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
         if (std::memcmp(pf.session_id, stream_set.session_id, 16) != 0) {
-            add_issue(issues_, ValidationSeverity::Error, "IDENTITY_MISMATCH",
+            add_issue(local_issues, ValidationSeverity::Error, "IDENTITY_MISMATCH",
                       "Filename session_id does not match StreamSetInfo");
-            result.code = ReplayCursorCode::ValidationFailed;
-            result.segment_status = SegmentStatus::Corrupt;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
         if (pf.source_id != stream_set.source_id) {
-            add_issue(issues_, ValidationSeverity::Error, "IDENTITY_MISMATCH",
+            add_issue(local_issues, ValidationSeverity::Error, "IDENTITY_MISMATCH",
                       "Filename source_id does not match StreamSetInfo");
-            result.code = ReplayCursorCode::ValidationFailed;
-            result.segment_status = SegmentStatus::Corrupt;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
         if (pf.channel_id != stream_set.channel_id) {
-            add_issue(issues_, ValidationSeverity::Error, "IDENTITY_MISMATCH",
+            add_issue(local_issues, ValidationSeverity::Error, "IDENTITY_MISMATCH",
                       "Filename channel_id does not match StreamSetInfo");
-            result.code = ReplayCursorCode::ValidationFailed;
-            result.segment_status = SegmentStatus::Corrupt;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
     }
@@ -191,15 +171,27 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
     // Validate stream set
     std::vector<RawSegmentMetadata> metas;
     std::vector<RawFooter> footers;
-    auto status = validate_stream_set(sorted_paths, metas, footers, issues_,
-                                      nullptr, nullptr, fs_);
+    auto status = validate_stream_set(sorted_paths, metas, footers, local_issues,
+                                      nullptr, nullptr, local_fs);
 
     if (status != SegmentStatus::ValidFinalized) {
         result.code = (status == SegmentStatus::IoError)
                           ? ReplayCursorCode::IoError
                           : ReplayCursorCode::ValidationFailed;
         result.segment_status = status;
-        result.issues = issues_;
+        result.issues = local_issues;
+        return result;
+    }
+
+    // Internal invariant check: sizes must be consistent and non-empty.
+    // Access metas[0] only after this passes.
+    if (metas.empty() || footers.size() != metas.size() ||
+        metas.size() != indexed.size()) {
+        add_issue(local_issues, ValidationSeverity::Error, "INTERNAL_INVARIANT_VIOLATION",
+                  "validate_stream_set returned inconsistent metas/footers/indexed sizes");
+        result.code = ReplayCursorCode::InternalInvariantViolation;
+        result.segment_status = SegmentStatus::Corrupt;
+        result.issues = local_issues;
         return result;
     }
 
@@ -207,25 +199,15 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
     if (std::memcmp(metas[0].session.session_id, stream_set.session_id, 16) != 0 ||
         metas[0].source.source_id != stream_set.source_id ||
         metas[0].source.channel_id != stream_set.channel_id) {
-        add_issue(issues_, ValidationSeverity::Error, "METADATA_IDENTITY_MISMATCH",
+        add_issue(local_issues, ValidationSeverity::Error, "METADATA_IDENTITY_MISMATCH",
                   "Validated metadata does not match StreamSetInfo identity");
-        result.code = ReplayCursorCode::ValidationFailed;
-        result.segment_status = SegmentStatus::Corrupt;
-        result.issues = issues_;
-        return result;
-    }
-
-    if (metas.empty()) {
-        add_issue(issues_, ValidationSeverity::Error, "EMPTY_STREAM",
-                  "No segments in stream set");
-        result.code = ReplayCursorCode::ValidationFailed;
-        result.segment_status = SegmentStatus::Corrupt;
-        result.issues = issues_;
+        result.issues = local_issues;
         return result;
     }
 
     // Build immutable preflight snapshots
-    preflight_.reserve(indexed.size());
+    std::vector<SegmentPreflight> local_preflight;
+    local_preflight.reserve(indexed.size());
     for (std::size_t i = 0; i < indexed.size(); ++i) {
         SegmentPreflight sp;
         sp.path = indexed[i].first;
@@ -233,63 +215,59 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
 
         // Get file size
         bool size_ok = false;
-        sp.file_size = fs_->file_size(sp.path, size_ok);
+        sp.file_size = local_fs->file_size(sp.path, size_ok);
         if (!size_ok) {
-            add_issue(issues_, ValidationSeverity::Error, "IO_ERROR",
+            add_issue(local_issues, ValidationSeverity::Error, "IO_ERROR",
                       "Cannot stat segment file during preflight");
             result.code = ReplayCursorCode::IoError;
             result.segment_status = SegmentStatus::IoError;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
 
         // Get header size from file
-        auto fh = fs_->open_read(sp.path);
+        auto fh = local_fs->open_read(sp.path);
         if (!fh) {
-            add_issue(issues_, ValidationSeverity::Error, "IO_ERROR",
+            add_issue(local_issues, ValidationSeverity::Error, "IO_ERROR",
                       "Cannot open segment for preflight header read");
             result.code = ReplayCursorCode::IoError;
             result.segment_status = SegmentStatus::IoError;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
 
         std::uint8_t preamble[14];
         if (fh->read(preamble, 14) != 14) {
-            add_issue(issues_, ValidationSeverity::Error, "IO_ERROR",
+            add_issue(local_issues, ValidationSeverity::Error, "IO_ERROR",
                       "Cannot read header preamble during preflight");
             result.code = ReplayCursorCode::IoError;
             result.segment_status = SegmentStatus::IoError;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
 
         if (std::memcmp(preamble, kMagicRaw, 8) != 0) {
-            add_issue(issues_, ValidationSeverity::Error, "WRONG_MAGIC",
+            add_issue(local_issues, ValidationSeverity::Error, "WRONG_MAGIC",
                       "Wrong segment magic during preflight");
-            result.code = ReplayCursorCode::ValidationFailed;
-            result.segment_status = SegmentStatus::Corrupt;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
 
         std::uint16_t version = read_u16_le(preamble + 8);
         if (version != kFormatVersion) {
-            add_issue(issues_, ValidationSeverity::Error, "UNSUPPORTED_VERSION",
+            add_issue(local_issues, ValidationSeverity::Error, "UNSUPPORTED_VERSION",
                       "Unsupported format version during preflight");
             result.code = ReplayCursorCode::ValidationFailed;
             result.segment_status = SegmentStatus::Unsupported;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
 
         std::size_t hsize = read_u32_le(preamble + 10);
         if (hsize > kMaxHeaderSize || hsize > sp.file_size) {
-            add_issue(issues_, ValidationSeverity::Error, "INVALID_HEADER_SIZE",
+            add_issue(local_issues, ValidationSeverity::Error, "INVALID_HEADER_SIZE",
                       "Invalid header size during preflight");
-            result.code = ReplayCursorCode::ValidationFailed;
-            result.segment_status = SegmentStatus::Corrupt;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
         sp.header_size = hsize;
@@ -300,19 +278,30 @@ ReplayCursorInitResult ValidatedReplayCursor::initialize(
 
         // Verify metadata segment_index matches declared index
         if (metas[i].segment_index != indexed[i].second) {
-            add_issue(issues_, ValidationSeverity::Error, "SEGMENT_INDEX_MISMATCH",
+            add_issue(local_issues, ValidationSeverity::Error, "SEGMENT_INDEX_MISMATCH",
                       "Validated segment_index does not match declared index");
-            result.code = ReplayCursorCode::ValidationFailed;
-            result.segment_status = SegmentStatus::Corrupt;
-            result.issues = issues_;
+            result.issues = local_issues;
             return result;
         }
 
-        preflight_.push_back(std::move(sp));
+        local_preflight.push_back(std::move(sp));
     }
 
-    // Allocate bounded record buffer (once)
+    // --- Commit: all validation passed ---
+
+    state_ = ReplayCursorState::Uninitialized;
+    terminal_code_ = ReplayCursorCode::Ok;
+    issues_ = std::move(local_issues);
+    preflight_ = std::move(local_preflight);
     record_buf_.resize(static_cast<std::size_t>(kRecordHeaderSize) + kMaxPayloadSize + 4);
+    current_segment_ = 0;
+    current_pos_ = 0;
+    data_end_ = 0;
+    next_expected_capture_index_ = 0;
+    last_capture_monotonic_ns_ = 0;
+    first_record_ = true;
+    current_file_.reset();
+    fs_ = local_fs;
 
     state_ = ReplayCursorState::Ready;
     ever_initialized_ = true;

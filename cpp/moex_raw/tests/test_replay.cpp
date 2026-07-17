@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <cstring>
 #include <fstream>
+#include <set>
 
 namespace fs = std::filesystem;
 
@@ -122,6 +123,55 @@ struct MockFileSystem : moex_raw::IFileSystem {
         mock->fail_read_ = fail_read_;
         mock->fail_seek_ = fail_seek_;
         return mock;
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_write(const std::string& path) override {
+        return real_.open_write(path);
+    }
+};
+
+struct PathAwareMockFileHandle : moex_raw::IFileHandle {
+    moex_raw::DefaultFileHandle* real_ = nullptr;
+    bool fail_read_ = false;
+    bool fail_seek_ = false;
+
+    explicit PathAwareMockFileHandle(moex_raw::DefaultFileHandle* r) : real_(r) {}
+    ~PathAwareMockFileHandle() override { delete real_; }
+
+    std::size_t read(void* buf, std::size_t size) override {
+        if (fail_read_) return 0;
+        return real_->read(buf, size);
+    }
+    std::size_t write(const void* buf, std::size_t size) override {
+        return real_->write(buf, size);
+    }
+    bool seek(std::int64_t offset, int origin) override {
+        if (fail_seek_) return false;
+        return real_->seek(offset, origin);
+    }
+    bool flush() override { return real_->flush(); }
+    bool close() override { return real_->close(); }
+};
+
+struct PathAwareMockFileSystem : moex_raw::IFileSystem {
+    moex_raw::DefaultFileSystem real_;
+    std::set<std::string> fail_file_size_;
+    std::set<std::string> fail_open_;
+
+    bool exists(const std::string& path) override { return real_.exists(path); }
+    bool rename(const std::string& from, const std::string& to) override {
+        return real_.rename(from, to);
+    }
+    bool remove(const std::string& path) override { return real_.remove(path); }
+    std::uint64_t file_size(const std::string& path, bool& ok) override {
+        if (fail_file_size_.count(path)) { ok = false; return 0; }
+        return real_.file_size(path, ok);
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_read(const std::string& path) override {
+        if (fail_open_.count(path)) return nullptr;
+        auto real_handle = real_.open_read(path);
+        if (!real_handle) return nullptr;
+        auto* raw = static_cast<moex_raw::DefaultFileHandle*>(real_handle.release());
+        return std::make_unique<PathAwareMockFileHandle>(raw);
     }
     std::unique_ptr<moex_raw::IFileHandle> open_write(const std::string& path) override {
         return real_.open_write(path);
@@ -1869,6 +1919,74 @@ int main() {
         auto init2 = cursor.initialize(ss);
         CHECK(init2.code == ReplayCursorCode::AlreadyInitialized);
         CHECK(init2.segment_status == SegmentStatus::ValidFinalized);
+    }
+
+    // Cursor: default ReplayCursorInitResult has fail-closed values
+    {
+        ReplayCursorInitResult default_result;
+        CHECK(default_result.code == ReplayCursorCode::ValidationFailed);
+        CHECK(default_result.segment_status == SegmentStatus::Corrupt);
+        CHECK(default_result.issues.empty());
+    }
+
+    // Cursor: two segments, I/O failure on second segment preflight, then retry succeeds
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentRotationPolicy pol;
+        pol.max_records_per_segment = 2;
+        RawSegmentWriter writer(meta, dir, pol);
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 4; ++i) {
+            RawPacketRecord rec;
+            rec.record_flags = kRecordFlagUtcValid;
+            rec.capture_index = i;
+            rec.capture_utc_ns = 1000 + i;
+            rec.capture_monotonic_ns = i * 100;
+            rec.payload = {static_cast<std::uint8_t>(i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        CHECK(paths.size() == 2);
+        auto ss = make_stream_set(paths);
+
+        // Validate with real filesystem first (both segments OK)
+        PathAwareMockFileSystem mock_fs;
+        ValidatedReplayCursor cursor;
+
+        // Fail file_size on second segment during preflight
+        mock_fs.fail_file_size_.insert(paths[1]);
+
+        auto init = cursor.initialize(ss, &mock_fs);
+        CHECK(init.code == ReplayCursorCode::IoError);
+        CHECK(init.segment_status == SegmentStatus::IoError);
+        CHECK(!init.issues.empty());
+
+        // Fail-closed: cursor remains Uninitialized
+        CHECK(cursor.state() == ReplayCursorState::Uninitialized);
+        CHECK(cursor.stream_metadata() == nullptr);
+
+        // next() returns NotInitialized
+        auto next_result = cursor.next();
+        CHECK(next_result.code == ReplayCursorCode::NotInitialized);
+
+        // Retry with fixed filesystem succeeds
+        PathAwareMockFileSystem good_fs;
+        auto init2 = cursor.initialize(ss, &good_fs);
+        CHECK(init2.code == ReplayCursorCode::Ok);
+        CHECK(init2.segment_status == SegmentStatus::ValidFinalized);
+        CHECK(cursor.state() == ReplayCursorState::Ready);
+        CHECK(cursor.stream_metadata() != nullptr);
+
+        std::uint64_t count = 0;
+        while (cursor.next().code == ReplayCursorCode::Ok) {
+            count++;
+        }
+        CHECK(count == 4);
+        CHECK(cursor.state() == ReplayCursorState::End);
     }
 
     std::cout << "test_replay: ALL PASSED\n";
