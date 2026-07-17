@@ -20,6 +20,20 @@
 
 namespace fs = std::filesystem;
 
+namespace moex_raw {
+struct ValidatedAbReplayCursorTestAccess {
+    static AbReplayCode classify_child_init_code(ReplayCursorCode code) {
+        return ValidatedAbReplayCursor::classify_child_init_code(code);
+    }
+    static AbReplayCode classify_child_code(ReplayCursorCode code) {
+        return ValidatedAbReplayCursor::classify_child_code(code);
+    }
+    static bool is_valid_initial_code(ReplayCursorCode code) {
+        return ValidatedAbReplayCursor::is_valid_initial_code(code);
+    }
+};
+}  // namespace moex_raw
+
 static std::string temp_dir() {
     static int counter = 0;
     auto base = fs::temp_directory_path() / "moex_raw_test";
@@ -2794,9 +2808,9 @@ static void b12_code_classification_table() {
     };
 
     for (const auto& r : table) {
-        CHECK(ValidatedAbReplayCursor::TestAccess::is_valid_initial_code(r.code) == r.valid);
-        CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_code(r.code) == r.cc);
-        CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(r.code) == r.cci);
+        CHECK(ValidatedAbReplayCursorTestAccess::is_valid_initial_code(r.code) == r.valid);
+        CHECK(ValidatedAbReplayCursorTestAccess::classify_child_code(r.code) == r.cc);
+        CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(r.code) == r.cci);
     }
 }
 
@@ -2804,15 +2818,15 @@ static void b12_code_classification_table() {
 static void b12_child_init_iiv_mapping() {
     using namespace moex_raw;
     // Exact mappings
-    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::ValidationFailed) == AbReplayCode::ValidationFailed);
-    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::IoError) == AbReplayCode::IoError);
-    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::InternalInvariantViolation) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(ReplayCursorCode::ValidationFailed) == AbReplayCode::ValidationFailed);
+    CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(ReplayCursorCode::IoError) == AbReplayCode::IoError);
+    CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(ReplayCursorCode::InternalInvariantViolation) == AbReplayCode::InternalInvariantViolation);
     // All unexpected codes map to InternalInvariantViolation
-    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::Ok) == AbReplayCode::InternalInvariantViolation);
-    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::End) == AbReplayCode::InternalInvariantViolation);
-    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::NotInitialized) == AbReplayCode::InternalInvariantViolation);
-    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::AlreadyInitialized) == AbReplayCode::InternalInvariantViolation);
-    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::StreamChanged) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(ReplayCursorCode::Ok) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(ReplayCursorCode::End) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(ReplayCursorCode::NotInitialized) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(ReplayCursorCode::AlreadyInitialized) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursorTestAccess::classify_child_init_code(ReplayCursorCode::StreamChanged) == AbReplayCode::InternalInvariantViolation);
 }
 
 static void run_b12_tests() {

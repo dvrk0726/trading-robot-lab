@@ -68,14 +68,8 @@ public:
 
     const RawSegmentMetadata* metadata(SourceSide side) const noexcept;
 
-    // Test-only: classification logic, no mutation, no Impl access
-    struct TestAccess {
-        static AbReplayCode classify_child_init_code(ReplayCursorCode code);
-        static AbReplayCode classify_child_code(ReplayCursorCode code);
-        static bool is_valid_initial_code(ReplayCursorCode code);
-    };
-
 private:
+    friend struct ValidatedAbReplayCursorTestAccess;
     static AbReplayCode classify_child_init_code(ReplayCursorCode code);
     static AbReplayCode classify_child_code(ReplayCursorCode code);
     static bool is_valid_initial_code(ReplayCursorCode code);

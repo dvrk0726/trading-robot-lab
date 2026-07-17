@@ -27,18 +27,6 @@ bool ValidatedAbReplayCursor::is_valid_initial_code(ReplayCursorCode code) {
     return code == ReplayCursorCode::Ok || code == ReplayCursorCode::End;
 }
 
-AbReplayCode ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode code) {
-    return ValidatedAbReplayCursor::classify_child_init_code(code);
-}
-
-AbReplayCode ValidatedAbReplayCursor::TestAccess::classify_child_code(ReplayCursorCode code) {
-    return ValidatedAbReplayCursor::classify_child_code(code);
-}
-
-bool ValidatedAbReplayCursor::TestAccess::is_valid_initial_code(ReplayCursorCode code) {
-    return ValidatedAbReplayCursor::is_valid_initial_code(code);
-}
-
 // Merge key: (capture_monotonic_ns, side_rank, capture_index)
 // side_rank: A=0, B=1
 using MergeKey = std::tuple<std::uint64_t, std::uint8_t, std::uint64_t>;
