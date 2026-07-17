@@ -27,6 +27,7 @@ jobs:
       run_python: ${{ steps.route.outputs.run_python }}
       run_fast: ${{ steps.route.outputs.run_fast }}
       run_raw: ${{ steps.route.outputs.run_raw }}
+      run_pipeline: ${{ steps.route.outputs.run_pipeline }}
       full_matrix: ${{ steps.route.outputs.full_matrix }}
     steps:
       - name: Checkout
@@ -376,3 +377,91 @@ jobs:
 
       - name: Run all RT-2 tests
         run: ctest --test-dir build/moex_raw -C Release --output-on-failure
+
+  cpp-moex-spectra-pipeline-windows:
+    name: "C++ MOEX SPECTRA Pipeline Windows/MSVC (1 test)"
+    needs: repository-hygiene
+    if: needs.repository-hygiene.outputs.run_pipeline == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure pipeline with MSVC
+        run: cmake -S cpp/moex_spectra_pipeline -B build/pipeline -A x64
+
+      - name: Build pipeline and tests
+        run: cmake --build build/pipeline --config Release --parallel 2
+
+      - name: Verify exact test inventory (1 test)
+        run: |
+          $expected = @(
+            'test_ordered_decode'
+          )
+          $output = ctest --test-dir build/pipeline -C Release -N
+          $names = ($output | Select-String '^\s*Test\s+#\d+:\s+(.+?)\s*$').ForEach({ $_.Matches.Groups[1].Value })
+          foreach ($name in $expected) {
+            if ($name -notin $names) {
+              throw "Pipeline test '$name' not found in CTest inventory"
+            }
+          }
+          Write-Host "Pipeline inventory verified: $($expected.Count) tests present"
+
+      - name: Verify total test count (1)
+        run: |
+          $output = ctest --test-dir build/pipeline -C Release -N
+          $line = $output | Select-String '^Total Tests:'
+          $count = [int](($line.Line -split ':', 2)[1].Trim())
+          Write-Host "CTest inventory: $count (expected 1)"
+          if ($count -ne 1) {
+            throw "Expected 1 pipeline test, found $count"
+          }
+
+      - name: Run all pipeline tests
+        run: ctest --test-dir build/pipeline -C Release --output-on-failure
+
+  cpp-moex-spectra-pipeline-linux:
+    name: "C++ MOEX SPECTRA Pipeline Linux/GCC (1 test)"
+    needs: repository-hygiene
+    if: needs.repository-hygiene.outputs.run_pipeline == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure pipeline with GCC
+        run: cmake -S cpp/moex_spectra_pipeline -B build/pipeline -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build pipeline and tests
+        run: cmake --build build/pipeline --config Release --parallel 2
+
+      - name: Verify exact test inventory (1 test)
+        run: |
+          for name in test_ordered_decode; do
+            if ! ctest --test-dir build/pipeline -C Release -N 2>&1 | grep -q "$name"; then
+              echo "Pipeline test '$name' not found in CTest inventory"
+              exit 1
+            fi
+          done
+          echo "Pipeline inventory verified: 1 test present"
+
+      - name: Verify total test count (1)
+        run: |
+          count=$(ctest --test-dir build/pipeline -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
+          echo "CTest inventory: $count (expected 1)"
+          if [ "$count" -ne 1 ]; then
+            echo "Expected 1 pipeline test, found $count"
+            exit 1
+          fi
+
+      - name: Run all pipeline tests
+        run: ctest --test-dir build/pipeline -C Release --output-on-failure

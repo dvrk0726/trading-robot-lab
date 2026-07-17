@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 project(moex_fast VERSION 0.1.0 LANGUAGES CXX)
 
+# --- Options (default ON for standalone builds; consumers may force OFF) ---
+option(MOEX_FAST_BUILD_CLI "Build moex_fast CLI executables" ON)
+option(MOEX_FAST_BUILD_TESTS "Build moex_fast tests" ON)
+option(MOEX_FAST_BUILD_BENCHMARK "Build moex_fast benchmarks" ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -44,12 +49,16 @@ target_include_directories(moex_decode PUBLIC include)
 target_link_libraries(moex_decode PUBLIC pugixml)
 
 # --- RT-1 Inspector CLI ---
-add_executable(moex-fast-inspect src/main.cpp)
-target_link_libraries(moex-fast-inspect PRIVATE moex_inspect)
+if(MOEX_FAST_BUILD_CLI)
+    add_executable(moex-fast-inspect src/main.cpp)
+    target_link_libraries(moex-fast-inspect PRIVATE moex_inspect)
+endif()
 
 # --- RT-3 Decoder CLI ---
-add_executable(moex-fast-decode src/decode_main.cpp)
-target_link_libraries(moex-fast-decode PRIVATE moex_decode)
+if(MOEX_FAST_BUILD_CLI)
+    add_executable(moex-fast-decode src/decode_main.cpp)
+    target_link_libraries(moex-fast-decode PRIVATE moex_decode)
+endif()
 
 # --- RT-4 SPECTRA transport / Gate A (no dependency on moex_decode or pugixml) ---
 add_library(moex_spectra_transport STATIC
@@ -59,6 +68,7 @@ add_library(moex_spectra_transport STATIC
 target_include_directories(moex_spectra_transport PUBLIC include)
 
 # --- Tests ---
+if(MOEX_FAST_BUILD_TESTS)
 enable_testing()
 
 set(MOEX_FAST_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -84,12 +94,14 @@ target_link_libraries(test_resource_safety PRIVATE moex_inspect)
 add_test(NAME test_resource_safety COMMAND test_resource_safety WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
 
 # CLI integration tests need to find the moex-fast-inspect binary.
-add_executable(test_cli tests/test_cli.cpp)
-target_link_libraries(test_cli PRIVATE moex_inspect)
-target_compile_definitions(test_cli PRIVATE
-    MOEX_FAST_INSPECT_PATH="$<TARGET_FILE:moex-fast-inspect>"
-)
-add_test(NAME test_cli COMMAND test_cli WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+if(MOEX_FAST_BUILD_CLI)
+    add_executable(test_cli tests/test_cli.cpp)
+    target_link_libraries(test_cli PRIVATE moex_inspect)
+    target_compile_definitions(test_cli PRIVATE
+        MOEX_FAST_INSPECT_PATH="$<TARGET_FILE:moex-fast-inspect>"
+    )
+    add_test(NAME test_cli COMMAND test_cli WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+endif()
 
 # --- RT-3 Decoder Tests ---
 add_executable(test_decoder_primitives tests/test_decoder_primitives.cpp)
@@ -116,12 +128,14 @@ add_executable(test_decoder_rollback tests/test_decoder_rollback.cpp)
 target_link_libraries(test_decoder_rollback PRIVATE moex_decode)
 add_test(NAME test_decoder_rollback COMMAND test_decoder_rollback WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
 
-add_executable(test_decoder_cli tests/test_decoder_cli.cpp)
-target_link_libraries(test_decoder_cli PRIVATE moex_decode)
-target_compile_definitions(test_decoder_cli PRIVATE
-    MOEX_FAST_DECODE_PATH="$<TARGET_FILE:moex-fast-decode>"
-)
-add_test(NAME test_decoder_cli COMMAND test_decoder_cli WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+if(MOEX_FAST_BUILD_CLI)
+    add_executable(test_decoder_cli tests/test_decoder_cli.cpp)
+    target_link_libraries(test_decoder_cli PRIVATE moex_decode)
+    target_compile_definitions(test_decoder_cli PRIVATE
+        MOEX_FAST_DECODE_PATH="$<TARGET_FILE:moex-fast-decode>"
+    )
+    add_test(NAME test_decoder_cli COMMAND test_decoder_cli WORKING_DIRECTORY ${MOEX_FAST_TEST_DIR})
+endif()
 
 add_executable(test_decoder_limits tests/test_decoder_limits.cpp)
 target_link_libraries(test_decoder_limits PRIVATE moex_decode)
@@ -147,6 +161,10 @@ add_executable(test_spectra_gate_a tests/test_spectra_gate_a.cpp)
 target_link_libraries(test_spectra_gate_a PRIVATE moex_spectra_transport)
 add_test(NAME test_spectra_gate_a COMMAND test_spectra_gate_a)
 
+endif() # MOEX_FAST_BUILD_TESTS
+
 # --- RT-4 Gate A Benchmark (not a CTest) ---
-add_executable(bench_spectra_gate_a bench/bench_spectra_gate_a.cpp)
-target_link_libraries(bench_spectra_gate_a PRIVATE moex_spectra_transport)
+if(MOEX_FAST_BUILD_BENCHMARK)
+    add_executable(bench_spectra_gate_a bench/bench_spectra_gate_a.cpp)
+    target_link_libraries(bench_spectra_gate_a PRIVATE moex_spectra_transport)
+endif()
