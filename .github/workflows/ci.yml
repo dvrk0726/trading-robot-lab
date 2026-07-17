@@ -379,7 +379,7 @@ jobs:
         run: ctest --test-dir build/moex_raw -C Release --output-on-failure
 
   cpp-moex-spectra-pipeline-windows:
-    name: "C++ MOEX SPECTRA Pipeline Windows/MSVC (1 test)"
+    name: "C++ MOEX SPECTRA Pipeline Windows/MSVC (2 tests)"
     needs: repository-hygiene
     if: needs.repository-hygiene.outputs.run_pipeline == 'true'
     runs-on: windows-latest
@@ -399,10 +399,11 @@ jobs:
       - name: Build pipeline and tests
         run: cmake --build build/pipeline --config Release --parallel 2
 
-      - name: Verify exact test inventory (1 test)
+      - name: Verify exact test inventory (2 tests)
         run: |
           $expected = @(
-            'test_ordered_decode'
+            'test_ordered_decode',
+            'test_normal_replay_pipeline'
           )
           $output = ctest --test-dir build/pipeline -C Release -N
           $names = ($output | Select-String '^\s*Test\s+#\d+:\s+(.+?)\s*$').ForEach({ $_.Matches.Groups[1].Value })
@@ -413,21 +414,21 @@ jobs:
           }
           Write-Host "Pipeline inventory verified: $($expected.Count) tests present"
 
-      - name: Verify total test count (1)
+      - name: Verify total test count (2)
         run: |
           $output = ctest --test-dir build/pipeline -C Release -N
           $line = $output | Select-String '^Total Tests:'
           $count = [int](($line.Line -split ':', 2)[1].Trim())
-          Write-Host "CTest inventory: $count (expected 1)"
-          if ($count -ne 1) {
-            throw "Expected 1 pipeline test, found $count"
+          Write-Host "CTest inventory: $count (expected 2)"
+          if ($count -ne 2) {
+            throw "Expected 2 pipeline tests, found $count"
           }
 
       - name: Run all pipeline tests
         run: ctest --test-dir build/pipeline -C Release --output-on-failure
 
   cpp-moex-spectra-pipeline-linux:
-    name: "C++ MOEX SPECTRA Pipeline Linux/GCC (1 test)"
+    name: "C++ MOEX SPECTRA Pipeline Linux/GCC (2 tests)"
     needs: repository-hygiene
     if: needs.repository-hygiene.outputs.run_pipeline == 'true'
     runs-on: ubuntu-latest
@@ -444,22 +445,22 @@ jobs:
       - name: Build pipeline and tests
         run: cmake --build build/pipeline --config Release --parallel 2
 
-      - name: Verify exact test inventory (1 test)
+      - name: Verify exact test inventory (2 tests)
         run: |
-          for name in test_ordered_decode; do
+          for name in test_ordered_decode test_normal_replay_pipeline; do
             if ! ctest --test-dir build/pipeline -C Release -N 2>&1 | grep -q "$name"; then
               echo "Pipeline test '$name' not found in CTest inventory"
               exit 1
             fi
           done
-          echo "Pipeline inventory verified: 1 test present"
+          echo "Pipeline inventory verified: 2 tests present"
 
-      - name: Verify total test count (1)
+      - name: Verify total test count (2)
         run: |
           count=$(ctest --test-dir build/pipeline -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
-          echo "CTest inventory: $count (expected 1)"
-          if [ "$count" -ne 1 ]; then
-            echo "Expected 1 pipeline test, found $count"
+          echo "CTest inventory: $count (expected 2)"
+          if [ "$count" -ne 2 ]; then
+            echo "Expected 2 pipeline tests, found $count"
             exit 1
           fi
 
