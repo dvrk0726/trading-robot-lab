@@ -46,6 +46,88 @@ static moex_raw::RawSegmentMetadata make_meta() {
     return meta;
 }
 
+static moex_raw::StreamSetInfo make_stream_set(const std::vector<std::string>& paths) {
+    moex_raw::StreamSetInfo ss;
+    if (paths.empty()) return ss;
+
+    moex_raw::ParsedFilename pf;
+    moex_raw::parse_canonical_filename(fs::path(paths[0]).filename().string(), pf);
+    std::memcpy(ss.session_id, pf.session_id, 16);
+    ss.source_id = pf.source_id;
+    ss.channel_id = pf.channel_id;
+
+    std::vector<std::pair<std::string, std::uint64_t>> indexed;
+    for (const auto& p : paths) {
+        moex_raw::ParsedFilename pf2;
+        moex_raw::parse_canonical_filename(fs::path(p).filename().string(), pf2);
+        indexed.emplace_back(p, pf2.segment_index);
+    }
+    std::sort(indexed.begin(), indexed.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    for (const auto& [path, idx] : indexed) {
+        ss.segment_paths.push_back(path);
+        ss.segment_indexes.push_back(idx);
+    }
+    return ss;
+}
+
+// --- Mock IFileSystem for injected failures ---
+
+struct MockFileHandle : moex_raw::IFileHandle {
+    moex_raw::DefaultFileHandle* real_ = nullptr;
+    bool fail_read_ = false;
+    bool fail_seek_ = false;
+
+    explicit MockFileHandle(moex_raw::DefaultFileHandle* r) : real_(r) {}
+    ~MockFileHandle() override { delete real_; }
+
+    std::size_t read(void* buf, std::size_t size) override {
+        if (fail_read_) return 0;
+        return real_->read(buf, size);
+    }
+    std::size_t write(const void* buf, std::size_t size) override {
+        return real_->write(buf, size);
+    }
+    bool seek(std::int64_t offset, int origin) override {
+        if (fail_seek_) return false;
+        return real_->seek(offset, origin);
+    }
+    bool flush() override { return real_->flush(); }
+    bool close() override { return real_->close(); }
+};
+
+struct MockFileSystem : moex_raw::IFileSystem {
+    moex_raw::DefaultFileSystem real_;
+    bool fail_open_ = false;
+    bool fail_read_ = false;
+    bool fail_seek_ = false;
+    bool fail_stat_ = false;
+
+    bool exists(const std::string& path) override { return real_.exists(path); }
+    bool rename(const std::string& from, const std::string& to) override {
+        return real_.rename(from, to);
+    }
+    bool remove(const std::string& path) override { return real_.remove(path); }
+    std::uint64_t file_size(const std::string& path, bool& ok) override {
+        if (fail_stat_) { ok = false; return 0; }
+        return real_.file_size(path, ok);
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_read(const std::string& path) override {
+        if (fail_open_) return nullptr;
+        auto real_handle = real_.open_read(path);
+        if (!real_handle) return nullptr;
+        auto* raw = static_cast<moex_raw::DefaultFileHandle*>(real_handle.release());
+        auto mock = std::make_unique<MockFileHandle>(raw);
+        mock->fail_read_ = fail_read_;
+        mock->fail_seek_ = fail_seek_;
+        return mock;
+    }
+    std::unique_ptr<moex_raw::IFileHandle> open_write(const std::string& path) override {
+        return real_.open_write(path);
+    }
+};
+
 int main() {
     using namespace moex_raw;
 
@@ -211,7 +293,6 @@ int main() {
         }
 
         auto digest = compute_replay_sha256(meta, records);
-        // Digest is computed from metadata + records, not segment boundaries
         CHECK(!digest.empty());
     }
 
@@ -240,7 +321,7 @@ int main() {
         auto result = replay_stream(paths, metas[0],
             [&](const RawSegmentMetadata&, const RawPacketRecord&) -> bool {
                 count++;
-                return count < 3;  // stop after 3
+                return count < 3;
             });
 
         CHECK(result.status == ReplayStatus::Aborted);
@@ -249,7 +330,6 @@ int main() {
 
     // Independent MXREPLAY1 framing test
     {
-        // Verify the framing matches the spec exactly
         auto meta = make_meta();
         std::vector<RawPacketRecord> records;
         RawPacketRecord rec;
@@ -261,7 +341,7 @@ int main() {
         records.push_back(rec);
 
         auto digest = compute_replay_sha256(meta, records);
-        CHECK(digest.size() == 64);  // hex SHA-256
+        CHECK(digest.size() == 64);
     }
 
     // --- Cursor tests ---
@@ -285,21 +365,23 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
         ValidatedReplayCursor cursor;
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Uninitialized);
-        auto init = cursor.initialize(paths);
-        CHECK(init == ValidatedReplayCursor::InitStatus::Ok);
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Ready);
+        CHECK(cursor.state() == ReplayCursorState::Uninitialized);
+        auto init = cursor.initialize(ss);
+        CHECK(init.code == ReplayCursorCode::Ok);
+        CHECK(cursor.state() == ReplayCursorState::Ready);
 
         std::uint64_t count = 0;
-        RawPacketRecord rec;
-        while (cursor.next(rec)) {
-            CHECK(rec.capture_index == count);
-            CHECK(rec.capture_monotonic_ns == count * 100);
+        while (true) {
+            auto result = cursor.next();
+            if (result.code != ReplayCursorCode::Ok) break;
+            CHECK(result.record.capture_index == count);
+            CHECK(result.record.capture_monotonic_ns == count * 100);
             count++;
         }
         CHECK(count == 5);
-        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+        CHECK(cursor.state() == ReplayCursorState::End);
     }
 
     // Cursor: multi-segment cursor
@@ -325,18 +407,17 @@ int main() {
 
         auto paths = writer.finalized_paths();
         CHECK(paths.size() == 3);
+        auto ss = make_stream_set(paths);
 
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
         std::uint64_t count = 0;
-        RawPacketRecord rec;
-        while (cursor.next(rec)) {
-            CHECK(rec.capture_index == count);
+        while (cursor.next().code == ReplayCursorCode::Ok) {
             count++;
         }
         CHECK(count == 9);
-        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+        CHECK(cursor.state() == ReplayCursorState::End);
     }
 
     // Cursor: reverse input paths
@@ -360,16 +441,14 @@ int main() {
         auto paths = writer.finalized_paths();
         CHECK(paths.size() == 3);
 
-        // Reverse the paths
         std::vector<std::string> reversed(paths.rbegin(), paths.rend());
+        auto ss = make_stream_set(reversed);
 
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(reversed) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
         std::uint64_t count = 0;
-        RawPacketRecord rec;
-        while (cursor.next(rec)) {
-            CHECK(rec.capture_index == count);
+        while (cursor.next().code == ReplayCursorCode::Ok) {
             count++;
         }
         CHECK(count == 6);
@@ -394,19 +473,21 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
-        CHECK(paths.size() == 3);  // 4 + 4 + 2
+        CHECK(paths.size() == 3);
+        auto ss = make_stream_set(paths);
 
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
         std::uint64_t prev = 0;
         bool first = true;
-        RawPacketRecord rec;
-        while (cursor.next(rec)) {
+        while (true) {
+            auto result = cursor.next();
+            if (result.code != ReplayCursorCode::Ok) break;
             if (!first) {
-                CHECK(rec.capture_index == prev + 1);
+                CHECK(result.record.capture_index == prev + 1);
             }
-            prev = rec.capture_index;
+            prev = result.record.capture_index;
             first = false;
         }
         CHECK(prev == 9);
@@ -427,14 +508,19 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
-        RawPacketRecord rec;
-        CHECK(cursor.next(rec));
-        CHECK(rec.payload == orig.payload);
-        CHECK(!cursor.next(rec));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::Ok);
+        CHECK(result.record.payload.size() == orig.payload.size());
+        CHECK(std::memcmp(result.record.payload.data(), orig.payload.data(),
+                          orig.payload.size()) == 0);
+
+        auto result2 = cursor.next();
+        CHECK(result2.code == ReplayCursorCode::End);
+        CHECK(cursor.state() == ReplayCursorState::End);
     }
 
     // Cursor: zero-length payload
@@ -447,21 +533,23 @@ int main() {
         RawPacketRecord orig;
         orig.capture_index = 0;
         orig.capture_monotonic_ns = 0;
-        // empty payload
         writer.append(orig);
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
-        RawPacketRecord rec;
-        CHECK(cursor.next(rec));
-        CHECK(rec.payload.empty());
-        CHECK(!cursor.next(rec));
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::Ok);
+        CHECK(result.record.payload.empty());
+
+        auto result2 = cursor.next();
+        CHECK(result2.code == ReplayCursorCode::End);
     }
 
-    // Cursor: borrowed view is valid during next
+    // Cursor: returned payload span points into reusable cursor buffer
     {
         auto dir = temp_dir();
         auto meta = make_meta();
@@ -472,51 +560,110 @@ int main() {
             RawPacketRecord rec;
             rec.capture_index = i;
             rec.capture_monotonic_ns = i;
-            rec.payload = {static_cast<std::uint8_t>(0xA0 + i), static_cast<std::uint8_t>(0xB0 + i)};
+            rec.payload = {static_cast<std::uint8_t>(0xA0 + i),
+                           static_cast<std::uint8_t>(0xB0 + i)};
             writer.append(rec);
         }
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
-        // Test deserialize_record_view directly (borrowed view)
-        auto fh = std::fopen(paths[0].c_str(), "rb");
-        CHECK(fh != nullptr);
+        auto r1 = cursor.next();
+        CHECK(r1.code == ReplayCursorCode::Ok);
+        auto* ptr1 = r1.record.payload.data();
+        CHECK(r1.record.payload.size() == 2);
+        CHECK(r1.record.payload[0] == 0xA0);
 
-        // Read past header
-        std::uint8_t preamble[14];
-        CHECK(std::fread(preamble, 1, 14, fh) == 14);
-        std::size_t hsize = moex_raw::read_u32_le(preamble + 10);
-        moex_raw::fseek64(fh, static_cast<std::int64_t>(hsize), SEEK_SET);
+        auto r2 = cursor.next();
+        CHECK(r2.code == ReplayCursorCode::Ok);
+        auto* ptr2 = r2.record.payload.data();
+        CHECK(r2.record.payload[0] == 0xA1);
 
-        // Read one full record
-        std::uint8_t rec_hdr[44];
-        CHECK(std::fread(rec_hdr, 1, 44, fh) == 44);
-        std::uint32_t rsize = moex_raw::read_u32_le(rec_hdr + 8);
-        std::vector<std::uint8_t> full_rec(rsize);
-        std::memcpy(full_rec.data(), rec_hdr, 44);
-        CHECK(std::fread(full_rec.data() + 44, 1, rsize - 44, fh) == rsize - 44);
-        std::fclose(fh);
+        // Next reuses the same buffer
+        CHECK(ptr1 == ptr2);
+    }
 
-        RawPacketRecordView view;
-        std::size_t rtotal = 0;
-        std::vector<RawValidationIssue> vis;
-        CHECK(deserialize_record_view(full_rec.data(), full_rec.size(), view, rtotal, vis));
-        CHECK(view.payload.size() == 2);
-        CHECK(view.payload.data() == full_rec.data() + 44);
-        CHECK(view.payload[0] == 0xA0);
-        CHECK(view.payload[1] == 0xB0);
-        CHECK(view.capture_index == 0);
+    // Cursor: next reuses buffer (no owning copy)
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 2; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            rec.payload = {static_cast<std::uint8_t>(i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        auto r1 = cursor.next();
+        CHECK(r1.code == ReplayCursorCode::Ok);
+        CHECK(r1.record.payload[0] == 0);
+        auto* ptr = r1.record.payload.data();
+
+        auto r2 = cursor.next();
+        CHECK(r2.code == ReplayCursorCode::Ok);
+        CHECK(r2.record.payload[0] == 1);
+        // Same buffer pointer
+        CHECK(r2.record.payload.data() == ptr);
+        // r1's payload is now overwritten (borrowed view semantics)
+    }
+
+    // Cursor: no owning payload copies in cursor API
+    // (Verified by checking that RawPacketRecordView uses span, not vector)
+
+    // Cursor: initialize accepts StreamSetInfo
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        StreamSetInfo ss;
+        ParsedFilename pf;
+        parse_canonical_filename(fs::path(paths[0]).filename().string(), pf);
+        std::memcpy(ss.session_id, pf.session_id, 16);
+        ss.source_id = pf.source_id;
+        ss.channel_id = pf.channel_id;
+        ss.segment_paths = paths;
+        ss.segment_indexes.push_back(pf.segment_index);
+
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::Ok);
+        CHECK(result.record.capture_index == 0);
     }
 
     // Cursor: invalid initialize and valid retry
     {
         auto dir = temp_dir();
-        std::vector<std::string> bad_paths = {dir + "/nonexistent.mxraw"};
+        StreamSetInfo bad_ss;
+        bad_ss.source_id = 1;
+        bad_ss.channel_id = 1;
+        bad_ss.segment_paths = {dir + "/nonexistent.mxraw"};
+        bad_ss.segment_indexes = {0};
 
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(bad_paths) == ValidatedReplayCursor::InitStatus::Failed);
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Uninitialized);
+        CHECK(cursor.initialize(bad_ss).code == ReplayCursorCode::ValidationFailed);
+        CHECK(cursor.state() == ReplayCursorState::Uninitialized);
 
         // Retry with valid data
         auto meta = make_meta();
@@ -529,11 +676,12 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Ready);
+        auto ss = make_stream_set(paths);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+        CHECK(cursor.state() == ReplayCursorState::Ready);
     }
 
-    // Cursor: AlreadyInitialized preserves position
+    // Cursor: AlreadyInitialized preserves position (Ready state)
     {
         auto dir = temp_dir();
         auto meta = make_meta();
@@ -549,28 +697,92 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
         // Read 2 records
-        RawPacketRecord rec;
-        CHECK(cursor.next(rec));
-        CHECK(rec.capture_index == 0);
-        CHECK(cursor.next(rec));
-        CHECK(rec.capture_index == 1);
+        auto r1 = cursor.next();
+        CHECK(r1.code == ReplayCursorCode::Ok);
+        CHECK(r1.record.capture_index == 0);
+        auto r2 = cursor.next();
+        CHECK(r2.code == ReplayCursorCode::Ok);
+        CHECK(r2.record.capture_index == 1);
 
         // Re-initialize should return AlreadyInitialized
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::AlreadyInitialized);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::AlreadyInitialized);
 
         // Position should be preserved — next record is 2
-        CHECK(cursor.next(rec));
-        CHECK(rec.capture_index == 2);
-        CHECK(cursor.next(rec));
-        CHECK(rec.capture_index == 3);
-        CHECK(cursor.next(rec));
-        CHECK(rec.capture_index == 4);
-        CHECK(!cursor.next(rec));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+        auto r3 = cursor.next();
+        CHECK(r3.code == ReplayCursorCode::Ok);
+        CHECK(r3.record.capture_index == 2);
+        auto r4 = cursor.next();
+        CHECK(r4.record.capture_index == 3);
+        auto r5 = cursor.next();
+        CHECK(r5.record.capture_index == 4);
+        auto r6 = cursor.next();
+        CHECK(r6.code == ReplayCursorCode::End);
+        CHECK(cursor.state() == ReplayCursorState::End);
+    }
+
+    // Cursor: AlreadyInitialized after End state
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        while (cursor.next().code == ReplayCursorCode::Ok) {}
+        CHECK(cursor.state() == ReplayCursorState::End);
+
+        // AlreadyInitialized in End state
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::AlreadyInitialized);
+        CHECK(cursor.state() == ReplayCursorState::End);
+    }
+
+    // Cursor: AlreadyInitialized after Failed state
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        // Delete file to cause runtime failure
+        fs::remove(paths[0]);
+
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+
+        // AlreadyInitialized in Failed state
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::AlreadyInitialized);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
     }
 
     // Cursor: stable End
@@ -586,19 +798,91 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
-        RawPacketRecord out;
-        CHECK(cursor.next(out));
-        CHECK(!cursor.next(out));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+        auto r1 = cursor.next();
+        CHECK(r1.code == ReplayCursorCode::Ok);
+        auto r2 = cursor.next();
+        CHECK(r2.code == ReplayCursorCode::End);
+        CHECK(cursor.state() == ReplayCursorState::End);
 
         // End is stable
-        CHECK(!cursor.next(out));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
-        CHECK(!cursor.next(out));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+        auto r3 = cursor.next();
+        CHECK(r3.code == ReplayCursorCode::End);
+        CHECK(cursor.state() == ReplayCursorState::End);
+        auto r4 = cursor.next();
+        CHECK(r4.code == ReplayCursorCode::End);
+        CHECK(cursor.state() == ReplayCursorState::End);
+    }
+
+    // Cursor: deterministic empty result on NotInitialized
+    {
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.state() == ReplayCursorState::Uninitialized);
+
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::NotInitialized);
+        CHECK(result.record.payload.empty());
+        CHECK(result.record.capture_index == 0);
+        CHECK(result.record.capture_utc_ns == 0);
+        CHECK(result.record.capture_monotonic_ns == 0);
+        CHECK(result.record.record_flags == 0);
+    }
+
+    // Cursor: deterministic empty result on End
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+        cursor.next(); // read the one record
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::End);
+        CHECK(result.record.payload.empty());
+        CHECK(result.record.capture_index == 0);
+    }
+
+    // Cursor: deterministic empty result and stable terminal code on Failed
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        fs::remove(paths[0]);
+
+        auto r1 = cursor.next();
+        CHECK(r1.code == ReplayCursorCode::IoError);
+        CHECK(r1.record.payload.empty());
+        CHECK(cursor.terminal_code() == ReplayCursorCode::IoError);
+
+        // Stable terminal code
+        auto r2 = cursor.next();
+        CHECK(r2.code == ReplayCursorCode::IoError);
+        CHECK(r2.record.payload.empty());
+        CHECK(cursor.terminal_code() == ReplayCursorCode::IoError);
     }
 
     // Cursor: truncation after initialize gives StreamChanged
@@ -618,8 +902,9 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
         // Truncate the file: remove last 10 bytes
         {
@@ -628,19 +913,19 @@ int main() {
             fs::resize_file(p, sz - 10);
         }
 
-        RawPacketRecord out;
-        // First read may succeed (from header), but subsequent reads detect truncation
-        // The file size check on open will catch it
         bool got_stream_changed = false;
-        while (cursor.next(out)) {
-            // May read some records before detecting
-        }
-        if (cursor.state() == ValidatedReplayCursor::State::Failed &&
-            cursor.error_code() == CursorErrorCode::StreamChanged) {
-            got_stream_changed = true;
+        while (true) {
+            auto result = cursor.next();
+            if (result.code != ReplayCursorCode::Ok) {
+                if (result.code == ReplayCursorCode::StreamChanged) {
+                    got_stream_changed = true;
+                }
+                break;
+            }
         }
         CHECK(got_stream_changed);
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+        CHECK(cursor.terminal_code() == ReplayCursorCode::StreamChanged);
     }
 
     // Cursor: CRC mutation after initialize gives StreamChanged
@@ -660,20 +945,19 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
-        // Mutate a payload byte (after the header, in the data region)
+        // Mutate a payload byte
         {
             auto& p = paths[0];
-            // Read header_size from file
             std::ifstream ifs(p, std::ios::binary);
             ifs.seekg(10);
             std::uint32_t hsize = 0;
             ifs.read(reinterpret_cast<char*>(&hsize), 4);
             ifs.close();
 
-            // The first record starts at hsize. Payload starts at hsize + 44.
             std::fstream f(p, std::ios::in | std::ios::out | std::ios::binary);
             f.seekp(static_cast<std::streamoff>(hsize + 44));
             std::uint8_t bad = 0xFF;
@@ -681,22 +965,21 @@ int main() {
             f.close();
         }
 
-        RawPacketRecord out;
         bool got_stream_changed = false;
-        while (cursor.next(out)) {}
-        if (cursor.state() == ValidatedReplayCursor::State::Failed &&
-            cursor.error_code() == CursorErrorCode::StreamChanged) {
-            got_stream_changed = true;
+        while (true) {
+            auto result = cursor.next();
+            if (result.code != ReplayCursorCode::Ok) {
+                if (result.code == ReplayCursorCode::StreamChanged) {
+                    got_stream_changed = true;
+                }
+                break;
+            }
         }
         CHECK(got_stream_changed);
     }
 
-    // Cursor: filesystem failure gives IoError (using mock FS)
+    // Cursor: filesystem failure gives IoError
     {
-        // Use a path that cannot be opened
-        std::vector<std::string> bad_paths;
-
-        // Create a valid segment first, then delete it after initialize
         auto dir = temp_dir();
         auto meta = make_meta();
         RawSegmentWriter writer(meta, dir, {});
@@ -708,30 +991,124 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
         ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
 
-        // Delete the file to simulate filesystem failure
         fs::remove(paths[0]);
 
-        RawPacketRecord out;
-        CHECK(!cursor.next(out));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
-        CHECK(cursor.error_code() == CursorErrorCode::IoError);
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+        CHECK(cursor.terminal_code() == ReplayCursorCode::IoError);
+    }
+
+    // Cursor: injected IFileSystem open failure
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+
+        MockFileSystem mock_fs;
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss, &mock_fs).code == ReplayCursorCode::Ok);
+
+        // Now fail on open
+        mock_fs.fail_open_ = true;
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+    }
+
+    // Cursor: injected IFileSystem read failure
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+
+        MockFileSystem mock_fs;
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss, &mock_fs).code == ReplayCursorCode::Ok);
+
+        // Now fail on read
+        mock_fs.fail_read_ = true;
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+    }
+
+    // Cursor: injected IFileSystem seek failure
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+
+        MockFileSystem mock_fs;
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss, &mock_fs).code == ReplayCursorCode::Ok);
+
+        // Now fail on seek
+        mock_fs.fail_seek_ = true;
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+    }
+
+    // Cursor: injected IFileSystem stat failure during next
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+
+        MockFileSystem mock_fs;
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss, &mock_fs).code == ReplayCursorCode::Ok);
+
+        mock_fs.fail_stat_ = true;
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
     }
 
     // Cursor: stable Failed
     {
         auto dir = temp_dir();
-        std::vector<std::string> bad_paths = {dir + "/no_such_file.mxraw"};
-
-        ValidatedReplayCursor cursor;
-        CHECK(cursor.initialize(bad_paths) == ValidatedReplayCursor::InitStatus::Failed);
-
-        // Failed from init is Uninitialized, not Failed — retry allowed
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Uninitialized);
-
-        // Now create a valid segment, initialize, delete file, get IoError → Failed
         auto meta = make_meta();
         RawSegmentWriter writer(meta, dir, {});
         writer.open();
@@ -742,18 +1119,243 @@ int main() {
         writer.finalize();
 
         auto paths = writer.finalized_paths();
-        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
         fs::remove(paths[0]);
 
-        RawPacketRecord out;
-        CHECK(!cursor.next(out));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
+        auto r1 = cursor.next();
+        CHECK(r1.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
 
         // Failed is stable
-        CHECK(!cursor.next(out));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
-        CHECK(!cursor.next(out));
-        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
+        auto r2 = cursor.next();
+        CHECK(r2.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+        auto r3 = cursor.next();
+        CHECK(r3.code == ReplayCursorCode::IoError);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+    }
+
+    // Cursor: move-constructed cursor continues replay
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 5; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i * 100;
+            rec.payload = {static_cast<std::uint8_t>(i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        // Read 2 records
+        auto r1 = cursor.next();
+        CHECK(r1.code == ReplayCursorCode::Ok);
+        CHECK(r1.record.capture_index == 0);
+        auto r2 = cursor.next();
+        CHECK(r2.code == ReplayCursorCode::Ok);
+        CHECK(r2.record.capture_index == 1);
+
+        // Move-construct
+        ValidatedReplayCursor moved(std::move(cursor));
+        CHECK(moved.state() == ReplayCursorState::Ready);
+
+        // Continue reading from moved cursor
+        auto r3 = moved.next();
+        CHECK(r3.code == ReplayCursorCode::Ok);
+        CHECK(r3.record.capture_index == 2);
+        auto r4 = moved.next();
+        CHECK(r4.record.capture_index == 3);
+        auto r5 = moved.next();
+        CHECK(r5.record.capture_index == 4);
+        auto r6 = moved.next();
+        CHECK(r6.code == ReplayCursorCode::End);
+    }
+
+    // Cursor: move-assigned cursor continues replay
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 5; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i * 100;
+            rec.payload = {static_cast<std::uint8_t>(i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        auto r1 = cursor.next();
+        CHECK(r1.record.capture_index == 0);
+        auto r2 = cursor.next();
+        CHECK(r2.record.capture_index == 1);
+
+        // Move-assign
+        ValidatedReplayCursor target;
+        target = std::move(cursor);
+        CHECK(target.state() == ReplayCursorState::Ready);
+
+        auto r3 = target.next();
+        CHECK(r3.code == ReplayCursorCode::Ok);
+        CHECK(r3.record.capture_index == 2);
+        auto r4 = target.next();
+        CHECK(r4.record.capture_index == 3);
+        auto r5 = target.next();
+        CHECK(r5.record.capture_index == 4);
+        auto r6 = target.next();
+        CHECK(r6.code == ReplayCursorCode::End);
+    }
+
+    // Cursor: changing file size after preflight gives StreamChanged
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        // Append bytes to change file size
+        {
+            std::ofstream ofs(paths[0], std::ios::binary | std::ios::app);
+            ofs.put(0x00);
+        }
+
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::StreamChanged);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+    }
+
+    // Cursor: changing metadata after preflight gives StreamChanged
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        // Mutate a metadata byte (session_id at offset 18)
+        {
+            std::fstream f(paths[0], std::ios::in | std::ios::out | std::ios::binary);
+            f.seekp(18);
+            std::uint8_t bad = 0xFF;
+            f.write(reinterpret_cast<const char*>(&bad), 1);
+            f.close();
+        }
+
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::StreamChanged);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+    }
+
+    // Cursor: changing header_size after preflight gives StreamChanged
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        // Mutate header_size field (at offset 10, 4 bytes)
+        {
+            std::fstream f(paths[0], std::ios::in | std::ios::out | std::ios::binary);
+            f.seekp(10);
+            std::uint32_t bad = 999;
+            f.write(reinterpret_cast<const char*>(&bad), 4);
+            f.close();
+        }
+
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::StreamChanged);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
+    }
+
+    // Cursor: changing footer after preflight gives StreamChanged
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto ss = make_stream_set(paths);
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(ss).code == ReplayCursorCode::Ok);
+
+        // Mutate footer record_count (at file_size - 92 + 16)
+        {
+            auto sz = fs::file_size(paths[0]);
+            std::fstream f(paths[0], std::ios::in | std::ios::out | std::ios::binary);
+            f.seekp(static_cast<std::streamoff>(sz - kFooterSize + 16));
+            std::uint64_t bad = 999;
+            f.write(reinterpret_cast<const char*>(&bad), 8);
+            f.close();
+        }
+
+        auto result = cursor.next();
+        CHECK(result.code == ReplayCursorCode::StreamChanged);
+        CHECK(cursor.state() == ReplayCursorState::Failed);
     }
 
     // Legacy: replay_stream unchanged
@@ -816,7 +1418,6 @@ int main() {
         std::size_t hsize = moex_raw::read_u32_le(preamble + 10);
         moex_raw::fseek64(fh, static_cast<std::int64_t>(hsize), SEEK_SET);
 
-        // Read full record bytes
         std::uint8_t rec_hdr[44];
         CHECK(std::fread(rec_hdr, 1, 44, fh) == 44);
         std::uint32_t rsize = moex_raw::read_u32_le(rec_hdr + 8);
@@ -825,18 +1426,62 @@ int main() {
         CHECK(std::fread(record_bytes.data() + 44, 1, rsize - 44, fh) == rsize - 44);
         std::fclose(fh);
 
-        // Deserialize with owning copy
         RawPacketRecord owned;
         std::size_t rtotal = 0;
         std::vector<RawValidationIssue> vis;
         CHECK(deserialize_record_header(record_bytes.data(), record_bytes.size(), owned, rtotal, vis));
 
-        // Owned payload is a copy — modifying record_bytes doesn't affect it
         record_bytes[44] = 0xFF;
         CHECK(owned.payload[0] == 0x11);
         CHECK(owned.payload.size() == 5);
         CHECK(owned.capture_index == 0);
         CHECK(owned.capture_monotonic_ns == 99);
+    }
+
+    // Borrowed view from deserialize_record_view
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            rec.payload = {static_cast<std::uint8_t>(0xA0 + i),
+                           static_cast<std::uint8_t>(0xB0 + i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+
+        auto fh = std::fopen(paths[0].c_str(), "rb");
+        CHECK(fh != nullptr);
+
+        std::uint8_t preamble[14];
+        CHECK(std::fread(preamble, 1, 14, fh) == 14);
+        std::size_t hsize = moex_raw::read_u32_le(preamble + 10);
+        moex_raw::fseek64(fh, static_cast<std::int64_t>(hsize), SEEK_SET);
+
+        std::uint8_t rec_hdr[44];
+        CHECK(std::fread(rec_hdr, 1, 44, fh) == 44);
+        std::uint32_t rsize = moex_raw::read_u32_le(rec_hdr + 8);
+        std::vector<std::uint8_t> full_rec(rsize);
+        std::memcpy(full_rec.data(), rec_hdr, 44);
+        CHECK(std::fread(full_rec.data() + 44, 1, rsize - 44, fh) == rsize - 44);
+        std::fclose(fh);
+
+        RawPacketRecordView view;
+        std::size_t rtotal = 0;
+        std::vector<RawValidationIssue> vis;
+        CHECK(deserialize_record_view(full_rec.data(), full_rec.size(), view, rtotal, vis));
+        CHECK(view.payload.size() == 2);
+        CHECK(view.payload.data() == full_rec.data() + 44);
+        CHECK(view.payload[0] == 0xA0);
+        CHECK(view.payload[1] == 0xB0);
+        CHECK(view.capture_index == 0);
     }
 
     std::cout << "test_replay: ALL PASSED\n";

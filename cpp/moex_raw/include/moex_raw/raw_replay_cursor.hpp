@@ -8,18 +8,10 @@
 
 namespace moex_raw {
 
-// Cursor-level error codes.
-enum class CursorErrorCode {
-    StreamChanged,
-    IoError
-};
-
 // ValidatedReplayCursor: streaming replay of one RT-2 StreamSetInfo.
 // States: Uninitialized, Ready, End, Failed.
 class ValidatedReplayCursor {
 public:
-    enum class State { Uninitialized, Ready, End, Failed };
-
     ValidatedReplayCursor();
     ~ValidatedReplayCursor();
     ValidatedReplayCursor(ValidatedReplayCursor&&) noexcept;
@@ -27,40 +19,41 @@ public:
     ValidatedReplayCursor(const ValidatedReplayCursor&) = delete;
     ValidatedReplayCursor& operator=(const ValidatedReplayCursor&) = delete;
 
-    State state() const { return state_; }
+    ReplayCursorState state() const { return state_; }
     const std::vector<RawValidationIssue>& issues() const { return issues_; }
-    CursorErrorCode error_code() const { return error_code_; }
-    const RawSegmentMetadata& validated_metadata() const { return validated_meta_; }
+    ReplayCursorCode terminal_code() const { return terminal_code_; }
 
-    enum class InitStatus { Ok, AlreadyInitialized, Failed };
-
-    // Validate stream set, sort paths by segment_index, store validated
-    // metadata, allocate bounded record buffer.
+    // Validate stream set, sort paths by segment_index, store preflight
+    // snapshot (path, file_size, header_size, full metadata, footer) per
+    // segment, allocate bounded record buffer.
     // After success: AlreadyInitialized on repeat call (position unchanged).
     // After failure: retry allowed.
-    InitStatus initialize(const std::vector<std::string>& paths);
+    ReplayCursorInitResult initialize(const StreamSetInfo& stream_set,
+                                      IFileSystem* fs = nullptr);
 
     // Read one record. Returns borrowed view with payload valid only
     // until next next(), move, or destruction.
-    bool next(RawPacketRecord& out);
+    // On NotInitialized/End/Failed: record is deterministically empty.
+    ReplayCursorResult next();
 
 private:
-    struct SegmentInfo {
+    struct SegmentPreflight {
         std::string path;
         std::uint64_t segment_index = 0;
-        std::size_t header_size = 0;
         std::uint64_t file_size = 0;
+        std::size_t header_size = 0;
+        RawSegmentMetadata metadata;
+        RawFooter footer;
     };
 
-    bool parse_segment_header(const std::string& path, SegmentInfo& info);
-    bool validate_record_header_only(const std::uint8_t* data, std::size_t available,
-                                     std::uint32_t& record_size, std::uint32_t& payload_size);
+    void fail(ReplayCursorCode code, const std::string& issue_code,
+              const std::string& msg);
+    bool open_and_verify_segment(std::size_t idx);
 
-    State state_ = State::Uninitialized;
-    CursorErrorCode error_code_ = CursorErrorCode::StreamChanged;
+    ReplayCursorState state_ = ReplayCursorState::Uninitialized;
+    ReplayCursorCode terminal_code_ = ReplayCursorCode::Ok;
     std::vector<RawValidationIssue> issues_;
-    RawSegmentMetadata validated_meta_;
-    std::vector<SegmentInfo> segments_;
+    std::vector<SegmentPreflight> preflight_;
     std::vector<std::uint8_t> record_buf_;
     std::size_t current_segment_ = 0;
     std::uint64_t current_pos_ = 0;
@@ -68,6 +61,7 @@ private:
     std::uint64_t next_expected_capture_index_ = 0;
     std::uint64_t last_capture_monotonic_ns_ = 0;
     bool first_record_ = true;
+    bool ever_initialized_ = false;
     std::unique_ptr<IFileHandle> current_file_;
     IFileSystem* fs_ = nullptr;
     DefaultFileSystem default_fs_;

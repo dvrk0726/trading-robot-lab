@@ -201,6 +201,31 @@ bool deserialize_record_header(const std::uint8_t* data, std::size_t available,
                                RawPacketRecord& rec, std::size_t& record_total_size,
                                std::vector<RawValidationIssue>& issues);
 
+// --- Replay cursor public types ---
+
+enum class ReplayCursorState { Uninitialized, Ready, End, Failed };
+
+enum class ReplayCursorCode {
+    Ok,
+    End,
+    NotInitialized,
+    AlreadyInitialized,
+    ValidationFailed,
+    IoError,
+    StreamChanged,
+    InternalInvariantViolation
+};
+
+struct ReplayCursorInitResult {
+    ReplayCursorCode code = ReplayCursorCode::Ok;
+    std::vector<RawValidationIssue> issues;
+};
+
+struct ReplayCursorResult {
+    ReplayCursorCode code = ReplayCursorCode::Ok;
+    RawPacketRecordView record;
+};
+
 struct RawFooter {
     std::uint64_t record_count = 0;
     std::uint64_t first_capture_index = 0;

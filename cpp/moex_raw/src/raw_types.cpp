@@ -369,6 +369,7 @@ bool deserialize_record_view(const std::uint8_t* data, std::size_t available,
                              RawPacketRecordView& out, std::size_t& record_total_size,
                              std::vector<RawValidationIssue>& issues) {
     out = {};
+    record_total_size = 0;
 
     if (available < kRecordHeaderSize) {
         add_issue(issues, ValidationSeverity::Error, "TRUNCATED_RECORD", "Truncated record header");
