@@ -23,7 +23,7 @@ route = _mod.route
 main = _mod.main
 
 # All keys returned by ``route()``.
-ALL_KEYS = {"full_matrix", "run_python", "run_fast", "run_raw"}
+ALL_KEYS = {"full_matrix", "run_python", "run_fast", "run_raw", "run_pipeline"}
 
 
 # ---------------------------------------------------------------------------
@@ -75,23 +75,23 @@ class TestDocsOnly:
 
 class TestFastOnly:
     def test_single_fast_file(self) -> None:
-        _assert_flags(route(["cpp/moex_fast/src/decoder.cpp"]), run_fast=True)
+        _assert_flags(route(["cpp/moex_fast/src/decoder.cpp"]), run_fast=True, run_pipeline=True)
 
     def test_fast_cmake(self) -> None:
-        _assert_flags(route(["cpp/moex_fast/CMakeLists.txt"]), run_fast=True)
+        _assert_flags(route(["cpp/moex_fast/CMakeLists.txt"]), run_fast=True, run_pipeline=True)
 
     def test_multiple_fast_files(self) -> None:
         paths = ["cpp/moex_fast/src/a.cpp", "cpp/moex_fast/include/b.hpp"]
-        _assert_flags(route(paths), run_fast=True)
+        _assert_flags(route(paths), run_fast=True, run_pipeline=True)
 
 
 class TestRawOnly:
     def test_single_raw_file(self) -> None:
-        _assert_flags(route(["cpp/moex_raw/src/reader.cpp"]), run_raw=True)
+        _assert_flags(route(["cpp/moex_raw/src/reader.cpp"]), run_raw=True, run_pipeline=True)
 
     def test_multiple_raw_files(self) -> None:
         paths = ["cpp/moex_raw/src/a.cpp", "cpp/moex_raw/include/b.hpp"]
-        _assert_flags(route(paths), run_raw=True)
+        _assert_flags(route(paths), run_raw=True, run_pipeline=True)
 
 
 class TestPythonOnly:
@@ -121,17 +121,17 @@ class TestMimoSave:
 
     def test_mimo_save_combined_with_other(self) -> None:
         paths = ["tools/mimo_save.ps1", "cpp/moex_fast/src/x.cpp"]
-        _assert_flags(route(paths), run_python=True, run_fast=True)
+        _assert_flags(route(paths), run_python=True, run_fast=True, run_pipeline=True)
 
 
 class TestFastPlusPython:
     def test_fast_and_python(self) -> None:
         paths = ["cpp/moex_fast/src/decoder.cpp", "src/strategy.py"]
-        _assert_flags(route(paths), run_fast=True, run_python=True)
+        _assert_flags(route(paths), run_fast=True, run_python=True, run_pipeline=True)
 
     def test_raw_and_python(self) -> None:
         paths = ["cpp/moex_raw/src/reader.cpp", "tests/test_x.py"]
-        _assert_flags(route(paths), run_raw=True, run_python=True)
+        _assert_flags(route(paths), run_raw=True, run_python=True, run_pipeline=True)
 
 
 class TestFullMatrixTriggers:
@@ -180,7 +180,6 @@ class TestEmptyInput:
 class TestForcedFullMatrix:
     def test_force_full_overrides_docs(self) -> None:
         """--force-full must produce the full matrix even for docs-only changes."""
-        # We test via the CLI main() rather than route() since force-full is a CLI flag.
         paths_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False, encoding="utf-8"
         )
@@ -204,6 +203,7 @@ class TestForcedFullMatrix:
             assert values["run_python"] == "true"
             assert values["run_fast"] == "true"
             assert values["run_raw"] == "true"
+            assert values["run_pipeline"] == "true"
         finally:
             os.unlink(paths_file.name)
             os.unlink(output_file.name)
@@ -234,6 +234,7 @@ class TestGitHubOutput:
             assert values["run_python"] == "true"
             assert values["run_fast"] == "false"
             assert values["run_raw"] == "false"
+            assert values["run_pipeline"] == "false"
         finally:
             os.unlink(paths_file.name)
             os.unlink(output_file.name)
@@ -241,7 +242,7 @@ class TestGitHubOutput:
 
 class TestMultiContourUnion:
     def test_fast_raw_python_union(self) -> None:
-        """Multiple known contours union to all three expensive jobs."""
+        """Multiple known contours union to all expensive jobs."""
         paths = [
             "cpp/moex_fast/src/a.cpp",
             "cpp/moex_raw/src/b.cpp",
@@ -252,6 +253,7 @@ class TestMultiContourUnion:
             run_fast=True,
             run_raw=True,
             run_python=True,
+            run_pipeline=True,
         )
 
     def test_full_matrix_overrides_everything(self) -> None:
@@ -282,7 +284,7 @@ class TestEdgeCases:
         _assert_flags(route(paths), full_matrix=True)
 
     def test_deeply_nested_fast_path(self) -> None:
-        _assert_flags(route(["cpp/moex_fast/deep/nested/file.cpp"]), run_fast=True)
+        _assert_flags(route(["cpp/moex_fast/deep/nested/file.cpp"]), run_fast=True, run_pipeline=True)
 
     def test_docs_and_python_combined(self) -> None:
         """Docs + Python → Python enabled, not docs-only."""
@@ -350,6 +352,7 @@ class TestMissingPathsFile:
             assert values["run_python"] == "true"
             assert values["run_fast"] == "true"
             assert values["run_raw"] == "true"
+            assert values["run_pipeline"] == "true"
         finally:
             os.unlink(output_file.name)
 
@@ -373,5 +376,41 @@ class TestMissingPathsFile:
             assert values["run_python"] == "true"
             assert values["run_fast"] == "true"
             assert values["run_raw"] == "true"
+            assert values["run_pipeline"] == "true"
         finally:
             os.unlink(output_file.name)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline routing
+# ---------------------------------------------------------------------------
+
+class TestPipelineOnly:
+    def test_single_pipeline_file(self) -> None:
+        _assert_flags(route(["cpp/moex_spectra_pipeline/src/ordered_decode.cpp"]), run_pipeline=True)
+
+    def test_pipeline_cmake(self) -> None:
+        _assert_flags(route(["cpp/moex_spectra_pipeline/CMakeLists.txt"]), run_pipeline=True)
+
+    def test_multiple_pipeline_files(self) -> None:
+        paths = ["cpp/moex_spectra_pipeline/src/a.cpp", "cpp/moex_spectra_pipeline/include/b.hpp"]
+        _assert_flags(route(paths), run_pipeline=True)
+
+    def test_pipeline_test_file(self) -> None:
+        _assert_flags(route(["cpp/moex_spectra_pipeline/tests/test_ordered_decode.cpp"]), run_pipeline=True)
+
+
+class TestPipelineTriggers:
+    def test_fast_triggers_pipeline(self) -> None:
+        _assert_flags(route(["cpp/moex_fast/src/decoder.cpp"]), run_fast=True, run_pipeline=True)
+
+    def test_raw_triggers_pipeline(self) -> None:
+        _assert_flags(route(["cpp/moex_raw/src/reader.cpp"]), run_raw=True, run_pipeline=True)
+
+    def test_pipeline_and_python(self) -> None:
+        paths = ["cpp/moex_spectra_pipeline/src/a.cpp", "src/app.py"]
+        _assert_flags(route(paths), run_pipeline=True, run_python=True)
+
+    def test_fast_raw_pipeline_union(self) -> None:
+        paths = ["cpp/moex_fast/src/a.cpp", "cpp/moex_raw/src/b.cpp"]
+        _assert_flags(route(paths), run_fast=True, run_raw=True, run_pipeline=True)

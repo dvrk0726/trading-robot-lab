@@ -2,9 +2,9 @@
 """CI-1 job routing by changed file paths.
 
 Fail-closed: empty input, errors, unknown paths, and any path forcing a
-sensitive/full-matrix change all route to the full six-job matrix.
+sensitive/full-matrix change all route to the full matrix.
 
-Routed expensive contours: Python, MOEX FAST, MOEX RAW.
+Routed expensive contours: Python, MOEX FAST, MOEX RAW, MOEX SPECTRA Pipeline.
 
 Designed to run inside GitHub Actions ``repository-hygiene`` with no
 external dependencies.
@@ -35,6 +35,7 @@ _DOCS_DIR_PREFIXES: tuple[str, ...] = (
 # C++ contour directories → which C++ jobs to enable.
 _CPP_FAST_PREFIXES: tuple[str, ...] = ("cpp/moex_fast/",)
 _CPP_RAW_PREFIXES: tuple[str, ...] = ("cpp/moex_raw/",)
+_CPP_PIPELINE_PREFIXES: tuple[str, ...] = ("cpp/moex_spectra_pipeline/",)
 
 # Python contour directories.
 _PYTHON_PREFIXES: tuple[str, ...] = (
@@ -122,13 +123,17 @@ def _classify_single(path: str) -> set[str]:
         return {"full"}
 
     # --- C++ contours ---------------------------------------------------------
+    for prefix in _CPP_PIPELINE_PREFIXES:
+        if path.startswith(prefix):
+            return {"pipeline"}
+
     for prefix in _CPP_FAST_PREFIXES:
         if path.startswith(prefix):
-            return {"fast"}
+            return {"fast", "pipeline"}
 
     for prefix in _CPP_RAW_PREFIXES:
         if path.startswith(prefix):
-            return {"raw"}
+            return {"raw", "pipeline"}
 
     # Any other cpp/** is uncategorised → fail-closed.
     if parts and parts[0] == "cpp":
@@ -159,7 +164,7 @@ def route(paths: list[str]) -> dict[str, bool]:
     """Compute routing flags from a list of changed file paths.
 
     Returns a dict with keys ``run_python``, ``run_fast``,
-    ``run_raw``, and ``full_matrix`` (all ``bool``).
+    ``run_raw``, ``run_pipeline``, and ``full_matrix`` (all ``bool``).
     """
     # Empty or absent input → full matrix (fail-closed).
     if not paths:
@@ -168,6 +173,7 @@ def route(paths: list[str]) -> dict[str, bool]:
             "run_python": True,
             "run_fast": True,
             "run_raw": True,
+            "run_pipeline": True,
         }
 
     tags: set[str] = set()
@@ -181,6 +187,7 @@ def route(paths: list[str]) -> dict[str, bool]:
             "run_python": True,
             "run_fast": True,
             "run_raw": True,
+            "run_pipeline": True,
         }
 
     # If only documentation paths were changed, skip all expensive jobs.
@@ -190,6 +197,7 @@ def route(paths: list[str]) -> dict[str, bool]:
             "run_python": False,
             "run_fast": False,
             "run_raw": False,
+            "run_pipeline": False,
         }
 
     return {
@@ -197,6 +205,7 @@ def route(paths: list[str]) -> dict[str, bool]:
         "run_python": "python" in tags,
         "run_fast": "fast" in tags,
         "run_raw": "raw" in tags,
+        "run_pipeline": "pipeline" in tags,
     }
 
 
@@ -210,7 +219,7 @@ _TRUE_FALSE = {True: "true", False: "false"}
 def write_github_output(path: str, flags: dict[str, bool]) -> None:
     """Append routing flags as ``key=value`` lines to *path*."""
     with open(path, "a", encoding="utf-8") as fh:
-        for key in ("run_python", "run_fast", "run_raw", "full_matrix"):
+        for key in ("run_python", "run_fast", "run_raw", "run_pipeline", "full_matrix"):
             fh.write(f"{key}={_TRUE_FALSE[flags[key]]}\n")
 
 
@@ -244,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
             "run_python": True,
             "run_fast": True,
             "run_raw": True,
+            "run_pipeline": True,
         }
     else:
         # Read paths from file.  Errors → full matrix (fail-closed, exit 0).
@@ -261,10 +271,11 @@ def main(argv: list[str] | None = None) -> int:
                 "run_python": True,
                 "run_fast": True,
                 "run_raw": True,
+                "run_pipeline": True,
             }
             if args.github_output:
                 write_github_output(args.github_output, flags)
-            for key in ("full_matrix", "run_python", "run_fast", "run_raw"):
+            for key in ("full_matrix", "run_python", "run_fast", "run_raw", "run_pipeline"):
                 print(f"{key}={_TRUE_FALSE[flags[key]]}")
             return 0
 
@@ -274,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         write_github_output(args.github_output, flags)
 
     # Always print to stdout for local debugging.
-    for key in ("full_matrix", "run_python", "run_fast", "run_raw"):
+    for key in ("full_matrix", "run_python", "run_fast", "run_raw", "run_pipeline"):
         print(f"{key}={_TRUE_FALSE[flags[key]]}")
 
     return 0

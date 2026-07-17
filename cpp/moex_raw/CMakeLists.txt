@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(moex_raw VERSION 0.1.0 LANGUAGES CXX)
 
+# --- Options (default ON for standalone builds; consumers may force OFF) ---
+option(MOEX_RAW_BUILD_CLI "Build moex_raw CLI executables" ON)
+option(MOEX_RAW_BUILD_TESTS "Build moex_raw tests" ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -22,15 +26,20 @@ add_library(moex_raw_lib STATIC
     src/raw_segment_writer.cpp
     src/raw_segment_reader.cpp
     src/raw_replay.cpp
+    src/raw_replay_cursor.cpp
+    src/raw_ab_replay_cursor.cpp
     src/raw_report.cpp
 )
 target_include_directories(moex_raw_lib PUBLIC include)
 
 # --- CLI ---
-add_executable(moex-raw src/main.cpp)
-target_link_libraries(moex-raw PRIVATE moex_raw_lib)
+if(MOEX_RAW_BUILD_CLI)
+    add_executable(moex-raw src/main.cpp)
+    target_link_libraries(moex-raw PRIVATE moex_raw_lib)
+endif()
 
 # --- Tests ---
+if(MOEX_RAW_BUILD_TESTS)
 enable_testing()
 
 add_executable(test_crc32c tests/test_crc32c.cpp)
@@ -73,12 +82,14 @@ add_executable(test_replay tests/test_replay.cpp)
 target_link_libraries(test_replay PRIVATE moex_raw_lib)
 add_test(NAME test_replay COMMAND test_replay)
 
-add_executable(test_cli tests/test_cli.cpp)
-target_link_libraries(test_cli PRIVATE moex_raw_lib)
-target_compile_definitions(test_cli PRIVATE
-    MOEX_RAW_PATH="$<TARGET_FILE:moex-raw>"
-)
-add_test(NAME test_cli COMMAND test_cli)
+if(MOEX_RAW_BUILD_CLI)
+    add_executable(test_cli tests/test_cli.cpp)
+    target_link_libraries(test_cli PRIVATE moex_raw_lib)
+    target_compile_definitions(test_cli PRIVATE
+        MOEX_RAW_PATH="$<TARGET_FILE:moex-raw>"
+    )
+    add_test(NAME test_cli COMMAND test_cli)
+endif()
 
 add_executable(test_json_report tests/test_json_report.cpp)
 target_link_libraries(test_json_report PRIVATE moex_raw_lib)
@@ -107,3 +118,5 @@ add_test(NAME test_round5 COMMAND test_round5)
 add_executable(test_round6 tests/test_round6.cpp)
 target_link_libraries(test_round6 PRIVATE moex_raw_lib)
 add_test(NAME test_round6 COMMAND test_round6)
+
+endif() # MOEX_RAW_BUILD_TESTS
