@@ -379,11 +379,11 @@ static void test_truncated_template_id() {
     SequenceResetProbe probe;
     (void)probe.initialize(compiled);
 
-    // pmap with template-id present, but no stop-bit byte for template ID
+    // pmap with template-id present, five continuation bytes without stop bit
     std::vector<std::uint8_t> bad = {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     auto r = probe.probe(make_transport(1), bad);
     CHECK(r.code == SequenceResetProbeCode::HeaderDecodeFailed);
-    CHECK(r.decode_status == DecodeStatus::NonCanonicalEncoding);
+    CHECK(r.decode_status == DecodeStatus::InvalidEncoding);
 
     TEST_PASS("truncated_template_id");
 }
@@ -407,8 +407,8 @@ static void test_overflow_template_id() {
     SequenceResetProbe probe;
     (void)probe.initialize(compiled);
 
-    // 5-byte stop-bit with overflow: 5th byte has high bits set
-    std::vector<std::uint8_t> bad = {0xC0, 0x01, 0x02, 0x03, 0x04, 0xFF};
+    // 5-byte stop-bit encoding of raw 2^32 (0x100000000) -> overflow
+    std::vector<std::uint8_t> bad = {0xC0, 0x10, 0x00, 0x00, 0x00, 0x80};
     auto r = probe.probe(make_transport(1), bad);
     CHECK(r.code == SequenceResetProbeCode::HeaderDecodeFailed);
     CHECK(r.decode_status == DecodeStatus::IntegerOverflow);
@@ -1117,6 +1117,113 @@ static void test_fast_body_unchanged_reset() {
     TEST_PASS("fast_body_unchanged_reset");
 }
 
+static void test_valid_canonical_template_0x10000000() {
+    auto compiled = compile_minimal(kFullTemplateXml);
+    SequenceResetProbe probe;
+    (void)probe.initialize(compiled);
+
+    // Template ID 0x10000000 (canonical 5-byte stop-bit encoding)
+    std::vector<std::uint8_t> body;
+    body.push_back(0xC0); // pmap: stop + template-id present
+    body.push_back(0x01); // (0x10000000 >> 28) & 0x0F
+    body.push_back(0x00);
+    body.push_back(0x00);
+    body.push_back(0x00);
+    body.push_back(0x80); // stop bit
+
+    auto r = probe.probe(make_transport(1), body);
+    CHECK(r.code == SequenceResetProbeCode::NormalMessage);
+    CHECK(!r.reset_message.has_value());
+    CHECK(probe.state() == SequenceResetProbeState::Ready);
+
+    TEST_PASS("valid_canonical_template_0x10000000");
+}
+
+static void test_valid_canonical_template_uint32_max() {
+    auto compiled = compile_minimal(kFullTemplateXml);
+    SequenceResetProbe probe;
+    (void)probe.initialize(compiled);
+
+    // Template ID UINT32_MAX (canonical 5-byte stop-bit encoding)
+    std::vector<std::uint8_t> body;
+    body.push_back(0xC0); // pmap: stop + template-id present
+    body.push_back(0x0F);
+    body.push_back(0x7F);
+    body.push_back(0x7F);
+    body.push_back(0x7F);
+    body.push_back(0xFF); // stop bit
+
+    auto r = probe.probe(make_transport(1), body);
+    CHECK(r.code == SequenceResetProbeCode::NormalMessage);
+    CHECK(!r.reset_message.has_value());
+    CHECK(probe.state() == SequenceResetProbeState::Ready);
+
+    TEST_PASS("valid_canonical_template_uint32_max");
+}
+
+static void test_raw_2pow32_overflow() {
+    auto compiled = compile_minimal(kFullTemplateXml);
+    SequenceResetProbe probe;
+    (void)probe.initialize(compiled);
+
+    // Raw value 2^32 (0x100000000) -> IntegerOverflow
+    std::vector<std::uint8_t> body;
+    body.push_back(0xC0); // pmap: stop + template-id present
+    body.push_back(0x10);
+    body.push_back(0x00);
+    body.push_back(0x00);
+    body.push_back(0x00);
+    body.push_back(0x80); // stop bit
+
+    auto r = probe.probe(make_transport(1), body);
+    CHECK(r.code == SequenceResetProbeCode::HeaderDecodeFailed);
+    CHECK(r.decode_status == DecodeStatus::IntegerOverflow);
+    CHECK(probe.state() == SequenceResetProbeState::Failed);
+
+    TEST_PASS("raw_2pow32_overflow");
+}
+
+static void test_exactly_five_bytes_no_stop() {
+    auto compiled = compile_minimal(kFullTemplateXml);
+    SequenceResetProbe probe;
+    (void)probe.initialize(compiled);
+
+    // Exactly 5 continuation bytes without stop bit -> InvalidEncoding
+    std::vector<std::uint8_t> body;
+    body.push_back(0xC0); // pmap: stop + template-id present
+    body.push_back(0x00);
+    body.push_back(0x00);
+    body.push_back(0x00);
+    body.push_back(0x00);
+    body.push_back(0x00);
+
+    auto r = probe.probe(make_transport(1), body);
+    CHECK(r.code == SequenceResetProbeCode::HeaderDecodeFailed);
+    CHECK(r.decode_status == DecodeStatus::InvalidEncoding);
+    CHECK(probe.state() == SequenceResetProbeState::Failed);
+
+    TEST_PASS("exactly_five_bytes_no_stop");
+}
+
+static void test_early_truncation_need_more_data() {
+    auto compiled = compile_minimal(kFullTemplateXml);
+    SequenceResetProbe probe;
+    (void)probe.initialize(compiled);
+
+    // 2 continuation bytes, buffer ends before stop bit -> NeedMoreData
+    std::vector<std::uint8_t> body;
+    body.push_back(0xC0); // pmap: stop + template-id present
+    body.push_back(0x00);
+    body.push_back(0x00);
+
+    auto r = probe.probe(make_transport(1), body);
+    CHECK(r.code == SequenceResetProbeCode::HeaderDecodeFailed);
+    CHECK(r.decode_status == DecodeStatus::NeedMoreData);
+    CHECK(probe.state() == SequenceResetProbeState::Failed);
+
+    TEST_PASS("early_truncation_need_more_data");
+}
+
 // ===========================================================================
 // main
 // ===========================================================================
@@ -1174,7 +1281,12 @@ int main() {
     test_move_assignment();
     test_fast_body_unchanged_normal();
     test_fast_body_unchanged_reset();
+    test_valid_canonical_template_0x10000000();
+    test_valid_canonical_template_uint32_max();
+    test_raw_2pow32_overflow();
+    test_exactly_five_bytes_no_stop();
+    test_early_truncation_need_more_data();
 
-    std::cout << "ALL TESTS PASSED (51 tests)\n";
+    std::cout << "ALL TESTS PASSED (57 tests)\n";
     return 0;
 }

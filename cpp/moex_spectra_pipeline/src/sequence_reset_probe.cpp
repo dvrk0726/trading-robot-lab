@@ -2,6 +2,8 @@
 
 #include <cstring>
 
+#include "moex_fast/wire_cursor.hpp"
+
 namespace moex_spectra_pipeline {
 
 // ---------------------------------------------------------------------------
@@ -91,52 +93,20 @@ static HeaderParseResult parse_fast_header(
     // 3. Template-ID-present bit
     result.template_id_present = first_data_bit;
 
-    // 4. If template-id present, read stop-bit u32
+    // 4. If template-id present, read stop-bit u32 via WireCursor
     if (result.template_id_present) {
         std::size_t pos = pmap_byte_count;
+        std::size_t remaining = size - pos;
+        moex_fast::WireCursor cursor(data + pos, remaining);
         std::uint32_t tid = 0;
-
-        // Manually decode stop-bit u32 from remaining bytes
-        std::uint32_t value = 0;
-        std::size_t bytes_read = 0;
-        constexpr std::size_t kMaxStopBitBytes = 5; // u32: max 5 bytes
-
-        for (std::size_t i = 0; i < kMaxStopBitBytes; ++i) {
-            if (pos + i >= size) {
-                result.status = moex_fast::DecodeStatus::NeedMoreData;
-                return result;
-            }
-            std::uint8_t b = data[pos + i];
-            ++bytes_read;
-
-            // Overflow check: for u32, max 5 bytes, max value bits = 35
-            if (i == 4) {
-                // 5th byte: only bits 0..3 are valid data (4 bits)
-                if (b & 0xF0) {
-                    result.status = moex_fast::DecodeStatus::IntegerOverflow;
-                    return result;
-                }
-            }
-
-            value = (value << 7) | static_cast<std::uint32_t>(b & 0x7F);
-
-            if (b & 0x80) {
-                // Check for non-canonical leading zeros: if we have more than 1 byte
-                // and the first byte is zero, it's non-canonical
-                if (bytes_read > 1 && data[pos] == 0) {
-                    result.status = moex_fast::DecodeStatus::NonCanonicalEncoding;
-                    return result;
-                }
-                tid = value;
-                result.template_id = tid;
-                result.header_bytes = pmap_byte_count + bytes_read;
-                result.status = moex_fast::DecodeStatus::Ok;
-                return result;
-            }
+        auto ws = cursor.read_stopbit_u32(tid);
+        if (ws != moex_fast::DecodeStatus::Ok) {
+            result.status = ws;
+            return result;
         }
-
-        // Exceeded max stop-bit bytes without stop bit
-        result.status = moex_fast::DecodeStatus::NonCanonicalEncoding;
+        result.template_id = tid;
+        result.header_bytes = pos + cursor.position();
+        result.status = moex_fast::DecodeStatus::Ok;
         return result;
     }
 
@@ -221,14 +191,20 @@ SequenceResetProbeInitResult SequenceResetProbe::initialize(
         return {SequenceResetProbeCode::InvalidConfig};
     }
 
-    // Transactional commit
-    impl_->compiled_ = compiled;
-    impl_->limits_ = limits;
-    impl_->decoder_ = std::make_unique<moex_fast::DecoderSession>(compiled, limits);
-    impl_->state_ = SequenceResetProbeState::Ready;
-    impl_->terminal_code_ = SequenceResetProbeCode::NormalMessage;
-    impl_->has_previous_template_id_ = false;
-    impl_->previous_template_id_ = 0;
+    // Transactional commit: prepare locally, then commit via noexcept moves
+    try {
+        moex_fast::CompiledTemplateSet local_compiled = compiled;
+        auto local_decoder = std::make_unique<moex_fast::DecoderSession>(local_compiled, limits);
+        impl_->compiled_ = std::move(local_compiled);
+        impl_->limits_ = limits;
+        impl_->decoder_ = std::move(local_decoder);
+        impl_->state_ = SequenceResetProbeState::Ready;
+        impl_->terminal_code_ = SequenceResetProbeCode::NormalMessage;
+        impl_->has_previous_template_id_ = false;
+        impl_->previous_template_id_ = 0;
+    } catch (...) {
+        return {SequenceResetProbeCode::InternalInvariantViolation};
+    }
 
     return {SequenceResetProbeCode::NormalMessage};
 }
