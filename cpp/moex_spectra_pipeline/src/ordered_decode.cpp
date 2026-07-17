@@ -201,7 +201,6 @@ OrderedDecodeResult OrderedDecodeSession::decode_ordered(
     bool tag35_present = false;
     bool tag35_is_null = false;
     bool tag35_is_string = false;
-    bool tag35_is_constant = false;
 
     for (const auto& field : dr.message.fields) {
         if (!field.has_fix_tag) continue;
@@ -231,7 +230,6 @@ OrderedDecodeResult OrderedDecodeSession::decode_ordered(
             found_tag35 = true;
             tag35_present = field.is_present;
             tag35_is_null = field.is_null;
-            tag35_is_constant = (field.source == moex_fast::ValueSource::Constant);
             if (auto* p = std::get_if<std::string>(&field.value)) {
                 tag35_is_string = true;
                 tag35_value = *p;
@@ -240,12 +238,12 @@ OrderedDecodeResult OrderedDecodeSession::decode_ordered(
     }
 
     // --- Tag 34 checks ---
-    if (!found_tag34 || !tag34_present || tag34_is_null) {
+    if (!found_tag34) {
         impl_->state_ = OrderedDecodeState::Failed;
         impl_->terminal_code_ = OrderedDecodeCode::MissingTag34;
         return {OrderedDecodeCode::MissingTag34, dr.status, {}, std::nullopt};
     }
-    if (!tag34_is_wire || !tag34_is_uint64) {
+    if (!tag34_present || tag34_is_null || !tag34_is_wire || !tag34_is_uint64) {
         impl_->state_ = OrderedDecodeState::Failed;
         impl_->terminal_code_ = OrderedDecodeCode::InvalidTag34;
         return {OrderedDecodeCode::InvalidTag34, dr.status, {}, std::nullopt};
@@ -257,31 +255,15 @@ OrderedDecodeResult OrderedDecodeSession::decode_ordered(
     }
 
     // --- Tag 35 checks ---
-    if (!found_tag35 || !tag35_present || tag35_is_null) {
+    if (!found_tag35) {
         impl_->state_ = OrderedDecodeState::Failed;
         impl_->terminal_code_ = OrderedDecodeCode::MissingTag35;
         return {OrderedDecodeCode::MissingTag35, dr.status, {}, std::nullopt};
     }
-    // Constant tag 35 is allowed
-    if (!tag35_is_string && !tag35_is_constant) {
+    if (!tag35_present || tag35_is_null || !tag35_is_string || tag35_value.empty()) {
         impl_->state_ = OrderedDecodeState::Failed;
         impl_->terminal_code_ = OrderedDecodeCode::InvalidTag35;
         return {OrderedDecodeCode::InvalidTag35, dr.status, {}, std::nullopt};
-    }
-    if (tag35_value.empty() && !tag35_is_constant) {
-        impl_->state_ = OrderedDecodeState::Failed;
-        impl_->terminal_code_ = OrderedDecodeCode::InvalidTag35;
-        return {OrderedDecodeCode::InvalidTag35, dr.status, {}, std::nullopt};
-    }
-
-    // For constant tag 35 without a string value, we need the actual string
-    // If tag35 is constant and tag35_value is empty, check if it has a string in value
-    if (tag35_is_constant && tag35_value.empty()) {
-        // Constant fields store their value; if string variant holds it, we already have it.
-        // If not, this is an invariant issue.
-        impl_->state_ = OrderedDecodeState::Failed;
-        impl_->terminal_code_ = OrderedDecodeCode::InternalInvariantViolation;
-        return {OrderedDecodeCode::InternalInvariantViolation, dr.status, {}, std::nullopt};
     }
 
     // --- SequenceReset check (tag 35 == "4") ---

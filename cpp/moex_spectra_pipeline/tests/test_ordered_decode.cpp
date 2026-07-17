@@ -276,7 +276,7 @@ static void test_null_tag34() {
     body.push_back(0x80); // nullable uInt32 NULL
 
     auto dr = session.decode_ordered(make_transport(42), body);
-    CHECK(dr.code == OrderedDecodeCode::MissingTag34);
+    CHECK(dr.code == OrderedDecodeCode::InvalidTag34);
 
     TEST_PASS("null_tag34");
 }
@@ -448,7 +448,7 @@ static void test_null_tag35() {
     body.push_back(0xAA); // tag34 = 42
 
     auto dr = session.decode_ordered(make_transport(42), body);
-    CHECK(dr.code == OrderedDecodeCode::MissingTag35);
+    CHECK(dr.code == OrderedDecodeCode::InvalidTag35);
 
     TEST_PASS("null_tag35");
 }
@@ -525,6 +525,60 @@ static void test_constant_tag35() {
     CHECK(dr.decoded_message->msg_type == "D");
 
     TEST_PASS("constant_tag35");
+}
+
+static void test_constant_tag35_wrong_type() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="TestMsg">
+    <uInt32 name="MsgType" id="35"><constant>68</constant></uInt32>
+    <uInt32 name="MsgSeqNum" id="34"/>
+  </template>
+</templates>)";
+
+    auto compiled = compile_minimal(xml);
+    RawSegmentMetadata ma, mb;
+    make_metadata_pair(compiled, ma, mb);
+
+    OrderedDecodeSession session;
+    (void)session.initialize(compiled, ma, mb);
+
+    std::vector<std::uint8_t> body;
+    body.push_back(0xC0);
+    body.push_back(0x81);
+    encode_stopbit_u32(body, 42);
+
+    auto dr = session.decode_ordered(make_transport(42), body);
+    CHECK(dr.code == OrderedDecodeCode::InvalidTag35);
+
+    TEST_PASS("constant_tag35_wrong_type");
+}
+
+static void test_constant_tag35_empty() {
+    const char* xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<templates>
+  <template id="1" name="TestMsg">
+    <string name="MsgType" id="35"><constant></constant></string>
+    <uInt32 name="MsgSeqNum" id="34"/>
+  </template>
+</templates>)";
+
+    auto compiled = compile_minimal(xml);
+    RawSegmentMetadata ma, mb;
+    make_metadata_pair(compiled, ma, mb);
+
+    OrderedDecodeSession session;
+    (void)session.initialize(compiled, ma, mb);
+
+    std::vector<std::uint8_t> body;
+    body.push_back(0xC0);
+    body.push_back(0x81);
+    encode_stopbit_u32(body, 42);
+
+    auto dr = session.decode_ordered(make_transport(42), body);
+    CHECK(dr.code == OrderedDecodeCode::InvalidTag35);
+
+    TEST_PASS("constant_tag35_empty");
 }
 
 static void test_sequence_reset_rejected() {
@@ -641,14 +695,20 @@ static void test_template_id_reuse() {
     OrderedDecodeSession session;
     (void)session.initialize(compiled, ma, mb);
 
+    // First message: pmap 0xC0 with template-ID present, tag34=1
     auto body1 = make_msg(1);
     auto dr1 = session.decode_ordered(make_transport(1), body1);
     CHECK(dr1.code == OrderedDecodeCode::Ok);
 
-    auto body2 = make_msg(2);
+    // Second message: pmap 0x80 (stop only, no template-ID) -> reuse previous template
+    // Only wire bytes for tag34=2; tag35 is constant "D" (no wire)
+    std::vector<std::uint8_t> body2;
+    body2.push_back(0x80); // pmap: stop bit only, no template-ID
+    encode_stopbit_u32(body2, 2);
     auto dr2 = session.decode_ordered(make_transport(2), body2);
     CHECK(dr2.code == OrderedDecodeCode::Ok);
     CHECK(dr2.decoded_message->msg_seq_num == 2u);
+    CHECK(dr2.decoded_message->msg_type == "D");
 
     TEST_PASS("template_id_reuse");
 }
@@ -729,7 +789,6 @@ static void test_metadata_b_a() {
     auto compiled = compile_minimal(kBasicTemplateXml);
     RawSegmentMetadata ma, mb;
     make_metadata_pair(compiled, ma, mb);
-    std::swap(ma.source.source_side, mb.source.source_side);
 
     OrderedDecodeSession session;
     auto ir = session.initialize(compiled, mb, ma);
@@ -966,6 +1025,8 @@ int main() {
     test_wrong_type_tag35();
     test_empty_tag35();
     test_constant_tag35();
+    test_constant_tag35_wrong_type();
+    test_constant_tag35_empty();
     test_sequence_reset_rejected();
     test_malformed_fast();
     test_trailing_bytes();
@@ -991,6 +1052,6 @@ int main() {
     test_move_assignment();
     test_failed_then_decode();
 
-    std::cout << "ALL TESTS PASSED (41 tests)\n";
+    std::cout << "ALL TESTS PASSED (43 tests)\n";
     return 0;
 }
