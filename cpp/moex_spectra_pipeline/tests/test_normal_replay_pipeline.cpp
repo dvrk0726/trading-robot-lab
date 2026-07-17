@@ -928,6 +928,9 @@ struct NormalReplayPipelineTestAccess {
     static NormalPipelineCode classify_replay_code(moex_raw::AbReplayCode code) {
         return NormalReplayPipeline::classify_replay_code(code);
     }
+    static NormalPipelineCode classify_decode_result(OrderedDecodeCode code, bool has_message) {
+        return NormalReplayPipeline::classify_decode_result(code, has_message);
+    }
 };
 }  // namespace moex_spectra_pipeline
 
@@ -1514,10 +1517,11 @@ static void test_overflow_initialization_retry() {
     auto paths_a = write_segment(mp.a, (dir / "a").string(), 0, 100, make_datagram(1));
     auto paths_b = write_segment(mp.b, (dir / "b").string(), 0, 200, make_datagram(1));
 
-    // Overflow config: slot_count * max_msg_bytes is huge, triggers bad_alloc in try/catch
+    // Arithmetic overflow guard: slot_count=2, max_message_bytes=SIZE_MAX
+    // → 2 > SIZE_MAX / SIZE_MAX → 2 > 1 → true (hits guard before allocation)
     NormalPipelineConfig overflow_cfg = make_default_config();
-    overflow_cfg.sequencer.storage.max_reorder_messages = (std::numeric_limits<std::uint32_t>::max)();
-    overflow_cfg.sequencer.storage.max_message_bytes = (std::numeric_limits<std::uint32_t>::max)();
+    overflow_cfg.sequencer.storage.max_reorder_messages = 2;
+    overflow_cfg.sequencer.storage.max_message_bytes = (std::numeric_limits<std::size_t>::max)();
 
     NormalPipelineConfig good_cfg = make_default_config();
 
@@ -1563,19 +1567,36 @@ static void test_replay_code_classification() {
 }
 
 static void test_ok_without_message_classification() {
-    // This tests the sink adapter behavior: Ok without decoded_message → InternalInvariantViolation.
-    // The decoder never naturally returns Ok without a message, so we verify the
-    // classify path via friend access and confirm the pipeline handles it correctly
-    // by checking the decode_code in the result.
-    //
-    // Direct integration reproduction is impossible because the decoder always pairs
-    // Ok with a message. The sink adapter code path is verified by code inspection
-    // and the friend-accessible classification helper.
-    using namespace moex_raw;
     using TA = NormalReplayPipelineTestAccess;
 
-    // Verify that InternalInvariantViolation maps to ReplayFailed at pipeline level
-    CHECK(TA::classify_replay_code(AbReplayCode::InternalInvariantViolation) == NormalPipelineCode::ReplayFailed);
+    // Ok + message → Ok
+    CHECK(TA::classify_decode_result(OrderedDecodeCode::Ok, true) == NormalPipelineCode::Ok);
+
+    // Ok without message → InternalInvariantViolation
+    CHECK(TA::classify_decode_result(OrderedDecodeCode::Ok, false) == NormalPipelineCode::InternalInvariantViolation);
+
+    // Non-Ok codes → DecodeFailed (table-driven)
+    const OrderedDecodeCode non_ok_codes[] = {
+        OrderedDecodeCode::NotInitialized,
+        OrderedDecodeCode::AlreadyInitialized,
+        OrderedDecodeCode::InvalidConfig,
+        OrderedDecodeCode::TemplateHashMismatch,
+        OrderedDecodeCode::DecodeFailed,
+        OrderedDecodeCode::MissingTag34,
+        OrderedDecodeCode::DuplicateTag34,
+        OrderedDecodeCode::InvalidTag34,
+        OrderedDecodeCode::Tag34OutOfRange,
+        OrderedDecodeCode::MissingTag35,
+        OrderedDecodeCode::DuplicateTag35,
+        OrderedDecodeCode::InvalidTag35,
+        OrderedDecodeCode::SequenceResetUnsupported,
+        OrderedDecodeCode::ExternalInternalSequenceMismatch,
+        OrderedDecodeCode::InternalInvariantViolation,
+    };
+    for (auto code : non_ok_codes) {
+        CHECK(TA::classify_decode_result(code, false) == NormalPipelineCode::DecodeFailed);
+        CHECK(TA::classify_decode_result(code, true) == NormalPipelineCode::DecodeFailed);
+    }
 
     TEST_PASS("ok_without_message_classification");
 }

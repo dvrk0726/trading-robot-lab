@@ -79,6 +79,18 @@ NormalPipelineCode NormalReplayPipeline::classify_replay_code(
 }
 
 // ---------------------------------------------------------------------------
+// classify_decode_result (production classifier for sink adapter)
+// ---------------------------------------------------------------------------
+
+NormalPipelineCode NormalReplayPipeline::classify_decode_result(
+    OrderedDecodeCode code, bool has_message) noexcept {
+    if (code != OrderedDecodeCode::Ok)
+        return NormalPipelineCode::DecodeFailed;
+    return has_message ? NormalPipelineCode::Ok
+                       : NormalPipelineCode::InternalInvariantViolation;
+}
+
+// ---------------------------------------------------------------------------
 // initialize (fully transactional)
 // ---------------------------------------------------------------------------
 
@@ -252,24 +264,25 @@ NormalPipelineRunResult NormalReplayPipeline::run_to_end() {
         Impl* impl;
         bool decode_error = false;
         bool callback_threw = false;
+        bool ok_without_message = false;
         OrderedDecodeCode last_decode_code = OrderedDecodeCode::Ok;
 
         void operator()(const moex::spectra::OrderedMessageMetadata& meta,
                         std::span<const std::uint8_t> fast_body) noexcept {
-            if (decode_error || callback_threw) return;
+            if (decode_error || callback_threw || ok_without_message) return;
             try {
                 auto dr = impl->decoder_.decode_ordered(
                     {meta.msg_seq_num, meta.side, meta.capture_index, meta.capture_monotonic_ns},
                     fast_body);
 
-                if (dr.code == OrderedDecodeCode::Ok) {
-                    if (!dr.decoded_message) {
-                        decode_error = true;
-                        last_decode_code = OrderedDecodeCode::InternalInvariantViolation;
-                        return;
-                    }
+                auto classification = NormalReplayPipeline::classify_decode_result(
+                    dr.code, dr.decoded_message.has_value());
+
+                if (classification == NormalPipelineCode::Ok) {
                     impl->callback_(impl->callback_context_, std::move(*dr.decoded_message));
                     impl->emitted_messages_++;
+                } else if (classification == NormalPipelineCode::InternalInvariantViolation) {
+                    ok_without_message = true;
                 } else {
                     decode_error = true;
                     last_decode_code = dr.code;
@@ -341,6 +354,16 @@ NormalPipelineRunResult NormalReplayPipeline::run_to_end() {
                     moex_raw::AbReplayCode::Ok, moex::spectra::FrameCode::Ok,
                     moex::spectra::SequencerCode::NoAction,
                     OrderedDecodeCode::InternalInvariantViolation,
+                    impl_->input_packets_, impl_->emitted_messages_};
+        }
+        if (sink.ok_without_message) {
+            impl_->state_ = NormalPipelineState::Failed;
+            impl_->terminal_code_ = NormalPipelineCode::InternalInvariantViolation;
+            impl_->decode_code_ = OrderedDecodeCode::Ok;
+            return {NormalPipelineCode::InternalInvariantViolation,
+                    moex_raw::AbReplayCode::Ok, moex::spectra::FrameCode::Ok,
+                    moex::spectra::SequencerCode::NoAction,
+                    OrderedDecodeCode::Ok,
                     impl_->input_packets_, impl_->emitted_messages_};
         }
         if (sink.decode_error) {

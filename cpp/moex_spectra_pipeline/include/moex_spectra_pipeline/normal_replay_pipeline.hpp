@@ -102,6 +102,7 @@ public:
 private:
     friend struct NormalReplayPipelineTestAccess;
     static NormalPipelineCode classify_replay_code(moex_raw::AbReplayCode code) noexcept;
+    static NormalPipelineCode classify_decode_result(OrderedDecodeCode code, bool has_message) noexcept;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
