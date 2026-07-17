@@ -22,6 +22,7 @@ add_library(moex_raw_lib STATIC
     src/raw_segment_writer.cpp
     src/raw_segment_reader.cpp
     src/raw_replay.cpp
+    src/raw_replay_cursor.cpp
     src/raw_report.cpp
 )
 target_include_directories(moex_raw_lib PUBLIC include)

@@ -365,91 +365,106 @@ void serialize_record(std::vector<std::uint8_t>& buf, const RawPacketRecord& rec
     write_u32_le(buf, record_crc);
 }
 
-bool deserialize_record_header(const std::uint8_t* data, std::size_t available,
-                               RawPacketRecord& rec, std::size_t& record_total_size,
-                               std::vector<RawValidationIssue>& issues) {
-    // Minimum: 44 bytes for record header
+bool deserialize_record_view(const std::uint8_t* data, std::size_t available,
+                             RawPacketRecordView& out, std::size_t& record_total_size,
+                             std::vector<RawValidationIssue>& issues) {
+    out = {};
+
     if (available < kRecordHeaderSize) {
         add_issue(issues, ValidationSeverity::Error, "TRUNCATED_RECORD", "Truncated record header");
         return false;
     }
 
-    // record_magic
     if (std::memcmp(data, kMagicRec, 4) != 0) {
         add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_MAGIC", "Wrong record magic");
         return false;
     }
 
-    // record_header_size
     std::uint16_t header_size = read_u16_le(data + 4);
     if (header_size != kRecordHeaderSize) {
         add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_HEADER_SIZE", "Record header size not 44");
         return false;
     }
 
-    // record_flags
-    rec.record_flags = read_u16_le(data + 6);
-    if (rec.record_flags & ~kRecordFlagUtcValid) {
+    out.record_flags = read_u16_le(data + 6);
+    if (out.record_flags & ~kRecordFlagUtcValid) {
         add_issue(issues, ValidationSeverity::Error, "UNKNOWN_RECORD_FLAG", "Unknown record flag bit");
+        out = {};
         return false;
     }
 
-    // record_size
     std::uint32_t record_size = read_u32_le(data + 8);
     std::uint32_t payload_size = read_u32_le(data + 36);
 
-    // Validate payload_size
     if (payload_size > kMaxPayloadSize) {
         add_issue(issues, ValidationSeverity::Error, "PAYLOAD_TOO_LARGE", "Payload exceeds 1 MiB");
+        out = {};
         return false;
     }
 
-    // Validate record_size = 44 + payload_size + 4
     std::uint32_t expected_record_size = kRecordHeaderSize + payload_size + 4;
     if (record_size != expected_record_size) {
         add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_SIZE", "record_size mismatch");
+        out = {};
         return false;
     }
 
     record_total_size = record_size;
 
-    // Check if we have enough data
     if (available < record_size) {
         add_issue(issues, ValidationSeverity::Error, "TRUNCATED_RECORD", "Truncated record (payload or checksum)");
+        out = {};
         return false;
     }
 
-    rec.capture_index = read_u64_le(data + 12);
-    rec.capture_utc_ns = read_u64_le(data + 20);
-    rec.capture_monotonic_ns = read_u64_le(data + 28);
+    out.capture_index = read_u64_le(data + 12);
+    out.capture_utc_ns = read_u64_le(data + 20);
+    out.capture_monotonic_ns = read_u64_le(data + 28);
 
-    // payload CRC32C
     std::uint32_t stored_payload_crc = read_u32_le(data + 40);
     const std::uint8_t* payload_data = data + kRecordHeaderSize;
 
     if (payload_size == 0) {
         if (stored_payload_crc != 0) {
             add_issue(issues, ValidationSeverity::Error, "WRONG_PAYLOAD_CRC", "Zero-length payload but non-zero CRC");
+            out = {};
             return false;
         }
-        rec.payload.clear();
     } else {
-        std::uint32_t computed_payload_crc = crc32c(payload_data, payload_size);
-        if (stored_payload_crc != computed_payload_crc) {
+        std::uint32_t computed = crc32c(payload_data, payload_size);
+        if (stored_payload_crc != computed) {
             add_issue(issues, ValidationSeverity::Error, "WRONG_PAYLOAD_CRC", "Payload CRC32C mismatch");
+            out = {};
             return false;
         }
-        rec.payload.assign(payload_data, payload_data + payload_size);
     }
 
-    // record CRC32C — over all record bytes before the final 4-byte field
+    out.payload = std::span<const std::uint8_t>(payload_data, payload_size);
+
     std::uint32_t stored_record_crc = read_u32_le(data + record_size - 4);
     std::uint32_t computed_record_crc = crc32c(data, record_size - 4);
     if (stored_record_crc != computed_record_crc) {
         add_issue(issues, ValidationSeverity::Error, "WRONG_RECORD_CRC", "Record CRC32C mismatch");
+        out = {};
         return false;
     }
 
+    return true;
+}
+
+bool deserialize_record_header(const std::uint8_t* data, std::size_t available,
+                               RawPacketRecord& rec, std::size_t& record_total_size,
+                               std::vector<RawValidationIssue>& issues) {
+    RawPacketRecordView view;
+    if (!deserialize_record_view(data, available, view, record_total_size, issues)) {
+        return false;
+    }
+
+    rec.record_flags = view.record_flags;
+    rec.capture_index = view.capture_index;
+    rec.capture_utc_ns = view.capture_utc_ns;
+    rec.capture_monotonic_ns = view.capture_monotonic_ns;
+    rec.payload.assign(view.payload.begin(), view.payload.end());
     return true;
 }
 

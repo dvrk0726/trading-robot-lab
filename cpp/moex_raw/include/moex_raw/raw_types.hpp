@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -183,6 +184,19 @@ bool deserialize_header(const std::uint8_t* data, std::size_t len, RawSegmentMet
                         std::size_t& header_size, std::vector<RawValidationIssue>& issues);
 
 void serialize_record(std::vector<std::uint8_t>& buf, const RawPacketRecord& rec);
+
+struct RawPacketRecordView {
+    std::uint16_t record_flags = 0;
+    std::uint64_t capture_index = 0;
+    std::uint64_t capture_utc_ns = 0;
+    std::uint64_t capture_monotonic_ns = 0;
+    std::span<const std::uint8_t> payload;
+};
+
+bool deserialize_record_view(const std::uint8_t* data, std::size_t available,
+                             RawPacketRecordView& out, std::size_t& record_total_size,
+                             std::vector<RawValidationIssue>& issues);
+
 bool deserialize_record_header(const std::uint8_t* data, std::size_t available,
                                RawPacketRecord& rec, std::size_t& record_total_size,
                                std::vector<RawValidationIssue>& issues);

@@ -3,13 +3,18 @@
 #endif
 
 #include "moex_raw/raw_replay.hpp"
+#include "moex_raw/raw_replay_cursor.hpp"
 #include "moex_raw/raw_segment.hpp"
 #include "moex_raw/raw_types.hpp"
 #include "moex_raw/sha256.hpp"
+#include "moex_raw/endian.hpp"
+#include "moex_raw/crc32c.hpp"
+#include "moex_raw/file_position.hpp"
 #include "test_check.hpp"
 #include <iostream>
 #include <filesystem>
 #include <cstring>
+#include <fstream>
 
 namespace fs = std::filesystem;
 
@@ -257,6 +262,581 @@ int main() {
 
         auto digest = compute_replay_sha256(meta, records);
         CHECK(digest.size() == 64);  // hex SHA-256
+    }
+
+    // --- Cursor tests ---
+
+    // Cursor: single-segment cursor
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 5; ++i) {
+            RawPacketRecord rec;
+            rec.record_flags = kRecordFlagUtcValid;
+            rec.capture_index = i;
+            rec.capture_utc_ns = 1000 + i;
+            rec.capture_monotonic_ns = i * 100;
+            rec.payload = {static_cast<std::uint8_t>(i), 0xAA};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Uninitialized);
+        auto init = cursor.initialize(paths);
+        CHECK(init == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Ready);
+
+        std::uint64_t count = 0;
+        RawPacketRecord rec;
+        while (cursor.next(rec)) {
+            CHECK(rec.capture_index == count);
+            CHECK(rec.capture_monotonic_ns == count * 100);
+            count++;
+        }
+        CHECK(count == 5);
+        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+    }
+
+    // Cursor: multi-segment cursor
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentRotationPolicy pol;
+        pol.max_records_per_segment = 3;
+
+        RawSegmentWriter writer(meta, dir, pol);
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 9; ++i) {
+            RawPacketRecord rec;
+            rec.record_flags = kRecordFlagUtcValid;
+            rec.capture_index = i;
+            rec.capture_utc_ns = 1000 + i;
+            rec.capture_monotonic_ns = i * 100;
+            rec.payload = {static_cast<std::uint8_t>(i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        CHECK(paths.size() == 3);
+
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        std::uint64_t count = 0;
+        RawPacketRecord rec;
+        while (cursor.next(rec)) {
+            CHECK(rec.capture_index == count);
+            count++;
+        }
+        CHECK(count == 9);
+        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+    }
+
+    // Cursor: reverse input paths
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentRotationPolicy pol;
+        pol.max_records_per_segment = 2;
+
+        RawSegmentWriter writer(meta, dir, pol);
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 6; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        CHECK(paths.size() == 3);
+
+        // Reverse the paths
+        std::vector<std::string> reversed(paths.rbegin(), paths.rend());
+
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(reversed) == ValidatedReplayCursor::InitStatus::Ok);
+
+        std::uint64_t count = 0;
+        RawPacketRecord rec;
+        while (cursor.next(rec)) {
+            CHECK(rec.capture_index == count);
+            count++;
+        }
+        CHECK(count == 6);
+    }
+
+    // Cursor: capture_index continuity across segment boundaries
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentRotationPolicy pol;
+        pol.max_records_per_segment = 4;
+
+        RawSegmentWriter writer(meta, dir, pol);
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 10; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i * 10;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        CHECK(paths.size() == 3);  // 4 + 4 + 2
+
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        std::uint64_t prev = 0;
+        bool first = true;
+        RawPacketRecord rec;
+        while (cursor.next(rec)) {
+            if (!first) {
+                CHECK(rec.capture_index == prev + 1);
+            }
+            prev = rec.capture_index;
+            first = false;
+        }
+        CHECK(prev == 9);
+    }
+
+    // Cursor: byte-identical payload
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        RawPacketRecord orig;
+        orig.capture_index = 0;
+        orig.capture_monotonic_ns = 0;
+        orig.payload = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
+        writer.append(orig);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        RawPacketRecord rec;
+        CHECK(cursor.next(rec));
+        CHECK(rec.payload == orig.payload);
+        CHECK(!cursor.next(rec));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+    }
+
+    // Cursor: zero-length payload
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        RawPacketRecord orig;
+        orig.capture_index = 0;
+        orig.capture_monotonic_ns = 0;
+        // empty payload
+        writer.append(orig);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        RawPacketRecord rec;
+        CHECK(cursor.next(rec));
+        CHECK(rec.payload.empty());
+        CHECK(!cursor.next(rec));
+    }
+
+    // Cursor: borrowed view is valid during next
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            rec.payload = {static_cast<std::uint8_t>(0xA0 + i), static_cast<std::uint8_t>(0xB0 + i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+
+        // Test deserialize_record_view directly (borrowed view)
+        auto fh = std::fopen(paths[0].c_str(), "rb");
+        CHECK(fh != nullptr);
+
+        // Read past header
+        std::uint8_t preamble[14];
+        CHECK(std::fread(preamble, 1, 14, fh) == 14);
+        std::size_t hsize = moex_raw::read_u32_le(preamble + 10);
+        moex_raw::fseek64(fh, static_cast<std::int64_t>(hsize), SEEK_SET);
+
+        // Read one full record
+        std::uint8_t rec_hdr[44];
+        CHECK(std::fread(rec_hdr, 1, 44, fh) == 44);
+        std::uint32_t rsize = moex_raw::read_u32_le(rec_hdr + 8);
+        std::vector<std::uint8_t> full_rec(rsize);
+        std::memcpy(full_rec.data(), rec_hdr, 44);
+        CHECK(std::fread(full_rec.data() + 44, 1, rsize - 44, fh) == rsize - 44);
+        std::fclose(fh);
+
+        RawPacketRecordView view;
+        std::size_t rtotal = 0;
+        std::vector<RawValidationIssue> vis;
+        CHECK(deserialize_record_view(full_rec.data(), full_rec.size(), view, rtotal, vis));
+        CHECK(view.payload.size() == 2);
+        CHECK(view.payload.data() == full_rec.data() + 44);
+        CHECK(view.payload[0] == 0xA0);
+        CHECK(view.payload[1] == 0xB0);
+        CHECK(view.capture_index == 0);
+    }
+
+    // Cursor: invalid initialize and valid retry
+    {
+        auto dir = temp_dir();
+        std::vector<std::string> bad_paths = {dir + "/nonexistent.mxraw"};
+
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(bad_paths) == ValidatedReplayCursor::InitStatus::Failed);
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Uninitialized);
+
+        // Retry with valid data
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Ready);
+    }
+
+    // Cursor: AlreadyInitialized preserves position
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 5; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        // Read 2 records
+        RawPacketRecord rec;
+        CHECK(cursor.next(rec));
+        CHECK(rec.capture_index == 0);
+        CHECK(cursor.next(rec));
+        CHECK(rec.capture_index == 1);
+
+        // Re-initialize should return AlreadyInitialized
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::AlreadyInitialized);
+
+        // Position should be preserved — next record is 2
+        CHECK(cursor.next(rec));
+        CHECK(rec.capture_index == 2);
+        CHECK(cursor.next(rec));
+        CHECK(rec.capture_index == 3);
+        CHECK(cursor.next(rec));
+        CHECK(rec.capture_index == 4);
+        CHECK(!cursor.next(rec));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+    }
+
+    // Cursor: stable End
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        RawPacketRecord out;
+        CHECK(cursor.next(out));
+        CHECK(!cursor.next(out));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+
+        // End is stable
+        CHECK(!cursor.next(out));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+        CHECK(!cursor.next(out));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::End);
+    }
+
+    // Cursor: truncation after initialize gives StreamChanged
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 5; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            rec.payload = {static_cast<std::uint8_t>(i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        // Truncate the file: remove last 10 bytes
+        {
+            auto& p = paths[0];
+            auto sz = fs::file_size(p);
+            fs::resize_file(p, sz - 10);
+        }
+
+        RawPacketRecord out;
+        // First read may succeed (from header), but subsequent reads detect truncation
+        // The file size check on open will catch it
+        bool got_stream_changed = false;
+        while (cursor.next(out)) {
+            // May read some records before detecting
+        }
+        if (cursor.state() == ValidatedReplayCursor::State::Failed &&
+            cursor.error_code() == CursorErrorCode::StreamChanged) {
+            got_stream_changed = true;
+        }
+        CHECK(got_stream_changed);
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
+    }
+
+    // Cursor: CRC mutation after initialize gives StreamChanged
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            RawPacketRecord rec;
+            rec.capture_index = i;
+            rec.capture_monotonic_ns = i;
+            rec.payload = {static_cast<std::uint8_t>(i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        // Mutate a payload byte (after the header, in the data region)
+        {
+            auto& p = paths[0];
+            // Read header_size from file
+            std::ifstream ifs(p, std::ios::binary);
+            ifs.seekg(10);
+            std::uint32_t hsize = 0;
+            ifs.read(reinterpret_cast<char*>(&hsize), 4);
+            ifs.close();
+
+            // The first record starts at hsize. Payload starts at hsize + 44.
+            std::fstream f(p, std::ios::in | std::ios::out | std::ios::binary);
+            f.seekp(static_cast<std::streamoff>(hsize + 44));
+            std::uint8_t bad = 0xFF;
+            f.write(reinterpret_cast<const char*>(&bad), 1);
+            f.close();
+        }
+
+        RawPacketRecord out;
+        bool got_stream_changed = false;
+        while (cursor.next(out)) {}
+        if (cursor.state() == ValidatedReplayCursor::State::Failed &&
+            cursor.error_code() == CursorErrorCode::StreamChanged) {
+            got_stream_changed = true;
+        }
+        CHECK(got_stream_changed);
+    }
+
+    // Cursor: filesystem failure gives IoError (using mock FS)
+    {
+        // Use a path that cannot be opened
+        std::vector<std::string> bad_paths;
+
+        // Create a valid segment first, then delete it after initialize
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+
+        // Delete the file to simulate filesystem failure
+        fs::remove(paths[0]);
+
+        RawPacketRecord out;
+        CHECK(!cursor.next(out));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
+        CHECK(cursor.error_code() == CursorErrorCode::IoError);
+    }
+
+    // Cursor: stable Failed
+    {
+        auto dir = temp_dir();
+        std::vector<std::string> bad_paths = {dir + "/no_such_file.mxraw"};
+
+        ValidatedReplayCursor cursor;
+        CHECK(cursor.initialize(bad_paths) == ValidatedReplayCursor::InitStatus::Failed);
+
+        // Failed from init is Uninitialized, not Failed — retry allowed
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Uninitialized);
+
+        // Now create a valid segment, initialize, delete file, get IoError → Failed
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+        RawPacketRecord rec;
+        rec.capture_index = 0;
+        rec.capture_monotonic_ns = 0;
+        writer.append(rec);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        CHECK(cursor.initialize(paths) == ValidatedReplayCursor::InitStatus::Ok);
+        fs::remove(paths[0]);
+
+        RawPacketRecord out;
+        CHECK(!cursor.next(out));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
+
+        // Failed is stable
+        CHECK(!cursor.next(out));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
+        CHECK(!cursor.next(out));
+        CHECK(cursor.state() == ValidatedReplayCursor::State::Failed);
+    }
+
+    // Legacy: replay_stream unchanged
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        for (std::uint64_t i = 0; i < 5; ++i) {
+            RawPacketRecord rec;
+            rec.record_flags = kRecordFlagUtcValid;
+            rec.capture_index = i;
+            rec.capture_utc_ns = 1000 + i;
+            rec.capture_monotonic_ns = i;
+            rec.payload = {static_cast<std::uint8_t>(i)};
+            writer.append(rec);
+        }
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        std::vector<RawSegmentMetadata> metas;
+        std::vector<RawFooter> footers;
+        std::vector<RawValidationIssue> issues;
+        validate_stream_set(paths, metas, footers, issues);
+
+        std::uint64_t count = 0;
+        auto result = replay_stream(paths, metas[0],
+            [&](const RawSegmentMetadata&, const RawPacketRecord& rec) -> bool {
+                CHECK(rec.capture_index == count);
+                count++;
+                return true;
+            });
+        CHECK(result.status == ReplayStatus::Ok);
+        CHECK(count == 5);
+    }
+
+    // Owning deserialize_record_header preserves payload copy
+    {
+        auto dir = temp_dir();
+        auto meta = make_meta();
+        RawSegmentWriter writer(meta, dir, {});
+        writer.open();
+
+        RawPacketRecord orig;
+        orig.record_flags = kRecordFlagUtcValid;
+        orig.capture_index = 0;
+        orig.capture_utc_ns = 42;
+        orig.capture_monotonic_ns = 99;
+        orig.payload = {0x11, 0x22, 0x33, 0x44, 0x55};
+        writer.append(orig);
+        writer.finalize();
+
+        auto paths = writer.finalized_paths();
+        auto fh = std::fopen(paths[0].c_str(), "rb");
+        CHECK(fh != nullptr);
+
+        std::uint8_t preamble[14];
+        CHECK(std::fread(preamble, 1, 14, fh) == 14);
+        std::size_t hsize = moex_raw::read_u32_le(preamble + 10);
+        moex_raw::fseek64(fh, static_cast<std::int64_t>(hsize), SEEK_SET);
+
+        // Read full record bytes
+        std::uint8_t rec_hdr[44];
+        CHECK(std::fread(rec_hdr, 1, 44, fh) == 44);
+        std::uint32_t rsize = moex_raw::read_u32_le(rec_hdr + 8);
+        std::vector<std::uint8_t> record_bytes(rsize);
+        std::memcpy(record_bytes.data(), rec_hdr, 44);
+        CHECK(std::fread(record_bytes.data() + 44, 1, rsize - 44, fh) == rsize - 44);
+        std::fclose(fh);
+
+        // Deserialize with owning copy
+        RawPacketRecord owned;
+        std::size_t rtotal = 0;
+        std::vector<RawValidationIssue> vis;
+        CHECK(deserialize_record_header(record_bytes.data(), record_bytes.size(), owned, rtotal, vis));
+
+        // Owned payload is a copy — modifying record_bytes doesn't affect it
+        record_bytes[44] = 0xFF;
+        CHECK(owned.payload[0] == 0x11);
+        CHECK(owned.payload.size() == 5);
+        CHECK(owned.capture_index == 0);
+        CHECK(owned.capture_monotonic_ns == 99);
     }
 
     std::cout << "test_replay: ALL PASSED\n";
