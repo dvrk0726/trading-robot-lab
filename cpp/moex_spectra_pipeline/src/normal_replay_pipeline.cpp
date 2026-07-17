@@ -61,6 +61,24 @@ NormalPipelineCode NormalReplayPipeline::terminal_code() const noexcept {
 }
 
 // ---------------------------------------------------------------------------
+// classify_replay_code (table-driven, friend-accessible)
+// ---------------------------------------------------------------------------
+
+NormalPipelineCode NormalReplayPipeline::classify_replay_code(
+    moex_raw::AbReplayCode code) noexcept {
+    switch (code) {
+    case moex_raw::AbReplayCode::ValidationFailed:
+    case moex_raw::AbReplayCode::IoError:
+    case moex_raw::AbReplayCode::StreamChanged:
+    case moex_raw::AbReplayCode::ClockRegression:
+    case moex_raw::AbReplayCode::InternalInvariantViolation:
+        return NormalPipelineCode::ReplayFailed;
+    default:
+        return NormalPipelineCode::InternalInvariantViolation;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // initialize (fully transactional)
 // ---------------------------------------------------------------------------
 
@@ -74,14 +92,7 @@ NormalPipelineInitResult NormalReplayPipeline::initialize(
     moex_raw::IFileSystem* first_fs,
     moex_raw::IFileSystem* second_fs
 ) {
-    // Non-null callback required
-    if (!callback) {
-        return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
-                moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
-                OrderedDecodeCode::Ok};
-    }
-
-    // Already initialized: no mutation
+    // State check FIRST: Ready/End/Failed → AlreadyInitialized (no mutation)
     if (impl_->state_ == NormalPipelineState::Ready ||
         impl_->state_ == NormalPipelineState::End ||
         impl_->state_ == NormalPipelineState::Failed) {
@@ -89,130 +100,124 @@ NormalPipelineInitResult NormalReplayPipeline::initialize(
                 impl_->frame_code_, impl_->sequencer_code_, impl_->decode_code_};
     }
 
-    // --- Local unique_ptr for transactional init ---
-    auto local = std::make_unique<Impl>();
-
-    // 1. Initialize replay cursor
-    auto ab_init = local->replay_.initialize(first, second, config.clock_contract,
-                                             first_fs, second_fs);
-    if (ab_init.code != moex_raw::AbReplayCode::Ok) {
-        return {NormalPipelineCode::InvalidConfig, ab_init.code,
-                moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
-                OrderedDecodeCode::Ok};
-    }
-    if (local->replay_.state() != moex_raw::AbReplayState::Ready) {
-        return {NormalPipelineCode::InvalidConfig, local->replay_.terminal_code(),
-                moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
-                OrderedDecodeCode::Ok};
-    }
-
-    // 2. Get metadata from replay cursor
-    const auto* meta_a = local->replay_.metadata(moex_raw::SourceSide::A);
-    const auto* meta_b = local->replay_.metadata(moex_raw::SourceSide::B);
-    if (!meta_a || !meta_b) {
+    // Non-null callback required
+    if (!callback) {
         return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
                 moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
                 OrderedDecodeCode::Ok};
     }
 
-    // 3. Validate framing config
-    if (config.framing.max_datagram_bytes == 0) {
-        return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
-                moex::spectra::FrameCode::InvalidConfig, moex::spectra::SequencerCode::NoAction,
-                OrderedDecodeCode::Ok};
-    }
+    // Transactional init: any exception → InternalInvariantViolation, stays Uninitialized
+    try {
+        auto local = std::make_unique<Impl>();
 
-    // 4. Initialize decoder session
-    auto dec_init = local->decoder_.initialize(templates, *meta_a, *meta_b, config.decode_limits);
-    if (dec_init.code != OrderedDecodeCode::Ok) {
-        return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
-                moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
-                dec_init.code};
-    }
+        // 1. Initialize replay cursor
+        auto ab_init = local->replay_.initialize(first, second, config.clock_contract,
+                                                 first_fs, second_fs);
+        if (ab_init.code != moex_raw::AbReplayCode::Ok) {
+            return {NormalPipelineCode::InvalidConfig, ab_init.code,
+                    moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
+                    OrderedDecodeCode::Ok};
+        }
+        if (local->replay_.state() != moex_raw::AbReplayState::Ready) {
+            return {NormalPipelineCode::InternalInvariantViolation, local->replay_.terminal_code(),
+                    moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
+                    OrderedDecodeCode::Ok};
+        }
 
-    // 5. Validate sequencer/storage config
-    const auto slot_count = static_cast<std::size_t>(config.sequencer.storage.max_reorder_messages);
-    const auto max_msg_bytes = config.sequencer.storage.max_message_bytes;
-
-    if (slot_count == 0 || max_msg_bytes == 0) {
-        return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
-                moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::InvalidConfig,
-                OrderedDecodeCode::Ok};
-    }
-
-    // Multiplication overflow check
-    constexpr std::size_t kSizeMax = (std::numeric_limits<std::size_t>::max)();
-    if (max_msg_bytes != 0 && slot_count > kSizeMax / max_msg_bytes) {
-        try {
-            // Trigger InternalInvariantViolation path
-            throw std::bad_alloc();
-        } catch (...) {
+        // 2. Get metadata from replay cursor
+        const auto* meta_a = local->replay_.metadata(moex_raw::SourceSide::A);
+        const auto* meta_b = local->replay_.metadata(moex_raw::SourceSide::B);
+        if (!meta_a || !meta_b) {
             return {NormalPipelineCode::InternalInvariantViolation, moex_raw::AbReplayCode::Ok,
                     moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
                     OrderedDecodeCode::Ok};
         }
-    }
 
-    // 6. Allocate storage
-    const std::size_t arena_size = slot_count * max_msg_bytes;
-    try {
+        // 3. Validate framing config
+        if (config.framing.max_datagram_bytes == 0) {
+            return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
+                    moex::spectra::FrameCode::InvalidConfig, moex::spectra::SequencerCode::NoAction,
+                    OrderedDecodeCode::Ok};
+        }
+
+        // 4. Initialize decoder session
+        auto dec_init = local->decoder_.initialize(templates, *meta_a, *meta_b, config.decode_limits);
+        if (dec_init.code != OrderedDecodeCode::Ok) {
+            return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
+                    moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
+                    dec_init.code};
+        }
+
+        // 5. Validate sequencer/storage config
+        const auto slot_count = static_cast<std::size_t>(config.sequencer.storage.max_reorder_messages);
+        const auto max_msg_bytes = config.sequencer.storage.max_message_bytes;
+
+        if (slot_count == 0 || max_msg_bytes == 0) {
+            return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
+                    moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::InvalidConfig,
+                    OrderedDecodeCode::Ok};
+        }
+
+        // Multiplication overflow check → InternalInvariantViolation directly
+        constexpr std::size_t kSizeMax = (std::numeric_limits<std::size_t>::max)();
+        if (max_msg_bytes != 0 && slot_count > kSizeMax / max_msg_bytes) {
+            return {NormalPipelineCode::InternalInvariantViolation, moex_raw::AbReplayCode::Ok,
+                    moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
+                    OrderedDecodeCode::Ok};
+        }
+
+        // 6. Allocate storage
+        const std::size_t arena_size = slot_count * max_msg_bytes;
         local->slots_.resize(slot_count);
         local->arena_.resize(arena_size);
+
+        // 7. Initialize storage
+        moex::spectra::MessageStorageConfig storage_cfg{};
+        storage_cfg.max_reorder_messages = config.sequencer.storage.max_reorder_messages;
+        storage_cfg.max_reorder_bytes = config.sequencer.storage.max_reorder_bytes;
+        storage_cfg.max_message_bytes = config.sequencer.storage.max_message_bytes;
+
+        auto storage_init = local->storage_.initialize(local->slots_, local->arena_, storage_cfg);
+        if (storage_init.code != moex::spectra::StorageInitCode::Ok) {
+            return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
+                    moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::InvalidConfig,
+                    OrderedDecodeCode::Ok};
+        }
+
+        // 8. Initialize sequencer (preserve exact code)
+        auto seq_init = local->sequencer_.initialize(config.sequencer.logical_feed,
+                                                      config.sequencer,
+                                                      local->storage_);
+        if (seq_init != moex::spectra::SequencerCode::Initialized) {
+            return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
+                    moex::spectra::FrameCode::Ok, seq_init, OrderedDecodeCode::Ok};
+        }
+
+        // 9. Start sequencer (preserve exact code, no InvalidTransition remapping)
+        auto start_rc = local->sequencer_.start(config.initial_expected_seq);
+        if (start_rc != moex::spectra::SequencerCode::Started) {
+            return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
+                    moex::spectra::FrameCode::Ok, start_rc, OrderedDecodeCode::Ok};
+        }
+
+        // 10. Commit to impl_
+        local->callback_ = callback;
+        local->callback_context_ = callback_context;
+        local->config_ = config;
+        local->state_ = NormalPipelineState::Ready;
+        local->terminal_code_ = NormalPipelineCode::Ok;
+
+        impl_ = std::move(local);
+
+        return {NormalPipelineCode::Ok, moex_raw::AbReplayCode::Ok,
+                moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
+                OrderedDecodeCode::Ok};
     } catch (...) {
         return {NormalPipelineCode::InternalInvariantViolation, moex_raw::AbReplayCode::Ok,
                 moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
                 OrderedDecodeCode::Ok};
     }
-
-    // 7. Initialize storage
-    moex::spectra::MessageStorageConfig storage_cfg{};
-    storage_cfg.max_reorder_messages = config.sequencer.storage.max_reorder_messages;
-    storage_cfg.max_reorder_bytes = config.sequencer.storage.max_reorder_bytes;
-    storage_cfg.max_message_bytes = config.sequencer.storage.max_message_bytes;
-
-    auto storage_init = local->storage_.initialize(local->slots_, local->arena_, storage_cfg);
-    if (storage_init.code != moex::spectra::StorageInitCode::Ok) {
-        return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
-                moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::InvalidConfig,
-                OrderedDecodeCode::Ok};
-    }
-
-    // 8. Initialize sequencer
-    auto seq_init = local->sequencer_.initialize(config.sequencer.logical_feed,
-                                                  config.sequencer,
-                                                  local->storage_);
-    if (seq_init != moex::spectra::SequencerCode::Initialized) {
-        moex::spectra::SequencerCode mapped = seq_init;
-        if (mapped == moex::spectra::SequencerCode::InvalidConfig) {
-            mapped = moex::spectra::SequencerCode::InvalidConfig;
-        }
-        return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
-                moex::spectra::FrameCode::Ok, mapped, OrderedDecodeCode::Ok};
-    }
-
-    // 9. Start sequencer
-    auto start_rc = local->sequencer_.start(config.initial_expected_seq);
-    if (start_rc != moex::spectra::SequencerCode::Started) {
-        moex::spectra::SequencerCode mapped = start_rc;
-        if (mapped == moex::spectra::SequencerCode::InvalidTransition) {
-            mapped = moex::spectra::SequencerCode::InvalidConfig;
-        }
-        return {NormalPipelineCode::InvalidConfig, moex_raw::AbReplayCode::Ok,
-                moex::spectra::FrameCode::Ok, mapped, OrderedDecodeCode::Ok};
-    }
-
-    // 10. Commit to impl_
-    local->callback_ = callback;
-    local->callback_context_ = callback_context;
-    local->config_ = config;
-    local->state_ = NormalPipelineState::Ready;
-    local->terminal_code_ = NormalPipelineCode::Ok;
-
-    impl_ = std::move(local);
-
-    return {NormalPipelineCode::Ok, moex_raw::AbReplayCode::Ok,
-            moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::NoAction,
-            OrderedDecodeCode::Ok};
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +262,12 @@ NormalPipelineRunResult NormalReplayPipeline::run_to_end() {
                     {meta.msg_seq_num, meta.side, meta.capture_index, meta.capture_monotonic_ns},
                     fast_body);
 
-                if (dr.code == OrderedDecodeCode::Ok && dr.decoded_message) {
+                if (dr.code == OrderedDecodeCode::Ok) {
+                    if (!dr.decoded_message) {
+                        decode_error = true;
+                        last_decode_code = OrderedDecodeCode::InternalInvariantViolation;
+                        return;
+                    }
                     impl->callback_(impl->callback_context_, std::move(*dr.decoded_message));
                     impl->emitted_messages_++;
                 } else {
@@ -370,6 +380,17 @@ NormalPipelineRunResult NormalReplayPipeline::run_to_end() {
         auto seq_state = impl_->sequencer_.state();
         auto pending = impl_->storage_.pending_count();
 
+        // Check FailedClosed FIRST
+        if (seq_state == moex::spectra::SequencerState::FailedClosed) {
+            impl_->state_ = NormalPipelineState::Failed;
+            impl_->terminal_code_ = NormalPipelineCode::SequencerFailed;
+            impl_->sequencer_code_ = moex::spectra::SequencerCode::FailedClosed;
+            return {NormalPipelineCode::SequencerFailed, moex_raw::AbReplayCode::End,
+                    moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::FailedClosed,
+                    OrderedDecodeCode::Ok,
+                    impl_->input_packets_, impl_->emitted_messages_};
+        }
+
         if (seq_state == moex::spectra::SequencerState::Running && pending == 0) {
             impl_->state_ = NormalPipelineState::End;
             impl_->terminal_code_ = NormalPipelineCode::End;
@@ -388,16 +409,6 @@ NormalPipelineRunResult NormalReplayPipeline::run_to_end() {
                     impl_->input_packets_, impl_->emitted_messages_};
         }
 
-        if (seq_state == moex::spectra::SequencerState::FailedClosed) {
-            impl_->state_ = NormalPipelineState::Failed;
-            impl_->terminal_code_ = NormalPipelineCode::SequencerFailed;
-            impl_->sequencer_code_ = moex::spectra::SequencerCode::FailedClosed;
-            return {NormalPipelineCode::SequencerFailed, moex_raw::AbReplayCode::End,
-                    moex::spectra::FrameCode::Ok, moex::spectra::SequencerCode::FailedClosed,
-                    OrderedDecodeCode::Ok,
-                    impl_->input_packets_, impl_->emitted_messages_};
-        }
-
         impl_->state_ = NormalPipelineState::Failed;
         impl_->terminal_code_ = NormalPipelineCode::InternalInvariantViolation;
         return {NormalPipelineCode::InternalInvariantViolation, moex_raw::AbReplayCode::End,
@@ -407,21 +418,7 @@ NormalPipelineRunResult NormalReplayPipeline::run_to_end() {
     }
 
     // Non-End replay codes
-    NormalPipelineCode code = NormalPipelineCode::InternalInvariantViolation;
-    switch (replay_code) {
-    case moex_raw::AbReplayCode::ValidationFailed:
-    case moex_raw::AbReplayCode::IoError:
-    case moex_raw::AbReplayCode::StreamChanged:
-    case moex_raw::AbReplayCode::ClockRegression:
-        code = NormalPipelineCode::ReplayFailed;
-        break;
-    case moex_raw::AbReplayCode::InternalInvariantViolation:
-        code = NormalPipelineCode::InternalInvariantViolation;
-        break;
-    default:
-        code = NormalPipelineCode::InternalInvariantViolation;
-        break;
-    }
+    NormalPipelineCode code = classify_replay_code(replay_code);
 
     impl_->state_ = NormalPipelineState::Failed;
     impl_->terminal_code_ = code;

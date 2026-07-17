@@ -379,7 +379,7 @@ jobs:
         run: ctest --test-dir build/moex_raw -C Release --output-on-failure
 
   cpp-moex-spectra-pipeline-windows:
-    name: "C++ MOEX SPECTRA Pipeline Windows/MSVC (2 tests)"
+    name: "C++ MOEX SPECTRA Pipeline Windows/MSVC (1 test)"
     needs: repository-hygiene
     if: needs.repository-hygiene.outputs.run_pipeline == 'true'
     runs-on: windows-latest
@@ -428,7 +428,7 @@ jobs:
         run: ctest --test-dir build/pipeline -C Release --output-on-failure
 
   cpp-moex-spectra-pipeline-linux:
-    name: "C++ MOEX SPECTRA Pipeline Linux/GCC (2 tests)"
+    name: "C++ MOEX SPECTRA Pipeline Linux/GCC (1 test)"
     needs: repository-hygiene
     if: needs.repository-hygiene.outputs.run_pipeline == 'true'
     runs-on: ubuntu-latest

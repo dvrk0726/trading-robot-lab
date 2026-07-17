@@ -100,6 +100,9 @@ public:
     [[nodiscard]] NormalPipelineCode terminal_code() const noexcept;
 
 private:
+    friend struct NormalReplayPipelineTestAccess;
+    static NormalPipelineCode classify_replay_code(moex_raw::AbReplayCode code) noexcept;
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
