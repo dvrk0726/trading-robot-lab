@@ -981,6 +981,119 @@ static void test_move_assignment() {
     TEST_PASS("move_assignment");
 }
 
+static void test_reset_ready_clears_previous_template() {
+    auto compiled = compile_minimal(kBasicTemplateXml);
+    RawSegmentMetadata ma, mb;
+    make_metadata_pair(compiled, ma, mb);
+
+    OrderedDecodeSession session;
+    (void)session.initialize(compiled, ma, mb);
+    CHECK(session.state() == OrderedDecodeState::Ready);
+
+    // First message with explicit template ID -> sets previous template
+    auto body1 = make_msg(1);
+    auto dr1 = session.decode_ordered(make_transport(1), body1);
+    CHECK(dr1.code == OrderedDecodeCode::Ok);
+
+    // Reset: clears previous-template-ID
+    auto rr = session.reset_for_sequence_reset();
+    CHECK(rr.code == OrderedDecodeResetCode::Ok);
+    CHECK(session.state() == OrderedDecodeState::Ready);
+
+    // Now message without template ID: should fail because no previous template
+    std::vector<std::uint8_t> body2;
+    body2.push_back(0x80); // pmap: stop only, no template-ID
+    encode_stopbit_u32(body2, 2);
+    auto dr2 = session.decode_ordered(make_transport(2), body2);
+    CHECK(dr2.code == OrderedDecodeCode::DecodeFailed);
+    CHECK(dr2.decode_status == DecodeStatus::MissingPreviousTemplate);
+    CHECK(session.state() == OrderedDecodeState::Failed);
+
+    TEST_PASS("reset_ready_clears_previous_template");
+}
+
+static void test_reset_failed_returns_failed_state() {
+    auto compiled = compile_minimal(kBasicTemplateXml);
+    RawSegmentMetadata ma, mb;
+    make_metadata_pair(compiled, ma, mb);
+
+    OrderedDecodeSession session;
+    (void)session.initialize(compiled, ma, mb);
+
+    // Force Failed state
+    std::vector<std::uint8_t> bad = {0xFF, 0xFF};
+    (void)session.decode_ordered(make_transport(1), bad);
+    CHECK(session.state() == OrderedDecodeState::Failed);
+
+    auto rr = session.reset_for_sequence_reset();
+    CHECK(rr.code == OrderedDecodeResetCode::FailedState);
+    CHECK(session.state() == OrderedDecodeState::Failed);
+
+    TEST_PASS("reset_failed_returns_failed_state");
+}
+
+static void test_reset_then_explicit_template_decode() {
+    auto compiled = compile_minimal(kBasicTemplateXml);
+    RawSegmentMetadata ma, mb;
+    make_metadata_pair(compiled, ma, mb);
+
+    OrderedDecodeSession session;
+    (void)session.initialize(compiled, ma, mb);
+
+    // First message
+    auto body1 = make_msg(1);
+    auto dr1 = session.decode_ordered(make_transport(1), body1);
+    CHECK(dr1.code == OrderedDecodeCode::Ok);
+
+    // Reset
+    auto rr = session.reset_for_sequence_reset();
+    CHECK(rr.code == OrderedDecodeResetCode::Ok);
+
+    // Second message with explicit template ID: should succeed
+    auto body2 = make_msg(2);
+    auto dr2 = session.decode_ordered(make_transport(2), body2);
+    CHECK(dr2.code == OrderedDecodeCode::Ok);
+    CHECK(dr2.decoded_message->msg_seq_num == 2u);
+
+    TEST_PASS("reset_then_explicit_template_decode");
+}
+
+static void test_reset_uninitialized_returns_not_initialized() {
+    OrderedDecodeSession session;
+    CHECK(session.state() == OrderedDecodeState::Uninitialized);
+
+    auto rr = session.reset_for_sequence_reset();
+    CHECK(rr.code == OrderedDecodeResetCode::NotInitialized);
+    CHECK(session.state() == OrderedDecodeState::Uninitialized);
+
+    TEST_PASS("reset_uninitialized_returns_not_initialized");
+}
+
+static void test_reset_preserves_templates_hash() {
+    auto compiled = compile_minimal(kBasicTemplateXml);
+    RawSegmentMetadata ma, mb;
+    make_metadata_pair(compiled, ma, mb);
+
+    OrderedDecodeSession session;
+    (void)session.initialize(compiled, ma, mb);
+
+    // Decode a message
+    auto body = make_msg(1);
+    (void)session.decode_ordered(make_transport(1), body);
+
+    // Reset
+    auto rr = session.reset_for_sequence_reset();
+    CHECK(rr.code == OrderedDecodeResetCode::Ok);
+    CHECK(session.state() == OrderedDecodeState::Ready);
+
+    // Can still decode with explicit template
+    auto body2 = make_msg(2);
+    auto dr = session.decode_ordered(make_transport(2), body2);
+    CHECK(dr.code == OrderedDecodeCode::Ok);
+
+    TEST_PASS("reset_preserves_templates_hash");
+}
+
 static void test_failed_then_decode() {
     auto compiled = compile_minimal(kBasicTemplateXml);
     RawSegmentMetadata ma, mb;
@@ -1051,7 +1164,12 @@ int main() {
     test_move_construction();
     test_move_assignment();
     test_failed_then_decode();
+    test_reset_ready_clears_previous_template();
+    test_reset_failed_returns_failed_state();
+    test_reset_then_explicit_template_decode();
+    test_reset_uninitialized_returns_not_initialized();
+    test_reset_preserves_templates_hash();
 
-    std::cout << "ALL TESTS PASSED (43 tests)\n";
+    std::cout << "ALL TESTS PASSED (48 tests)\n";
     return 0;
 }

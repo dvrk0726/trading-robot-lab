@@ -399,10 +399,11 @@ jobs:
       - name: Build pipeline and tests
         run: cmake --build build/pipeline --config Release --parallel 2
 
-      - name: Verify exact test inventory (2 tests)
+      - name: Verify exact test inventory (3 tests)
         run: |
           $expected = @(
             'test_ordered_decode',
+            'test_sequence_reset_probe',
             'test_normal_replay_pipeline'
           )
           $output = ctest --test-dir build/pipeline -C Release -N
@@ -414,14 +415,14 @@ jobs:
           }
           Write-Host "Pipeline inventory verified: $($expected.Count) tests present"
 
-      - name: Verify total test count (2)
+      - name: Verify total test count (3)
         run: |
           $output = ctest --test-dir build/pipeline -C Release -N
           $line = $output | Select-String '^Total Tests:'
           $count = [int](($line.Line -split ':', 2)[1].Trim())
-          Write-Host "CTest inventory: $count (expected 2)"
-          if ($count -ne 2) {
-            throw "Expected 2 pipeline tests, found $count"
+          Write-Host "CTest inventory: $count (expected 3)"
+          if ($count -ne 3) {
+            throw "Expected 3 pipeline tests, found $count"
           }
 
       - name: Run all pipeline tests
@@ -445,22 +446,22 @@ jobs:
       - name: Build pipeline and tests
         run: cmake --build build/pipeline --config Release --parallel 2
 
-      - name: Verify exact test inventory (2 tests)
+      - name: Verify exact test inventory (3 tests)
         run: |
-          for name in test_ordered_decode test_normal_replay_pipeline; do
+          for name in test_ordered_decode test_sequence_reset_probe test_normal_replay_pipeline; do
             if ! ctest --test-dir build/pipeline -C Release -N 2>&1 | grep -q "$name"; then
               echo "Pipeline test '$name' not found in CTest inventory"
               exit 1
             fi
           done
-          echo "Pipeline inventory verified: 2 tests present"
+          echo "Pipeline inventory verified: 3 tests present"
 
-      - name: Verify total test count (2)
+      - name: Verify total test count (3)
         run: |
           count=$(ctest --test-dir build/pipeline -C Release -N 2>&1 | grep -oP 'Total Tests: \K\d+')
-          echo "CTest inventory: $count (expected 2)"
-          if [ "$count" -ne 2 ]; then
-            echo "Expected 2 pipeline tests, found $count"
+          echo "CTest inventory: $count (expected 3)"
+          if [ "$count" -ne 3 ]; then
+            echo "Expected 3 pipeline tests, found $count"
             exit 1
           fi
 

@@ -68,6 +68,21 @@ struct OrderedDecodeResult {
     std::optional<OrderedDecodedMessage> decoded_message;
 };
 
+// --- Reset result codes ---
+
+enum class OrderedDecodeResetCode : std::uint8_t {
+    Ok,
+    NotInitialized,
+    FailedState,
+    InternalInvariantViolation
+};
+
+// --- Reset result (fail-closed) ---
+
+struct OrderedDecodeResetResult {
+    OrderedDecodeResetCode code = OrderedDecodeResetCode::NotInitialized;
+};
+
 // --- Ordered decode session (move-only, PImpl) ---
 
 class OrderedDecodeSession {
@@ -91,6 +106,8 @@ public:
         const moex::spectra::OrderedMessageMetadata& transport,
         std::span<const std::uint8_t> fast_body
     );
+
+    [[nodiscard]] OrderedDecodeResetResult reset_for_sequence_reset() noexcept;
 
     [[nodiscard]] OrderedDecodeState state() const noexcept;
     [[nodiscard]] OrderedDecodeCode terminal_code() const noexcept;

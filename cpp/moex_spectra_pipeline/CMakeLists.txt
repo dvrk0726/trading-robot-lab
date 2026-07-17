@@ -29,6 +29,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../moex_raw
 # --- Pipeline static library ---
 add_library(moex_spectra_pipeline STATIC
     src/ordered_decode.cpp
+    src/sequence_reset_probe.cpp
     src/normal_replay_pipeline.cpp
 )
 target_include_directories(moex_spectra_pipeline PUBLIC include)
@@ -45,6 +46,13 @@ target_include_directories(test_ordered_decode PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../moex_fast/tests
 )
 add_test(NAME test_ordered_decode COMMAND test_ordered_decode)
+
+add_executable(test_sequence_reset_probe tests/test_sequence_reset_probe.cpp)
+target_link_libraries(test_sequence_reset_probe PRIVATE moex_spectra_pipeline)
+target_include_directories(test_sequence_reset_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../moex_fast/tests
+)
+add_test(NAME test_sequence_reset_probe COMMAND test_sequence_reset_probe)
 
 add_executable(test_normal_replay_pipeline tests/test_normal_replay_pipeline.cpp)
 target_link_libraries(test_normal_replay_pipeline PRIVATE moex_spectra_pipeline)

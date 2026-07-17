@@ -38,6 +38,7 @@ struct OrderedDecodeSession::Impl {
     OrderedDecodeState state_ = OrderedDecodeState::Uninitialized;
     OrderedDecodeCode terminal_code_ = OrderedDecodeCode::Ok;
     moex_fast::CompiledTemplateSet compiled_;
+    moex_fast::DecodeLimits limits_{};
     std::unique_ptr<moex_fast::DecoderSession> decoder_;
     moex_raw::SourceSide side_a_set_ = moex_raw::SourceSide::None;
 };
@@ -60,6 +61,34 @@ OrderedDecodeState OrderedDecodeSession::state() const noexcept {
 
 OrderedDecodeCode OrderedDecodeSession::terminal_code() const noexcept {
     return impl_->terminal_code_;
+}
+
+// ---------------------------------------------------------------------------
+// reset_for_sequence_reset
+// ---------------------------------------------------------------------------
+
+OrderedDecodeResetResult OrderedDecodeSession::reset_for_sequence_reset() noexcept {
+    // Uninitialized: no mutation
+    if (impl_->state_ == OrderedDecodeState::Uninitialized) {
+        return {OrderedDecodeResetCode::NotInitialized};
+    }
+
+    // Failed: cannot recover
+    if (impl_->state_ == OrderedDecodeState::Failed) {
+        return {OrderedDecodeResetCode::FailedState};
+    }
+
+    // Ready: reset decoder, clear previous-template-ID, preserve templates+limits
+    try {
+        impl_->decoder_->reset();
+        impl_->state_ = OrderedDecodeState::Ready;
+        impl_->terminal_code_ = OrderedDecodeCode::Ok;
+        return {OrderedDecodeResetCode::Ok};
+    } catch (...) {
+        impl_->state_ = OrderedDecodeState::Failed;
+        impl_->terminal_code_ = OrderedDecodeCode::InternalInvariantViolation;
+        return {OrderedDecodeResetCode::InternalInvariantViolation};
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +174,7 @@ OrderedDecodeInitResult OrderedDecodeSession::initialize(
 
     // --- Transactional: only mutate on full success ---
     impl_->compiled_ = compiled;
+    impl_->limits_ = limits;
     impl_->decoder_ = std::make_unique<moex_fast::DecoderSession>(compiled, limits);
     impl_->state_ = OrderedDecodeState::Ready;
     impl_->terminal_code_ = OrderedDecodeCode::Ok;
