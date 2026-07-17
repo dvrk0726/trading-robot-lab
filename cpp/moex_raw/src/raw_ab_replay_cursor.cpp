@@ -5,13 +5,38 @@
 
 namespace moex_raw {
 
-static AbReplayCode map_child_code(ReplayCursorCode code) {
+AbReplayCode ValidatedAbReplayCursor::classify_child_init_code(ReplayCursorCode code) {
+    switch (code) {
+        case ReplayCursorCode::ValidationFailed: return AbReplayCode::ValidationFailed;
+        case ReplayCursorCode::IoError: return AbReplayCode::IoError;
+        case ReplayCursorCode::InternalInvariantViolation: return AbReplayCode::InternalInvariantViolation;
+        default: return AbReplayCode::InternalInvariantViolation;
+    }
+}
+
+AbReplayCode ValidatedAbReplayCursor::classify_child_code(ReplayCursorCode code) {
     switch (code) {
         case ReplayCursorCode::IoError: return AbReplayCode::IoError;
         case ReplayCursorCode::StreamChanged: return AbReplayCode::StreamChanged;
         case ReplayCursorCode::InternalInvariantViolation: return AbReplayCode::InternalInvariantViolation;
         default: return AbReplayCode::InternalInvariantViolation;
     }
+}
+
+bool ValidatedAbReplayCursor::is_valid_initial_code(ReplayCursorCode code) {
+    return code == ReplayCursorCode::Ok || code == ReplayCursorCode::End;
+}
+
+AbReplayCode ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode code) {
+    return ValidatedAbReplayCursor::classify_child_init_code(code);
+}
+
+AbReplayCode ValidatedAbReplayCursor::TestAccess::classify_child_code(ReplayCursorCode code) {
+    return ValidatedAbReplayCursor::classify_child_code(code);
+}
+
+bool ValidatedAbReplayCursor::TestAccess::is_valid_initial_code(ReplayCursorCode code) {
+    return ValidatedAbReplayCursor::is_valid_initial_code(code);
 }
 
 // Merge key: (capture_monotonic_ns, side_rank, capture_index)
@@ -105,18 +130,14 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
 
     auto init_first = local_first.initialize(first, first_fs);
     if (init_first.code != ReplayCursorCode::Ok) {
-        result.code = (init_first.code == ReplayCursorCode::IoError)
-                          ? AbReplayCode::IoError
-                          : AbReplayCode::ValidationFailed;
+        result.code = classify_child_init_code(init_first.code);
         result.issues = init_first.issues;
         return result;
     }
 
     auto init_second = local_second.initialize(second, second_fs);
     if (init_second.code != ReplayCursorCode::Ok) {
-        result.code = (init_second.code == ReplayCursorCode::IoError)
-                          ? AbReplayCode::IoError
-                          : AbReplayCode::ValidationFailed;
+        result.code = classify_child_init_code(init_second.code);
         result.issues = init_second.issues;
         return result;
     }
@@ -222,23 +243,17 @@ AbReplayInitResult ValidatedAbReplayCursor::initialize(
     auto local_lookahead_a = local_cursor_a->next();
     auto local_lookahead_b = local_cursor_b->next();
 
-    auto is_terminal = [](ReplayCursorCode c) {
-        return c == ReplayCursorCode::IoError ||
-               c == ReplayCursorCode::StreamChanged ||
-               c == ReplayCursorCode::InternalInvariantViolation;
-    };
-
-    if (is_terminal(local_lookahead_a.code)) {
+    if (!is_valid_initial_code(local_lookahead_a.code)) {
         // Aggregate cursor remains Uninitialized: nothing written to impl_
-        result.code = map_child_code(local_lookahead_a.code);
+        result.code = classify_child_code(local_lookahead_a.code);
         result.issues.push_back({ValidationSeverity::Error, "CHILD_A_INIT_ERROR",
                                  "Child cursor A failed during initial read", {}, {}});
         return result;
     }
 
-    if (is_terminal(local_lookahead_b.code)) {
+    if (!is_valid_initial_code(local_lookahead_b.code)) {
         // Aggregate cursor remains Uninitialized: nothing written to impl_
-        result.code = map_child_code(local_lookahead_b.code);
+        result.code = classify_child_code(local_lookahead_b.code);
         result.issues.push_back({ValidationSeverity::Error, "CHILD_B_INIT_ERROR",
                                  "Child cursor B failed during initial read", {}, {}});
         return result;
@@ -273,17 +288,17 @@ AbReplayResult ValidatedAbReplayCursor::next() {
 
     if (impl_->state == AbReplayState::Uninitialized) {
         result.code = AbReplayCode::NotInitialized;
-        result.side = SourceSide::None;
+        result.source_side = SourceSide::None;
         return result;
     }
     if (impl_->state == AbReplayState::End) {
         result.code = AbReplayCode::End;
-        result.side = SourceSide::None;
+        result.source_side = SourceSide::None;
         return result;
     }
     if (impl_->state == AbReplayState::Failed) {
         result.code = impl_->terminal_code;
-        result.side = SourceSide::None;
+        result.source_side = SourceSide::None;
         return result;
     }
 
@@ -299,10 +314,10 @@ AbReplayResult ValidatedAbReplayCursor::next() {
         } else {
             impl_->a_alive = false;
             impl_->a_end = false;
-            impl_->fail(map_child_code(impl_->lookahead_a.code), "CHILD_A_ERROR",
+            impl_->fail(classify_child_code(impl_->lookahead_a.code), "CHILD_A_ERROR",
                         "Child cursor A failed during advance");
             result.code = impl_->terminal_code;
-            result.side = SourceSide::None;
+            result.source_side = SourceSide::None;
             return result;
         }
     } else if (impl_->last_issued == SourceSide::B) {
@@ -316,10 +331,10 @@ AbReplayResult ValidatedAbReplayCursor::next() {
         } else {
             impl_->b_alive = false;
             impl_->b_end = false;
-            impl_->fail(map_child_code(impl_->lookahead_b.code), "CHILD_B_ERROR",
+            impl_->fail(classify_child_code(impl_->lookahead_b.code), "CHILD_B_ERROR",
                         "Child cursor B failed during advance");
             result.code = impl_->terminal_code;
-            result.side = SourceSide::None;
+            result.source_side = SourceSide::None;
             return result;
         }
     }
@@ -329,13 +344,13 @@ AbReplayResult ValidatedAbReplayCursor::next() {
         if (impl_->a_end && impl_->b_end) {
             impl_->state = AbReplayState::End;
             result.code = AbReplayCode::End;
-            result.side = SourceSide::None;
+            result.source_side = SourceSide::None;
             return result;
         }
         impl_->fail(AbReplayCode::InternalInvariantViolation, "INVARIANT_VIOLATION",
                     "Both sides not alive and not both end");
         result.code = impl_->terminal_code;
-        result.side = SourceSide::None;
+        result.source_side = SourceSide::None;
         return result;
     }
 
@@ -360,7 +375,7 @@ AbReplayResult ValidatedAbReplayCursor::next() {
         impl_->fail(AbReplayCode::ClockRegression, "CLOCK_REGRESSION",
                     "Merge key regression detected");
         result.code = AbReplayCode::ClockRegression;
-        result.side = SourceSide::None;
+        result.source_side = SourceSide::None;
         return result;
     }
 
@@ -369,7 +384,7 @@ AbReplayResult ValidatedAbReplayCursor::next() {
     impl_->last_issued = winner;
 
     result.code = AbReplayCode::Ok;
-    result.side = winner;
+    result.source_side = winner;
     result.record = winner_record;
     return result;
 }

@@ -2092,12 +2092,12 @@ static void b12_a_before_b() {
         ValidatedAbReplayCursor c;
         CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
         CHECK(c.state() == AbReplayState::Ready);
-        CHECK(c.next().side == SourceSide::A);
-        CHECK(c.next().side == SourceSide::A);
-        CHECK(c.next().side == SourceSide::A);
-        CHECK(c.next().side == SourceSide::B);
-        CHECK(c.next().side == SourceSide::B);
-        CHECK(c.next().side == SourceSide::B);
+        CHECK(c.next().source_side == SourceSide::A);
+        CHECK(c.next().source_side == SourceSide::A);
+        CHECK(c.next().source_side == SourceSide::A);
+        CHECK(c.next().source_side == SourceSide::B);
+        CHECK(c.next().source_side == SourceSide::B);
+        CHECK(c.next().source_side == SourceSide::B);
         CHECK(c.next().code == AbReplayCode::End);
         CHECK(c.state() == AbReplayState::End);
     }
@@ -2111,12 +2111,12 @@ static void b12_b_before_a() {
     auto pb = write_segment(make_meta_b(), d + "/b", {{0,0,0xB0},{1,100,0xB1},{2,200,0xB2}});
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::A);
     CHECK(c.next().code == AbReplayCode::End);
 }
 
@@ -2128,8 +2128,8 @@ static void b12_same_ts_a_first() {
     auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xB0},{1,100,0xB1},{2,100,0xB2}});
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
-    for (int i = 0; i < 3; ++i) { CHECK(c.next().side == SourceSide::A); }
-    for (int i = 0; i < 3; ++i) { CHECK(c.next().side == SourceSide::B); }
+    for (int i = 0; i < 3; ++i) { CHECK(c.next().source_side == SourceSide::A); }
+    for (int i = 0; i < 3; ++i) { CHECK(c.next().source_side == SourceSide::B); }
     CHECK(c.next().code == AbReplayCode::End);
 }
 
@@ -2141,12 +2141,12 @@ static void b12_multi_a_same_ts() {
     auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xBB}});
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
-    auto r1 = c.next(); CHECK(r1.side == SourceSide::A); CHECK(r1.record.capture_index == 0);
+    auto r1 = c.next(); CHECK(r1.source_side == SourceSide::A); CHECK(r1.record.capture_index == 0);
     auto* ptr = r1.record.payload.data();
-    auto r2 = c.next(); CHECK(r2.side == SourceSide::A); CHECK(r2.record.capture_index == 1);
+    auto r2 = c.next(); CHECK(r2.source_side == SourceSide::A); CHECK(r2.record.capture_index == 1);
     CHECK(r2.record.payload.data() == ptr); // buffer reuse
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::B);
     CHECK(c.next().code == AbReplayCode::End);
 }
 
@@ -2175,10 +2175,10 @@ static void b12_input_order() {
     auto pb = write_segment(make_meta_b(), d + "/b", {{0,100,0xB0},{1,100,0xB1}});
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(pb), make_stream_set(pa), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::B);
     CHECK(c.next().code == AbReplayCode::End);
 }
 
@@ -2190,12 +2190,12 @@ static void b12_a_ends_first() {
     auto pb = write_segment(make_meta_b(), d + "/b", {{0,500,0xB0},{1,600,0xB1},{2,700,0xB2},{3,800,0xB3}});
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::B);
     CHECK(c.next().code == AbReplayCode::End);
 }
 
@@ -2208,12 +2208,12 @@ static void b12_b_ends_first() {
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
     // A(0), B(50), A(100), B(150), A(200), A(300)
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::B);
-    CHECK(c.next().side == SourceSide::A);
-    CHECK(c.next().side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::B);
+    CHECK(c.next().source_side == SourceSide::A);
+    CHECK(c.next().source_side == SourceSide::A);
     CHECK(c.next().code == AbReplayCode::End);
 }
 
@@ -2235,8 +2235,8 @@ static void b12_multi_segment() {
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(wa.finalized_paths()), make_stream_set(wb.finalized_paths()), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
     for (uint64_t i = 0; i < 6; ++i) {
-        CHECK(c.next().side == SourceSide::A);
-        CHECK(c.next().side == SourceSide::B);
+        CHECK(c.next().source_side == SourceSide::A);
+        CHECK(c.next().source_side == SourceSide::B);
     }
     CHECK(c.next().code == AbReplayCode::End);
 }
@@ -2250,16 +2250,16 @@ static void b12_zerocopy() {
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
     auto r1 = c.next();
-    CHECK(r1.side == SourceSide::A);
+    CHECK(r1.source_side == SourceSide::A);
     CHECK(r1.record.payload[0] == 0xA0);
     auto* p1 = r1.record.payload.data();
     auto r2 = c.next();
-    CHECK(r2.side == SourceSide::A);
+    CHECK(r2.source_side == SourceSide::A);
     CHECK(r2.record.payload.data() == p1); // buffer reuse
     auto r3 = c.next();
-    CHECK(r3.side == SourceSide::A);
+    CHECK(r3.source_side == SourceSide::A);
     auto r4 = c.next();
-    CHECK(r4.side == SourceSide::B);
+    CHECK(r4.source_side == SourceSide::B);
     CHECK(r4.record.payload[0] == 0xBB);
     CHECK(c.next().code == AbReplayCode::End);
 }
@@ -2655,12 +2655,12 @@ static void b12_merge_key_guard() {
     ValidatedAbReplayCursor c;
     CHECK(c.initialize(make_stream_set(pa), make_stream_set(pb), ClockMergeContract::SharedMonotonicTimeline).code == AbReplayCode::Ok);
     // Keys: (0,0,0)<(50,1,0)<(100,0,1)<(150,1,1)<(200,0,2)<(250,1,2) — strictly increasing
-    CHECK(c.next().side == SourceSide::A);   // (0,0,0)
-    CHECK(c.next().side == SourceSide::B);   // (50,1,0)
-    CHECK(c.next().side == SourceSide::A);   // (100,0,1)
-    CHECK(c.next().side == SourceSide::B);   // (150,1,1)
-    CHECK(c.next().side == SourceSide::A);   // (200,0,2)
-    CHECK(c.next().side == SourceSide::B);   // (250,1,2)
+    CHECK(c.next().source_side == SourceSide::A);   // (0,0,0)
+    CHECK(c.next().source_side == SourceSide::B);   // (50,1,0)
+    CHECK(c.next().source_side == SourceSide::A);   // (100,0,1)
+    CHECK(c.next().source_side == SourceSide::B);   // (150,1,1)
+    CHECK(c.next().source_side == SourceSide::A);   // (200,0,2)
+    CHECK(c.next().source_side == SourceSide::B);   // (250,1,2)
     CHECK(c.next().code == AbReplayCode::End);
     CHECK(c.state() == AbReplayState::End);
 }
@@ -2675,7 +2675,7 @@ static void b12_not_initialized() {
     CHECK(c.metadata(SourceSide::B) == nullptr);
     auto r = c.next();
     CHECK(r.code == AbReplayCode::NotInitialized);
-    CHECK(r.side == SourceSide::None);
+    CHECK(r.source_side == SourceSide::None);
     CHECK(r.record.payload.empty());
     CHECK(r.record.capture_index == 0);
     CHECK(r.record.capture_monotonic_ns == 0);
@@ -2687,7 +2687,7 @@ static void b12_default_result() {
     using namespace moex_raw;
     AbReplayResult r;
     CHECK(r.code == AbReplayCode::NotInitialized);
-    CHECK(r.side == SourceSide::None);
+    CHECK(r.source_side == SourceSide::None);
     CHECK(r.record.payload.empty());
     CHECK(r.record.capture_index == 0);
     CHECK(r.record.capture_monotonic_ns == 0);
@@ -2712,7 +2712,7 @@ static void b12_transactional_init_ioerror() {
     CHECK(c.state() == AbReplayState::Uninitialized);
     auto r = c.next();
     CHECK(r.code == AbReplayCode::NotInitialized);
-    CHECK(r.side == SourceSide::None);
+    CHECK(r.source_side == SourceSide::None);
     CHECK(r.record.payload.empty());
     // Retry with good filesystem succeeds
     auto pa2 = write_segment(make_meta_a(), d + "/a2", {{0,0,0xA0}});
@@ -2763,7 +2763,7 @@ static void b12_stable_failed_runtime() {
     c.next(); // A(ts=0) - consumes seg0
     auto r = c.next(); // advance A -> seg1 -> open fails -> IoError
     CHECK(r.code == AbReplayCode::IoError);
-    CHECK(r.side == SourceSide::None);
+    CHECK(r.source_side == SourceSide::None);
     CHECK(r.record.payload.empty());
     CHECK(c.state() == AbReplayState::Failed);
     CHECK(c.terminal_code() == AbReplayCode::IoError);
@@ -2771,10 +2771,48 @@ static void b12_stable_failed_runtime() {
     for (int i = 0; i < 3; ++i) {
         auto ri = c.next();
         CHECK(ri.code == AbReplayCode::IoError);
-        CHECK(ri.side == SourceSide::None);
+        CHECK(ri.source_side == SourceSide::None);
         CHECK(ri.record.payload.empty());
     }
     CHECK(c.terminal_code() == AbReplayCode::IoError);
+}
+
+// B1.2: table-driven classification of all ReplayCursorCode values
+static void b12_code_classification_table() {
+    using namespace moex_raw;
+
+    struct Row { ReplayCursorCode code; bool valid; AbReplayCode cc; AbReplayCode cci; };
+    Row table[] = {
+        {ReplayCursorCode::Ok,                        true,  AbReplayCode::InternalInvariantViolation, AbReplayCode::InternalInvariantViolation},
+        {ReplayCursorCode::End,                       true,  AbReplayCode::InternalInvariantViolation, AbReplayCode::InternalInvariantViolation},
+        {ReplayCursorCode::NotInitialized,            false, AbReplayCode::InternalInvariantViolation, AbReplayCode::InternalInvariantViolation},
+        {ReplayCursorCode::AlreadyInitialized,        false, AbReplayCode::InternalInvariantViolation, AbReplayCode::InternalInvariantViolation},
+        {ReplayCursorCode::ValidationFailed,          false, AbReplayCode::InternalInvariantViolation, AbReplayCode::ValidationFailed},
+        {ReplayCursorCode::IoError,                   false, AbReplayCode::IoError,                    AbReplayCode::IoError},
+        {ReplayCursorCode::StreamChanged,             false, AbReplayCode::StreamChanged,              AbReplayCode::InternalInvariantViolation},
+        {ReplayCursorCode::InternalInvariantViolation, false, AbReplayCode::InternalInvariantViolation, AbReplayCode::InternalInvariantViolation},
+    };
+
+    for (const auto& r : table) {
+        CHECK(ValidatedAbReplayCursor::TestAccess::is_valid_initial_code(r.code) == r.valid);
+        CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_code(r.code) == r.cc);
+        CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(r.code) == r.cci);
+    }
+}
+
+// B1.2: child initialize InternalInvariantViolation mapping
+static void b12_child_init_iiv_mapping() {
+    using namespace moex_raw;
+    // Exact mappings
+    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::ValidationFailed) == AbReplayCode::ValidationFailed);
+    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::IoError) == AbReplayCode::IoError);
+    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::InternalInvariantViolation) == AbReplayCode::InternalInvariantViolation);
+    // All unexpected codes map to InternalInvariantViolation
+    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::Ok) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::End) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::NotInitialized) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::AlreadyInitialized) == AbReplayCode::InternalInvariantViolation);
+    CHECK(ValidatedAbReplayCursor::TestAccess::classify_child_init_code(ReplayCursorCode::StreamChanged) == AbReplayCode::InternalInvariantViolation);
 }
 
 static void run_b12_tests() {
@@ -2817,4 +2855,6 @@ static void run_b12_tests() {
     b12_transactional_init_ioerror();
     b12_init_stream_changed();
     b12_stable_failed_runtime();
+    b12_code_classification_table();
+    b12_child_init_iiv_mapping();
 }
